@@ -40,17 +40,36 @@
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
+  "dependencies": {
+    "latinize": "^0.5.0",
+    "react-hook-form": "^7.49.3"
+  },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",
+    "@vocdoni/api-types": "workspace:*",
     "@vocdoni/react-providers": "workspace:*",
-    "react": ">=18.0.0"
+    "date-fns": "^4.1.0",
+    "i18next": "^25.0.0",
+    "react": ">=18.0.0",
+    "react-i18next": "^16.0.0",
+    "react-router-dom": ">= 6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react-router-dom": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@tanstack/react-query": "^5.0.0",
+    "@types/latinize": "^0.2.15",
     "@types/react": "^19.0.0",
+    "@vocdoni/api-types": "workspace:*",
     "@vocdoni/react-providers": "workspace:*",
+    "date-fns": "^4.1.0",
+    "i18next": "^25.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-i18next": "^16.0.0",
     "tsconfig": "workspace:*",
     "tsdown": "^0.22.3",
     "typescript": "^5.7.0"
