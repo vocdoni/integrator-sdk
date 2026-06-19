@@ -1,0 +1,71 @@
+{
+  "name": "@vocdoni/react-providers",
+  "version": "0.0.0",
+  "license": "GPL-3.0-or-later",
+  "description": "Headless React providers and hooks for the Vocdoni App SDK",
+  "keywords": [
+    "vocdoni",
+    "voting",
+    "react",
+    "providers",
+    "hooks"
+  ],
+  "homepage": "https://github.com/vocdoni/app-sdk",
+  "bugs": "https://github.com/vocdoni/app-sdk/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vocdoni/app-sdk.git",
+    "directory": "packages/react-providers"
+  },
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./test-utils": {
+      "import": {
+        "types": "./dist/test-utils.d.mts",
+        "default": "./dist/test-utils.mjs"
+      },
+      "require": {
+        "types": "./dist/test-utils.d.cts",
+        "default": "./dist/test-utils.cjs"
+      }
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "scripts": {
+    "build": "tsdown",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.0.0",
+    "@vocdoni/api-client": "workspace:*",
+    "@vocdoni/api-voting": "workspace:*",
+    "react": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.0.0",
+    "@types/react": "^19.0.0",
+    "@vocdoni/api-client": "workspace:*",
+    "@vocdoni/api-voting": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tsconfig": "workspace:*",
+    "tsdown": "^0.22.3",
+    "typescript": "^5.7.0"
+  }
+}

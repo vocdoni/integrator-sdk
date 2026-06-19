@@ -1,0 +1,56 @@
+{
+  "name": "@vocdoni/api-voting",
+  "version": "0.0.0",
+  "license": "GPL-3.0-or-later",
+  "description": "Client-side voting for the Vocdoni SaaS API (CSP auth, vote envelope, encrypted ballots)",
+  "keywords": [
+    "vocdoni",
+    "voting",
+    "csp",
+    "encryption"
+  ],
+  "homepage": "https://github.com/vocdoni/app-sdk",
+  "bugs": "https://github.com/vocdoni/app-sdk/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vocdoni/app-sdk.git",
+    "directory": "packages/api-voting"
+  },
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "scripts": {
+    "build": "tsdown",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.4.0",
+    "@vocdoni/api-client": "workspace:*",
+    "@vocdoni/api-types": "workspace:*",
+    "blindsecp256k1": "^0.0.9",
+    "tweetnacl": "^1.0.3",
+    "up-fetch": "^2.5.0"
+  },
+  "devDependencies": {
+    "tsconfig": "workspace:*",
+    "tsdown": "^0.22.3",
+    "typescript": "^5.7.0"
+  }
+}
