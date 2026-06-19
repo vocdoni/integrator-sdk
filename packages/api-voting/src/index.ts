@@ -1,3 +1,6 @@
-// @vocdoni/api-voting — client-side voting: CSP auth, vote envelope, encrypted ballots
-// Implementation TBD
-export {}
+export { EphemeralSigner } from './ephemeral-signer'
+export { CspAuth } from './csp-auth'
+export { CspSigner } from './csp-signer'
+export { BallotEncryptor } from './ballot-encryptor'
+export { buildVotePackage, type VotePackageOptions } from './vote-package'
+export { VotingClient, type VoteOptions } from './voting-client'

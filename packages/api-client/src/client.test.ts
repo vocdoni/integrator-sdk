@@ -1,0 +1,125 @@
+import { http, HttpResponse } from 'msw'
+import { server } from '../../../mocks/server'
+import {
+  mockAuthToken,
+  mockElection,
+  mockOrganization,
+} from '../../../mocks/handlers'
+import { createClient, VocdoniAppClient } from './client'
+
+const BASE_URL = 'http://localhost'
+
+describe('VocdoniAppClient', () => {
+  let client: VocdoniAppClient
+
+  beforeEach(() => {
+    client = createClient({ apiUrl: BASE_URL })
+  })
+
+  describe('elections.get', () => {
+    it('returns election data for the given id', async () => {
+      const election = await client.elections.get('abc123')
+      expect(election.id).toBe('abc123')
+      expect(election.title).toBe(mockElection.title)
+      expect(election.status).toBe('READY')
+    })
+  })
+
+  describe('elections.vote', () => {
+    it('sends the correct body and returns a voteId', async () => {
+      const payload = { txPayload: 'encoded-tx-payload' }
+      const result = await client.elections.vote('abc123', payload)
+      expect(result.voteId).toBe('vote-abc123-encoded-tx-payload')
+    })
+  })
+
+  describe('organizations.get', () => {
+    it('returns organization data for the given address', async () => {
+      const org = await client.organizations.get('0xdeadbeef')
+      expect(org.address).toBe('0xdeadbeef')
+      expect(org.name).toBe(mockOrganization.name)
+    })
+  })
+
+  describe('auth header injection', () => {
+    it('injects a static token into the Authorization header', async () => {
+      let capturedAuth: string | null = null
+
+      server.use(
+        http.get(`${BASE_URL}/process/:id/metadata`, ({ request }) => {
+          capturedAuth = request.headers.get('Authorization')
+          return HttpResponse.json({ ...mockElection, id: 'abc123' })
+        }),
+      )
+
+      const authedClient = createClient({
+        apiUrl: BASE_URL,
+        authToken: 'my-static-token',
+      })
+      await authedClient.elections.get('abc123')
+
+      expect(capturedAuth).toBe('Bearer my-static-token')
+    })
+
+    it('injects a token from a sync getter function', async () => {
+      let capturedAuth: string | null = null
+
+      server.use(
+        http.get(`${BASE_URL}/process/:id/metadata`, ({ request }) => {
+          capturedAuth = request.headers.get('Authorization')
+          return HttpResponse.json({ ...mockElection, id: 'abc123' })
+        }),
+      )
+
+      const authedClient = createClient({
+        apiUrl: BASE_URL,
+        authToken: () => 'sync-getter-token',
+      })
+      await authedClient.elections.get('abc123')
+
+      expect(capturedAuth).toBe('Bearer sync-getter-token')
+    })
+
+    it('injects a token from an async getter function', async () => {
+      let capturedAuth: string | null = null
+
+      server.use(
+        http.get(`${BASE_URL}/process/:id/metadata`, ({ request }) => {
+          capturedAuth = request.headers.get('Authorization')
+          return HttpResponse.json({ ...mockElection, id: 'abc123' })
+        }),
+      )
+
+      const authedClient = createClient({
+        apiUrl: BASE_URL,
+        authToken: async () => 'async-getter-token',
+      })
+      await authedClient.elections.get('abc123')
+
+      expect(capturedAuth).toBe('Bearer async-getter-token')
+    })
+
+    it('sends no Authorization header when no token is configured', async () => {
+      let capturedAuth: string | null = null
+
+      server.use(
+        http.get(`${BASE_URL}/process/:id/metadata`, ({ request }) => {
+          capturedAuth = request.headers.get('Authorization')
+          return HttpResponse.json({ ...mockElection, id: 'abc123' })
+        }),
+      )
+
+      await client.elections.get('abc123')
+
+      expect(capturedAuth).toBeNull()
+    })
+  })
+
+  describe('auth.login', () => {
+    it('returns an AuthToken on successful login', async () => {
+      const token = await client.auth.login('0xaddr', '0xsig')
+      expect(token.token).toBe(mockAuthToken.token)
+      expect(token.refresh).toBe(mockAuthToken.refresh)
+    })
+  })
+})

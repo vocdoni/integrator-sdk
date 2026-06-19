@@ -1,3 +1,6 @@
-// @vocdoni/api-client — HTTP client for the Vocdoni SaaS API
-// Implementation TBD
-export {}
+export { AuthClient } from './auth'
+export { CensusClient } from './census'
+export { VocdoniAppClient, createClient } from './client'
+export { ElectionsClient } from './elections'
+export { VocdoniApiError } from './errors'
+export { OrganizationsClient } from './organizations'
