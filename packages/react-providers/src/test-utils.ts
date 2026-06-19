@@ -1,4 +1,40 @@
-// @vocdoni/react-providers/test-utils — shared test utilities for react-providers and react-components
-// Re-export from here so both packages can share TestProvider, properProps, onlyProps, etc.
-// Implementation TBD
-export {}
+import { VocdoniAppClient } from '@vocdoni/api-client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createElement, type ReactNode } from 'react'
+import { ClientProvider, type ClientProviderProps } from './client/ClientProvider'
+
+/**
+ * Creates a fresh VocdoniAppClient pointing at the given base URL.
+ * Useful for asserting on the client instance in tests.
+ */
+export function createTestClient(apiUrl = 'http://localhost'): VocdoniAppClient {
+  return new VocdoniAppClient({ apiUrl })
+}
+
+export interface TestProviderProps extends Partial<ClientProviderProps> {
+  children: ReactNode
+}
+
+/**
+ * Wraps children in a fresh QueryClientProvider + ClientProvider.
+ *
+ * Use as the `wrapper` option in renderHook / render:
+ *
+ *   renderHook(() => useElection(), {
+ *     wrapper: ({ children }) => <TestProvider>{children}</TestProvider>
+ *   })
+ */
+export function TestProvider({ children, apiUrl = 'http://localhost', ...rest }: TestProviderProps) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  })
+
+  return createElement(
+    QueryClientProvider,
+    { client: queryClient },
+    createElement(ClientProvider, { apiUrl, ...rest }, children),
+  )
+}

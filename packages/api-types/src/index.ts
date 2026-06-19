@@ -53,18 +53,13 @@ export interface IntegratorInfo {
 
 // ─── Census ───────────────────────────────────────────────────────────────────
 
-// How census members are sourced — a SaaS API concept, not the Vochain protocol type.
-// The SaaS backend maps these to the appropriate on-chain census type internally:
-// spreadsheet/web3 → weighted (Merkle tree), csp → csp (auth delegated to CSP endpoint).
+// How census members are sourced — determines how the backend creates the census.
+// The backend derives the Vochain census protocol type from this + election options.
 export type CensusSource = 'spreadsheet' | 'web3' | 'csp'
-
-// Vochain-level census protocol type — returned on election metadata, not used for creation.
-export type VochainCensusType = 'weighted' | 'zkweighted' | 'csp' | 'unknown'
 
 export interface Census {
   id: string
   source: CensusSource
-  type: VochainCensusType
   size: number
   uri?: string
 }
