@@ -44,7 +44,6 @@ export class VotingClient {
       electionId
     )
 
-    // Step 4: assemble the vote envelope
     // TODO: replace with protobuf SignedTx once @vocdoni/proto is available
     const envelopeObj: Record<string, unknown> = {
       electionId,

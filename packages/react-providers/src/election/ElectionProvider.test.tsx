@@ -1,6 +1,8 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { mockElection, CSP_BASE } from '../../../../mocks/handlers'
+import { server } from '../../../../mocks/server'
 import { TestProvider } from '../test-utils'
 import { ElectionProvider, useElection } from './ElectionProvider'
 
@@ -56,6 +58,62 @@ describe('ElectionProvider', () => {
     expect(result.current.voteId).toBeNull()
     expect(result.current.hasVoted).toBe(false)
     expect(result.current.isAbleToVote).toBe(false)
+  })
+
+  it('connected is false before auth and true after cspStep1', async () => {
+    server.use(
+      http.get('http://localhost/process/:id/metadata', ({ params }) =>
+        HttpResponse.json({ ...mockElection, id: params.id as string, census: { id: 'c1', source: 'csp', size: 100, uri: CSP_BASE } }),
+      ),
+    )
+    const { result } = renderHook(() => useElection(), { wrapper })
+
+    await waitFor(() => expect(result.current.election).not.toBeNull())
+    expect(result.current.connected).toBe(false)
+
+    await act(() => result.current.cspStep0())
+    await act(() => result.current.cspStep1())
+
+    expect(result.current.connected).toBe(true)
+  })
+
+  it('weight is populated from the CSP check call after cspStep1', async () => {
+    server.use(
+      http.get('http://localhost/process/:id/metadata', ({ params }) =>
+        HttpResponse.json({ ...mockElection, id: params.id as string, census: { id: 'c1', source: 'csp', size: 100, uri: CSP_BASE } }),
+      ),
+    )
+    const { result } = renderHook(() => useElection(), { wrapper })
+
+    await waitFor(() => expect(result.current.election).not.toBeNull())
+    expect(result.current.weight).toBeNull()
+
+    await act(() => result.current.cspStep0())
+    await act(() => result.current.cspStep1())
+
+    expect(result.current.weight).toBe(1)
+  })
+
+  it('clearVoter resets connected, weight, and vote state', async () => {
+    server.use(
+      http.get('http://localhost/process/:id/metadata', ({ params }) =>
+        HttpResponse.json({ ...mockElection, id: params.id as string, census: { id: 'c1', source: 'csp', size: 100, uri: CSP_BASE } }),
+      ),
+    )
+    const { result } = renderHook(() => useElection(), { wrapper })
+
+    await waitFor(() => expect(result.current.election).not.toBeNull())
+    await act(() => result.current.cspStep0())
+    await act(() => result.current.cspStep1())
+    expect(result.current.connected).toBe(true)
+    expect(result.current.weight).toBe(1)
+
+    act(() => result.current.clearVoter())
+
+    expect(result.current.connected).toBe(false)
+    expect(result.current.weight).toBeNull()
+    expect(result.current.hasVoted).toBe(false)
+    expect(result.current.voteId).toBeNull()
   })
 
   it('vote() triggers the relay endpoint and sets voteId', async () => {

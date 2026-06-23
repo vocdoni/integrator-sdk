@@ -123,6 +123,8 @@ export interface Election {
   voteType: VoteType
   electionType: ElectionType
   encryptionPublicKeys?: EncryptionKey[]
+  /** Open-ended metadata stored by the creator — e.g. census.salt / census.fields / census.specs for spreadsheet elections, token.decimals for web3 elections */
+  meta?: Record<string, unknown>
 }
 
 export interface EncryptionKey {

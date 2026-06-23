@@ -9,14 +9,16 @@ export interface ElectionContextValue {
   loading: boolean
   error: Error | null
 
-  /** CSP step-0 auth token (intermediate, from step0 response) */
   cspToken: string | null
-  /** Step 0 — request OTP challenge from CSP */
   cspStep0(data?: unknown): Promise<void>
-  /** Step 1 — confirm OTP; sets cspToken to the confirmed token */
   cspStep1(authData?: unknown): Promise<void>
 
-  /** Cast a vote with the given choices, returns the voteId */
+  /** true when the voter has completed CSP authentication */
+  connected: boolean
+  /** Voter weight from census; populated after CSP check */
+  weight: number | null
+  clearVoter(): void
+
   vote(choices: number[]): Promise<string>
   voteId: string | null
   isAbleToVote: boolean
@@ -44,9 +46,9 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
     enabled: !!id,
   })
 
-  // CSP state — step0 gives an intermediate token; step1 confirms it
   const [cspStep0Token, setCspStep0Token] = useState<string | null>(null)
   const [cspToken, setCspToken] = useState<string | null>(null)
+  const [weight, setWeight] = useState<number | null>(null)
   const [voteId, setVoteId] = useState<string | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
 
@@ -67,13 +69,25 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
       const cspAuth = new CspAuth(election.census.uri)
       const res = await cspAuth.step1(cspStep0Token, authData)
       setCspToken(res.authToken)
+      // Fetch weight alongside confirmation
+      const check = await cspAuth.check(res.authToken, election.id)
+      if (check.weight != null) setWeight(check.weight)
     },
     [election, cspStep0Token],
   )
 
+  const clearVoter = useCallback(() => {
+    setCspStep0Token(null)
+    setCspToken(null)
+    setWeight(null)
+    setHasVoted(false)
+    setVoteId(null)
+  }, [])
+
   const vote = useCallback(
     async (choices: number[]): Promise<string> => {
       if (!election) throw new Error('Election not loaded')
+
       if (!cspToken) throw new Error('Must complete CSP authentication first')
       if (!election.census?.uri) throw new Error('Election census URI not available')
 
@@ -94,6 +108,8 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
     [election, cspToken, client.elections],
   )
 
+  const connected = !!cspToken
+
   const value: ElectionContextValue = {
     election,
     loading,
@@ -101,9 +117,12 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
     cspToken,
     cspStep0,
     cspStep1,
+    connected,
+    weight,
+    clearVoter,
     vote,
     voteId,
-    isAbleToVote: !!cspToken && !hasVoted,
+    isAbleToVote: connected && !hasVoted,
     hasVoted,
   }
 
