@@ -6,7 +6,8 @@
   "description": "Vocdoni App SDK monorepo",
   "scripts": {
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:integration": "turbo run build && vitest run --config integration/vitest.config.ts",
     "lint": "turbo run lint",
     "clean": "turbo run clean && rm -rf node_modules",
