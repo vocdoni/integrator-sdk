@@ -1,40 +1,42 @@
 import type { EncryptionKey } from '@vocdoni/api-types'
+import { randomBytes, utf8ToBytes } from '@noble/hashes/utils'
 import { BallotEncryptor } from './ballot-encryptor'
+import { toHex } from './hex'
 
 export interface VotePackageOptions {
   choices: number[]
-  electionId: string
   encryptionKeys?: EncryptionKey[]
 }
 
 export interface VotePackageResult {
-  votes: number[]
+  /** Raw bytes for VoteEnvelope.votePackage (plain JSON or sealed ciphertext). */
+  votePackage: Uint8Array
+  /** Sorted indexes of the encryption keys used (empty when unencrypted). */
+  keyIndexes: number[]
   encrypted: boolean
-  encryptedVotes?: string
 }
 
 /**
- * Assembles the vote choices for the vote envelope.
+ * Builds the Vochain vote package: a JSON `{nonce, votes}` payload, sealed with
+ * the election's encryption keys when the election is `secretUntilTheEnd`.
  *
- * When encryption keys are present, the choices are encrypted with the first
- * available key. Otherwise they are returned as plain-text vote indices.
+ * When several keys are present they are applied in ascending index order
+ * (key 0 innermost), matching how the Vochain unseals them.
  */
 export function buildVotePackage(opts: VotePackageOptions): VotePackageResult {
   const { choices, encryptionKeys } = opts
+  // 8-byte random nonce, hex-encoded — mirrors the Vochain vote package format.
+  const nonce = toHex(randomBytes(8))
+  const plain = utf8ToBytes(JSON.stringify({ nonce, votes: choices }))
 
   if (encryptionKeys && encryptionKeys.length > 0) {
-    // Use the last key (highest index) as the active encryption key
-    const key = encryptionKeys[encryptionKeys.length - 1]
-    const { encrypted } = BallotEncryptor.encrypt(choices, key.key, key.index)
-    return {
-      votes: choices,
-      encrypted: true,
-      encryptedVotes: encrypted,
+    const keys = [...encryptionKeys].sort((a, b) => a.index - b.index)
+    let pkg = plain
+    for (const key of keys) {
+      pkg = BallotEncryptor.seal(pkg, key.key)
     }
+    return { votePackage: pkg, keyIndexes: keys.map((k) => k.index), encrypted: true }
   }
 
-  return {
-    votes: choices,
-    encrypted: false,
-  }
+  return { votePackage: plain, keyIndexes: [], encrypted: false }
 }

@@ -22,6 +22,16 @@ export {
   type OrganizationProviderProps,
 } from './organization/OrganizationProvider'
 
+// ─── Bundle ───────────────────────────────────────────────────────────────────
+export {
+  BundleProvider,
+  useBundle,
+  useBundleOptional,
+  type BundleContextValue,
+  type BundleProviderProps,
+  type BundleSignResult,
+} from './bundle/BundleProvider'
+
 // ─── Election ─────────────────────────────────────────────────────────────────
 export {
   ElectionProvider,

@@ -43,11 +43,9 @@
   "dependencies": {
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
-    "@vocdoni/api-client": "workspace:*",
     "@vocdoni/api-types": "workspace:*",
-    "blindsecp256k1": "^0.0.9",
-    "tweetnacl": "^1.0.3",
-    "up-fetch": "^2.5.0"
+    "@vocdoni/proto": "1.15.12",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "tsconfig": "workspace:*",

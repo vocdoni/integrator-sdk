@@ -1,7 +1,16 @@
 import type { Election } from '@vocdoni/api-types'
-import { CspAuth, VotingClient } from '@vocdoni/api-voting'
+import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 import { useQuery } from '@tanstack/react-query'
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
+import { useBundleOptional } from '../bundle/BundleProvider'
 import { useClient } from '../client/ClientProvider'
 
 export interface ElectionContextValue {
@@ -9,25 +18,24 @@ export interface ElectionContextValue {
   loading: boolean
   error: Error | null
 
-  cspToken: string | null
-  cspStep0(data?: unknown): Promise<void>
-  cspStep1(authData?: unknown): Promise<void>
-
-  /** true when the voter has completed CSP authentication */
+  /** true once the voter has a verified bundle auth session. */
   connected: boolean
-  /** Voter weight from census; populated after CSP check */
+  /** Voter census weight (decoded), when known. */
   weight: number | null
-  clearVoter(): void
+  /** Whether the voter belongs to this election's census. */
+  isInCensus: boolean
+  hasVoted: boolean
 
   vote(choices: number[]): Promise<string>
   voteId: string | null
   isAbleToVote: boolean
-  hasVoted: boolean
+  /** Clears the voter session (delegates to the bundle when present). */
+  clearVoter(): void
 }
 
 export interface ElectionProviderProps {
   children: ReactNode
-  /** Election ID — fetches the election on mount */
+  /** Election ID — fetches the election on mount. */
   id: string
 }
 
@@ -35,6 +43,8 @@ const ElectionContext = createContext<ElectionContextValue | undefined>(undefine
 
 export function ElectionProvider({ children, id }: ElectionProviderProps) {
   const { client } = useClient()
+  const bundle = useBundleOptional()
+  const chainId = bundle?.chainId ?? null
 
   const {
     data: election = null,
@@ -46,85 +56,95 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
     enabled: !!id,
   })
 
-  const [cspStep0Token, setCspStep0Token] = useState<string | null>(null)
-  const [cspToken, setCspToken] = useState<string | null>(null)
-  const [weight, setWeight] = useState<number | null>(null)
   const [voteId, setVoteId] = useState<string | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
+  const [isInCensus, setIsInCensus] = useState(false)
 
-  const cspStep0 = useCallback(
-    async (data?: unknown) => {
-      if (!election?.census?.uri) throw new Error('Election census URI not available')
-      const cspAuth = new CspAuth(election.census.uri)
-      const res = await cspAuth.step0(data)
-      setCspStep0Token(res.authToken)
-    },
-    [election],
-  )
-
-  const cspStep1 = useCallback(
-    async (authData?: unknown) => {
-      if (!election?.census?.uri) throw new Error('Election census URI not available')
-      if (!cspStep0Token) throw new Error('Must complete CSP step 0 first')
-      const cspAuth = new CspAuth(election.census.uri)
-      const res = await cspAuth.step1(cspStep0Token, authData)
-      setCspToken(res.authToken)
-      // Fetch weight alongside confirmation
-      const check = await cspAuth.check(res.authToken, election.id)
-      if (check.weight != null) setWeight(check.weight)
-    },
-    [election, cspStep0Token],
-  )
-
-  const clearVoter = useCallback(() => {
-    setCspStep0Token(null)
-    setCspToken(null)
-    setWeight(null)
-    setHasVoted(false)
-    setVoteId(null)
-  }, [])
+  // Resolve census membership for this election once the bundle is connected.
+  useEffect(() => {
+    if (!bundle?.connected || !election) {
+      setIsInCensus(false)
+      return
+    }
+    let cancelled = false
+    bundle
+      .check(election.id)
+      .then((res) => {
+        if (cancelled) return
+        setIsInCensus(res.belongs)
+        setHasVoted(res.hasVoted)
+      })
+      .catch(() => {
+        // ineligible / network error — leave membership as not-in-census
+      })
+    return () => {
+      cancelled = true
+    }
+    // bundle.check identity changes with the auth token; connected + election id are the real triggers
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle?.connected, election?.id])
 
   const vote = useCallback(
     async (choices: number[]): Promise<string> => {
       if (!election) throw new Error('Election not loaded')
+      if (!bundle?.connected) throw new Error('Voter is not authenticated for this bundle')
+      if (!chainId) {
+        throw new Error('Missing chainId — the bundle info did not provide one; cannot cast a vote')
+      }
 
-      if (!cspToken) throw new Error('Must complete CSP authentication first')
-      if (!election.census?.uri) throw new Error('Election census URI not available')
+      // Per-vote ephemeral identity; the CSP signs its address.
+      const signer = new EphemeralSigner()
+      const { signature, weight } = await bundle.sign(election.id, signer.address)
 
       const votingClient = new VotingClient()
-      const resultVoteId = await votingClient.vote({
-        electionId: election.id,
-        censusUri: election.census.uri,
+      const jobId = await votingClient.vote({
+        processId: election.id,
         choices,
+        chainId,
+        signer,
+        cspSignature: signature,
+        cspWeight: weight,
         encryptionKeys: election.encryptionPublicKeys,
-        cspAuthToken: cspToken,
         relayFn: (req) => client.elections.vote(election.id, req),
       })
+
+      // The relay is async — poll the job for the resulting nullifier.
+      const job = await client.jobs.waitFor(jobId)
+      const resultVoteId = job.result?.voteID ?? jobId
 
       setVoteId(resultVoteId)
       setHasVoted(true)
       return resultVoteId
     },
-    [election, cspToken, client.elections],
+    [election, bundle, chainId, client],
   )
 
-  const connected = !!cspToken
+  const clearVoter = useCallback(() => {
+    setVoteId(null)
+    setHasVoted(false)
+    setIsInCensus(false)
+    bundle?.clear()
+  }, [bundle])
 
-  const value: ElectionContextValue = {
-    election,
-    loading,
-    error,
-    cspToken,
-    cspStep0,
-    cspStep1,
-    connected,
-    weight,
-    clearVoter,
-    vote,
-    voteId,
-    isAbleToVote: connected && !hasVoted,
-    hasVoted,
-  }
+  const connected = !!bundle?.connected
+  const weight = bundle?.weight ?? null
+
+  const value = useMemo<ElectionContextValue>(
+    () => ({
+      election,
+      loading,
+      error: error ?? null,
+      connected,
+      weight,
+      isInCensus,
+      hasVoted,
+      vote,
+      voteId,
+      isAbleToVote: connected && isInCensus && !hasVoted,
+      clearVoter,
+    }),
+    [election, loading, error, connected, weight, isInCensus, hasVoted, vote, voteId, clearVoter],
+  )
 
   return <ElectionContext.Provider value={value}>{children}</ElectionContext.Provider>
 }

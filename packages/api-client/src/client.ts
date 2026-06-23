@@ -1,8 +1,10 @@
 import type { AppClientConfig } from '@vocdoni/api-types'
 import { up } from 'up-fetch'
 import { AuthClient } from './auth'
+import { BundleClient } from './bundle'
 import { CensusClient } from './census'
 import { ElectionsClient } from './elections'
+import { JobsClient } from './jobs'
 import { OrganizationsClient } from './organizations'
 
 async function resolveToken(
@@ -19,6 +21,8 @@ export class VocdoniAppClient {
   readonly organizations: OrganizationsClient
   readonly census: CensusClient
   readonly auth: AuthClient
+  readonly bundle: BundleClient
+  readonly jobs: JobsClient
 
   constructor(config: AppClientConfig) {
     const fetcher = up(fetch, async () => {
@@ -39,6 +43,8 @@ export class VocdoniAppClient {
     this.organizations = new OrganizationsClient(fetcher)
     this.census = new CensusClient(fetcher)
     this.auth = new AuthClient(fetcher)
+    this.bundle = new BundleClient(fetcher)
+    this.jobs = new JobsClient(fetcher)
   }
 }
 

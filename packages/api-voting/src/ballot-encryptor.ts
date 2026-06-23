@@ -1,93 +1,56 @@
 import nacl from 'tweetnacl'
-
-const fromHex = (hex: string): Uint8Array => {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
-  if (clean.length % 2 !== 0) throw new Error('Invalid hex string length')
-  const bytes = new Uint8Array(clean.length / 2)
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
-  }
-  return bytes
-}
-
-const toBase64 = (bytes: Uint8Array): string => {
-  // Use Buffer in Node, btoa in browser
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(bytes).toString('base64')
-  }
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
+import { blake2b } from '@noble/hashes/blake2b'
+import { fromHex } from './hex'
 
 /**
- * Encrypts ballot choices for `secretUntilTheEnd` elections.
+ * Encrypts ballots for `secretUntilTheEnd` elections using the NaCl SealedBox
+ * scheme the Vochain expects (libsodium `crypto_box_seal`).
  *
- * Uses NaCl box (curve25519-xsalsa20-poly1305) with an ephemeral keypair.
- * The election's public encryption key is the recipient key.
+ * Layout of the returned bytes:
+ *   ephemeralPublicKey(32) || box
+ * where `box = nacl.box(message, nonce, recipientPk, ephemeralSk)` and the
+ * nonce is `blake2b(ephemeralPk || recipientPk)` truncated to 24 bytes.
  *
- * The returned value is base64(nonce || ciphertext).
+ * The result is raw bytes (it goes straight into VoteEnvelope.votePackage),
+ * not base64 — that differs from a standalone "encrypt to string" helper.
  */
 export class BallotEncryptor {
   /**
-   * Encrypt an array of vote choices using the election's public encryption key.
-   *
-   * @param choices   Array of choice indices
-   * @param publicKey Hex-encoded election encryption public key (32 bytes / curve25519)
-   * @param keyIndex  Index of the encryption key used
+   * Seal `message` to the election's hex-encoded curve25519 public key.
    */
-  static encrypt(
-    choices: number[],
-    publicKey: string,
-    keyIndex: number
-  ): { encrypted: string; keyIndex: number } {
-    const theirPublicKey = fromHex(publicKey)
-    const ephemeralKeypair = nacl.box.keyPair()
+  static seal(message: Uint8Array, hexPublicKey: string): Uint8Array {
+    const recipientPk = fromHex(hexPublicKey)
+    const ephemeral = nacl.box.keyPair()
 
-    // Wrap in Uint8Array to ensure the same realm as tweetnacl expects
-    const encoded = new TextEncoder().encode(JSON.stringify(choices))
-    const message = new Uint8Array(encoded.buffer, encoded.byteOffset, encoded.byteLength)
-    const nonce = nacl.randomBytes(nacl.box.nonceLength)
+    const nonce = blake2b(new Uint8Array([...ephemeral.publicKey, ...recipientPk]), {
+      dkLen: nacl.box.nonceLength,
+    })
+    const boxed = nacl.box(message, nonce, recipientPk, ephemeral.secretKey)
 
-    const ciphertext = nacl.box(message, nonce, theirPublicKey, ephemeralKeypair.secretKey)
+    const out = new Uint8Array(ephemeral.publicKey.length + boxed.length)
+    out.set(ephemeral.publicKey, 0)
+    out.set(boxed, ephemeral.publicKey.length)
 
-    // Prepend the ephemeral public key so the recipient can derive the shared secret:
-    // format: ephemeralPublicKey(32) || nonce(24) || ciphertext
-    const combined = new Uint8Array(
-      nacl.box.publicKeyLength + nonce.length + ciphertext.length
-    )
-    combined.set(ephemeralKeypair.publicKey, 0)
-    combined.set(nonce, nacl.box.publicKeyLength)
-    combined.set(ciphertext, nacl.box.publicKeyLength + nonce.length)
-
-    return {
-      encrypted: toBase64(combined),
-      keyIndex,
-    }
+    // wipe the ephemeral secret key
+    ephemeral.secretKey.fill(0)
+    return out
   }
 
   /**
-   * Decrypt a ballot encrypted with {@link BallotEncryptor.encrypt}.
-   * Useful for testing / verification on the recipient side.
-   *
-   * @param encryptedBase64 The base64 value returned by encrypt()
-   * @param secretKey       The recipient's secret key (32 bytes)
+   * Open a sealed box given the recipient keypair. Useful for tests.
    */
-  static decrypt(encryptedBase64: string, secretKey: Uint8Array): number[] {
-    const combined = Uint8Array.from(atob(encryptedBase64), (c) => c.charCodeAt(0))
-
-    const ephemeralPublicKey = combined.slice(0, nacl.box.publicKeyLength)
-    const nonce = combined.slice(
-      nacl.box.publicKeyLength,
-      nacl.box.publicKeyLength + nacl.box.nonceLength
-    )
-    const ciphertext = combined.slice(nacl.box.publicKeyLength + nacl.box.nonceLength)
-
-    const decrypted = nacl.box.open(ciphertext, nonce, ephemeralPublicKey, secretKey)
-    if (!decrypted) throw new Error('Decryption failed')
-
-    return JSON.parse(new TextDecoder().decode(decrypted)) as number[]
+  static open(
+    sealed: Uint8Array,
+    recipientPublicKey: Uint8Array,
+    recipientSecretKey: Uint8Array,
+  ): Uint8Array {
+    const ephemeralPk = sealed.slice(0, nacl.box.publicKeyLength)
+    const boxed = sealed.slice(nacl.box.publicKeyLength)
+    const nonce = blake2b(new Uint8Array([...ephemeralPk, ...recipientPublicKey]), {
+      dkLen: nacl.box.nonceLength,
+    })
+    const opened = nacl.box.open(boxed, nonce, ephemeralPk, recipientSecretKey)
+    if (!opened) throw new Error('Failed to open sealed box')
+    return opened
   }
 }

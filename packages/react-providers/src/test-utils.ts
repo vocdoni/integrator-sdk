@@ -35,6 +35,6 @@ export function TestProvider({ children, apiUrl = 'http://localhost', ...rest }:
   return createElement(
     QueryClientProvider,
     { client: queryClient },
-    createElement(ClientProvider, { apiUrl, ...rest }, children),
+    createElement(ClientProvider, { apiUrl, ...rest, children }),
   )
 }

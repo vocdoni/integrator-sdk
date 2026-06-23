@@ -197,65 +197,157 @@ export interface PaginatedElections {
   pageSize: number
 }
 
-// ─── Vote ─────────────────────────────────────────────────────────────────────
+// ─── Vote relay ───────────────────────────────────────────────────────────────
 
 export interface RelayVoteRequest {
+  /** Hex of a marshaled SignedTx whose inner Tx is a Vote envelope. */
   txPayload: string
 }
 
 export interface RelayVoteResponse {
-  voteId: string
+  /** Async job id — poll GET /jobs/{jobId} for the resulting vote nullifier. */
+  jobId: string
 }
 
-// ─── CSP ─────────────────────────────────────────────────────────────────────
+// ─── Jobs (async transaction outcomes) ─────────────────────────────────────────
 
-export interface CspStep0Request {
-  authData?: unknown
+export type JobStatus = 'pending' | 'completed' | 'failed'
+
+export type JobType =
+  | 'org_members'
+  | 'census_participants'
+  | 'publish_process'
+  | 'set_process_status'
+  | 'relay_vote'
+
+export interface JobResult {
+  address?: string
+  status?: string
+  /** Vote nullifier — present once a relay_vote job completes. */
+  voteID?: string
 }
 
-export interface CspStep0Response {
+export interface JobStatusResponse {
+  jobId: string
+  status: JobStatus
+  type: JobType
+  result?: JobResult
+  error?: string
+}
+
+export interface EnqueuedResponse {
+  jobId: string
+}
+
+// ─── Bundle ─────────────────────────────────────────────────────────────────────
+// A bundle groups processes that share a census. The voter authenticates against
+// the bundle once and votes on its processes; the bundle also carries the Vochain
+// chain id the votes are signed against.
+
+export interface Bundle {
+  id: string
+  /** Vochain chain id the bundle's processes live on (used to sign votes). */
+  chainId?: string
+  /** On-chain process ids included in the bundle. */
+  processes: string[]
+  /** Owner organization address (hex). */
+  orgAddress?: string
+  /**
+   * Census-management object for the bundle (type, authFields, size…). This is
+   * the richer SaaS census shape, distinct from the voting-time {@link Census};
+   * left untyped until we need to read it client-side.
+   */
+  census?: Record<string, unknown>
+}
+
+// ─── Bundle CSP auth ────────────────────────────────────────────────────────────
+// The CSP / two-factor voter-auth flow is hosted by the SaaS backend under
+// /process/bundle/{bundleId}/*. A single verified authToken is reused across
+// every process in the bundle.
+// Note: `weight` is wire-encoded as a hex string (e.g. "2a" === 42).
+
+/** Auth step 0/1 bodies are free-form (they vary by census auth type). */
+/**
+ * Auth step 0 — identify the participant. Pass every field the census requires
+ * in this one object; the census `authFields` lists which ones (one or several,
+ * e.g. just `memberNumber`, or `name` + `surname` + `birthDate`). Extra fields
+ * are ignored. For auth-only censuses (no 2FA) step 0 already returns a verified
+ * token.
+ */
+export interface BundleAuthRequest {
+  name?: string
+  surname?: string
+  memberNumber?: string
+  nationalId?: string
+  birthDate?: string
+  email?: string
+  phone?: string
+}
+
+/** Auth step 1 — confirm the 2FA challenge. Not used by auth-only censuses. */
+export interface BundleAuthChallengeRequest {
   authToken: string
-  response?: unknown
+  /** Challenge solution(s); the OTP is `authData[0]`. */
+  authData: string[]
 }
 
-export interface CspStep1Request {
+/** Shared response shape of the auth, resend and sign endpoints. */
+export interface AuthResponse {
+  authToken?: string
+  /** Hex CSP signature — present on the sign response. */
+  signature?: string
+  /** Hex-encoded census weight. */
+  weight?: string
+}
+
+export interface AuthResendRequest {
   authToken: string
-  authData?: unknown
+  email?: string
+  phone?: string
 }
 
-export interface CspStep1Response {
+export interface CheckMembershipRequest {
   authToken: string
-}
-
-export interface CspSignRequest {
-  payload: string
-  authToken: string
-  electionId: string
-}
-
-export interface CspSignResponse {
-  signature: string
-  weight?: number
-}
-
-export interface CspCheckRequest {
-  authToken: string
+  /** When provided, the response also reports hasVoted for that process. */
   electionId?: string
 }
 
-export interface CspCheckResponse {
+export interface CheckMembershipResponse {
   belongs: boolean
-  weight?: number
   hasVoted: boolean
+  /** Hex-encoded census weight. */
+  weight?: string
 }
 
-export interface CspSignInfoRequest {
+export interface SignRequest {
+  authToken: string
+  electionId: string
+  /** Hex address to be signed by the CSP. */
+  payload: string
+  /** Blinding R point — only used by blind-salted censuses. */
+  tokenR?: string
+}
+
+export interface UserWeightRequest {
   authToken: string
 }
 
-export interface CspSignInfoResponse {
-  address: string
+export interface UserWeightResponse {
+  /** Hex-encoded census weight. */
+  weight?: string
+}
+
+// ─── Consumed address (sign-info) ──────────────────────────────────────────────
+
+export interface ConsumedAddressRequest {
+  authToken: string
+}
+
+export interface ConsumedAddressResponse {
+  authToken?: string
+  /** Vote nullifier of the consumed process. */
   nullifier: string
+  /** Consumption timestamp. */
   at: string
 }
 

@@ -1,147 +1,117 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { mockElection, CSP_BASE } from '../../../../mocks/handlers'
+import { BUNDLE_ID, mockElection } from '../../../../mocks/handlers'
 import { server } from '../../../../mocks/server'
+import { BundleProvider, useBundle } from '../bundle/BundleProvider'
 import { TestProvider } from '../test-utils'
 import { ElectionProvider, useElection } from './ElectionProvider'
-
-// The mock election has census.uri set by the handler; we inject it manually
-// for tests that exercise the CSP flow.
-const electionWithCensus = {
-  ...mockElection,
-  census: {
-    id: 'census-1',
-    source: 'csp' as const,
-    size: 100,
-    uri: CSP_BASE,
-  },
-}
 
 function wrapper({ children }: { children: React.ReactNode }) {
   return (
     <TestProvider>
-      <ElectionProvider id={mockElection.id}>{children}</ElectionProvider>
+      <BundleProvider id={BUNDLE_ID}>
+        <ElectionProvider id={mockElection.id}>{children}</ElectionProvider>
+      </BundleProvider>
     </TestProvider>
   )
 }
 
+const useVoter = () => ({ election: useElection(), bundle: useBundle() })
+
+async function connect(result: { current: ReturnType<typeof useVoter> }) {
+  await act(async () => {
+    await result.current.bundle.auth0({ memberNumber: '5' })
+  })
+  await act(async () => {
+    await result.current.bundle.auth1(['123456'])
+  })
+}
+
 describe('ElectionProvider', () => {
-  it('starts in loading state then resolves the election', async () => {
-    const { result } = renderHook(() => useElection(), { wrapper })
-
-    // Initially loading
-    expect(result.current.loading).toBe(true)
-    expect(result.current.election).toBeNull()
-
-    // After fetch resolves
-    await waitFor(() => expect(result.current.loading).toBe(false))
-    expect(result.current.election).not.toBeNull()
-    expect(result.current.election?.id).toBe(mockElection.id)
+  it('starts loading then resolves the election', async () => {
+    const { result } = renderHook(useVoter, { wrapper })
+    expect(result.current.election.loading).toBe(true)
+    await waitFor(() => expect(result.current.election.loading).toBe(false))
+    expect(result.current.election.election?.id).toBe(mockElection.id)
   })
 
-  it('exposes election data after fetch', async () => {
-    const { result } = renderHook(() => useElection(), { wrapper })
-
-    await waitFor(() => expect(result.current.election).not.toBeNull())
-
-    expect(result.current.election?.title).toBe(mockElection.title)
-    expect(result.current.election?.status).toBe(mockElection.status)
-    expect(result.current.election?.organizationId).toBe(mockElection.organizationId)
+  it('initialises with no vote and unable to vote', async () => {
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    expect(result.current.election.voteId).toBeNull()
+    expect(result.current.election.hasVoted).toBe(false)
+    expect(result.current.election.isAbleToVote).toBe(false)
+    expect(result.current.election.connected).toBe(false)
   })
 
-  it('initialises with null voteId and hasVoted false', async () => {
-    const { result } = renderHook(() => useElection(), { wrapper })
-
-    await waitFor(() => expect(result.current.election).not.toBeNull())
-
-    expect(result.current.voteId).toBeNull()
-    expect(result.current.hasVoted).toBe(false)
-    expect(result.current.isAbleToVote).toBe(false)
+  it('exposes the bundle chainId once bundle info loads', async () => {
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.bundle.chainId).toBe('test'))
   })
 
-  it('connected is false before auth and true after cspStep1', async () => {
-    server.use(
-      http.get('http://localhost/process/:id/metadata', ({ params }) =>
-        HttpResponse.json({ ...mockElection, id: params.id as string, census: { id: 'c1', source: 'csp', size: 100, uri: CSP_BASE } }),
-      ),
-    )
-    const { result } = renderHook(() => useElection(), { wrapper })
+  it('connects through the bundle auth flow and resolves membership + weight', async () => {
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
 
-    await waitFor(() => expect(result.current.election).not.toBeNull())
-    expect(result.current.connected).toBe(false)
+    await connect(result)
 
-    await act(() => result.current.cspStep0())
-    await act(() => result.current.cspStep1())
-
-    expect(result.current.connected).toBe(true)
+    expect(result.current.election.connected).toBe(true)
+    // weight "2a" === 42, decoded from the bundle auth/check responses
+    await waitFor(() => expect(result.current.election.weight).toBe(42))
+    // membership check runs once connected
+    await waitFor(() => expect(result.current.election.isInCensus).toBe(true))
+    expect(result.current.election.isAbleToVote).toBe(true)
   })
 
-  it('weight is populated from the CSP check call after cspStep1', async () => {
-    server.use(
-      http.get('http://localhost/process/:id/metadata', ({ params }) =>
-        HttpResponse.json({ ...mockElection, id: params.id as string, census: { id: 'c1', source: 'csp', size: 100, uri: CSP_BASE } }),
-      ),
-    )
-    const { result } = renderHook(() => useElection(), { wrapper })
+  it('casts a vote and resolves the nullifier from the relay job', async () => {
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
 
-    await waitFor(() => expect(result.current.election).not.toBeNull())
-    expect(result.current.weight).toBeNull()
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
 
-    await act(() => result.current.cspStep0())
-    await act(() => result.current.cspStep1())
-
-    expect(result.current.weight).toBe(1)
-  })
-
-  it('clearVoter resets connected, weight, and vote state', async () => {
-    server.use(
-      http.get('http://localhost/process/:id/metadata', ({ params }) =>
-        HttpResponse.json({ ...mockElection, id: params.id as string, census: { id: 'c1', source: 'csp', size: 100, uri: CSP_BASE } }),
-      ),
-    )
-    const { result } = renderHook(() => useElection(), { wrapper })
-
-    await waitFor(() => expect(result.current.election).not.toBeNull())
-    await act(() => result.current.cspStep0())
-    await act(() => result.current.cspStep1())
-    expect(result.current.connected).toBe(true)
-    expect(result.current.weight).toBe(1)
-
-    act(() => result.current.clearVoter())
-
-    expect(result.current.connected).toBe(false)
-    expect(result.current.weight).toBeNull()
-    expect(result.current.hasVoted).toBe(false)
-    expect(result.current.voteId).toBeNull()
-  })
-
-  it('vote() triggers the relay endpoint and sets voteId', async () => {
-    const { result } = renderHook(() => useElection(), {
-      wrapper: ({ children }) => (
-        <TestProvider>
-          <ElectionProvider id={electionWithCensus.id}>{children}</ElectionProvider>
-        </TestProvider>
-      ),
+    let voteId = ''
+    await act(async () => {
+      voteId = await result.current.election.vote([0])
     })
 
-    // Wait for election to load; MSW handler returns mockElection (no census.uri),
-    // so we override the in-flight state with a manual cspToken for this test
-    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(voteId).toMatch(/^nullifier-job-abc123/)
+    expect(result.current.election.voteId).toBe(voteId)
+    expect(result.current.election.hasVoted).toBe(true)
+  })
 
-    // Directly run the vote, but first we need a cspToken.
-    // Trigger cspStep0 & cspStep1 against the CSP mock server, but since the
-    // loaded election has no census.uri we test with a direct relayFn test
-    // via the MSW /process/:id/vote handler instead.
-    //
-    // We verify that the vote endpoint returns a voteId correctly
-    // by checking the mock handler shape; the full integration path is:
-    //   vote() -> VotingClient.vote() -> relayFn -> POST /process/:id/vote
-    // The CSP sign mock signs with `sig-of-<payload>`.
+  it('refuses to vote when the bundle provides no chainId', async () => {
+    // Override the bundle info to omit chainId (keep a 2FA census so the
+    // auth0 → auth1 connect flow still applies).
+    server.use(
+      http.get(`http://localhost/process/bundle/:bundleId`, ({ params }) =>
+        HttpResponse.json({
+          id: params.bundleId as string,
+          processes: [mockElection.id],
+          census: { twoFaFields: ['phone'] },
+        }),
+      ),
+    )
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
 
-    // Because mockElection doesn't include a census.uri, calling vote() will
-    // throw 'Election census URI not available'. That's correct guard behaviour.
-    await expect(result.current.vote([0])).rejects.toThrow('Must complete CSP authentication')
-    expect(result.current.voteId).toBeNull()
+    await expect(result.current.election.vote([0])).rejects.toThrow('Missing chainId')
+  })
+
+  it('clearVoter resets connection and vote state', async () => {
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+
+    await connect(result)
+    expect(result.current.election.connected).toBe(true)
+
+    act(() => result.current.election.clearVoter())
+
+    expect(result.current.election.connected).toBe(false)
+    expect(result.current.election.weight).toBeNull()
+    expect(result.current.election.hasVoted).toBe(false)
+    expect(result.current.election.voteId).toBeNull()
   })
 })

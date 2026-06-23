@@ -12,3 +12,4 @@ onlyBuiltDependencies:
 allowBuilds:
   esbuild: true
   msw: true
+  protobufjs: false

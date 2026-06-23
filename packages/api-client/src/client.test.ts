@@ -26,10 +26,10 @@ describe('VocdoniAppClient', () => {
   })
 
   describe('elections.vote', () => {
-    it('sends the correct body and returns a voteId', async () => {
+    it('relays the tx and returns an async job id', async () => {
       const payload = { txPayload: 'encoded-tx-payload' }
       const result = await client.elections.vote('abc123', payload)
-      expect(result.voteId).toBe('vote-abc123-encoded-tx-payload')
+      expect(result.jobId).toMatch(/^job-abc123/)
     })
   })
 

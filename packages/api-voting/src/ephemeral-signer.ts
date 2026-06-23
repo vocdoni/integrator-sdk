@@ -1,14 +1,14 @@
 import { secp256k1 } from '@noble/curves/secp256k1'
 import { keccak_256 } from '@noble/hashes/sha3'
+import { concatBytes, utf8ToBytes } from '@noble/hashes/utils'
+import { toHex } from './hex'
 
-const toHex = (bytes: Uint8Array): string =>
-  Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
+const EIP191_PREFIX = '\x19Ethereum Signed Message:\n'
 
 /**
  * Generates a per-vote ephemeral secp256k1 keypair.
- * The derived Ethereum address is used as the signer identity for CSP.
+ * The derived Ethereum address is used as the signer identity for CSP, and the
+ * key signs the Vochain vote transaction (EIP-191 personal_sign).
  */
 export class EphemeralSigner {
   readonly privateKey: Uint8Array
@@ -25,17 +25,21 @@ export class EphemeralSigner {
   }
 
   /**
-   * Signs a message with the ephemeral private key.
-   * Returns a 65-byte compact+recovery signature (v || r || s).
+   * Signs a UTF-8 message using the EIP-191 `personal_sign` scheme, exactly as
+   * ethers' `Wallet.signMessage` does — which is what the Vochain validates:
+   *
+   *   keccak256("\x19Ethereum Signed Message:\n" + len(message) + message)
+   *
+   * @returns 65-byte signature as `0x{r}{s}{v}` hex, with v ∈ {27, 28}.
    */
-  sign(message: Uint8Array): Uint8Array {
-    const sig = secp256k1.sign(message, this.privateKey)
-    // compact: 64 bytes (r || s), recovery: 0 or 1
-    const compact = sig.toCompactRawBytes()
+  signMessage(message: Uint8Array): string {
+    const prefix = utf8ToBytes(`${EIP191_PREFIX}${message.length}`)
+    const digest = keccak_256(concatBytes(prefix, message))
+    const sig = secp256k1.sign(digest, this.privateKey, { lowS: true })
     const v = sig.recovery + 27
-    const result = new Uint8Array(65)
-    result[0] = v
-    result.set(compact, 1)
-    return result
+    const out = new Uint8Array(65)
+    out.set(sig.toCompactRawBytes(), 0) // r || s (64 bytes)
+    out[64] = v
+    return '0x' + toHex(out)
   }
 }
