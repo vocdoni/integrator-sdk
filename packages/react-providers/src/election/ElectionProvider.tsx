@@ -44,7 +44,6 @@ const ElectionContext = createContext<ElectionContextValue | undefined>(undefine
 export function ElectionProvider({ children, id }: ElectionProviderProps) {
   const { client } = useClient()
   const bundle = useBundleOptional()
-  const chainId = bundle?.chainId ?? null
 
   const {
     data: election = null,
@@ -55,6 +54,10 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
     queryFn: () => client.elections.get(id),
     enabled: !!id,
   })
+
+  // The process now carries its own chainId; fall back to the bundle for
+  // back-compat (and for processes fetched before the merge).
+  const chainId = election?.chainId ?? bundle?.chainId ?? null
 
   const [voteId, setVoteId] = useState<string | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
@@ -67,8 +70,9 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
       return
     }
     let cancelled = false
+    // CSP endpoints are keyed by the vochain id, which is `address`.
     bundle
-      .check(election.id)
+      .check(election.address ?? election.id)
       .then((res) => {
         if (cancelled) return
         setIsInCensus(res.belongs)
@@ -92,13 +96,16 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
         throw new Error('Missing chainId — the bundle info did not provide one; cannot cast a vote')
       }
 
+      // CSP + vote envelope use the vochain id (`address`), not the Mongo id.
+      const processId = election.address ?? election.id
+
       // Per-vote ephemeral identity; the CSP signs its address.
       const signer = new EphemeralSigner()
-      const { signature, weight } = await bundle.sign(election.id, signer.address)
+      const { signature, weight } = await bundle.sign(processId, signer.address)
 
       const votingClient = new VotingClient()
       const jobId = await votingClient.vote({
-        processId: election.id,
+        processId,
         choices,
         chainId,
         signer,

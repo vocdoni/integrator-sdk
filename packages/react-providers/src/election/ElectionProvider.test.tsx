@@ -81,15 +81,28 @@ describe('ElectionProvider', () => {
     expect(result.current.election.hasVoted).toBe(true)
   })
 
-  it('refuses to vote when the bundle provides no chainId', async () => {
-    // Override the bundle info to omit chainId (keep a 2FA census so the
-    // auth0 → auth1 connect flow still applies).
+  it('refuses to vote when neither process nor bundle provides a chainId', async () => {
+    // chainId now comes from the process first, so strip it there too — plus the
+    // bundle (keep a 2FA census so the auth0 → auth1 connect flow still applies).
     server.use(
       http.get(`http://localhost/process/bundle/:bundleId`, ({ params }) =>
         HttpResponse.json({
           id: params.bundleId as string,
           processes: [mockElection.id],
           census: { twoFaFields: ['phone'] },
+        }),
+      ),
+      http.get(`http://localhost/process/:id`, ({ params }) =>
+        HttpResponse.json({
+          id: params.id as string,
+          address: '6be21a5a9dc01036097ea184999095aed31735e7264a19652130030800000001',
+          status: mockElection.status,
+          metadata: { title: mockElection.title },
+          electionParams: {
+            questions: mockElection.questions,
+            voteType: mockElection.voteType,
+            electionType: mockElection.electionType,
+          },
         }),
       ),
     )

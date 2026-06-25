@@ -4,6 +4,7 @@ import {
   mockAuthToken,
   mockElection,
   mockOrganization,
+  MOCK_PROCESS_ADDRESS,
 } from '../../../mocks/handlers'
 import { createClient, VocdoniAppClient } from './client'
 
@@ -22,6 +23,9 @@ describe('VocdoniAppClient', () => {
       expect(election.id).toBe('abc123')
       expect(election.title).toBe(mockElection.title)
       expect(election.status).toBe('READY')
+      // The merged process info surfaces the vochain id + chain id.
+      expect(election.address).toBe(MOCK_PROCESS_ADDRESS)
+      expect(election.chainId).toBe('test')
     })
   })
 
@@ -46,7 +50,7 @@ describe('VocdoniAppClient', () => {
       let capturedAuth: string | null = null
 
       server.use(
-        http.get(`${BASE_URL}/process/:id/metadata`, ({ request }) => {
+        http.get(`${BASE_URL}/process/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
           return HttpResponse.json({ ...mockElection, id: 'abc123' })
         }),
@@ -65,7 +69,7 @@ describe('VocdoniAppClient', () => {
       let capturedAuth: string | null = null
 
       server.use(
-        http.get(`${BASE_URL}/process/:id/metadata`, ({ request }) => {
+        http.get(`${BASE_URL}/process/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
           return HttpResponse.json({ ...mockElection, id: 'abc123' })
         }),
@@ -84,7 +88,7 @@ describe('VocdoniAppClient', () => {
       let capturedAuth: string | null = null
 
       server.use(
-        http.get(`${BASE_URL}/process/:id/metadata`, ({ request }) => {
+        http.get(`${BASE_URL}/process/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
           return HttpResponse.json({ ...mockElection, id: 'abc123' })
         }),
@@ -103,7 +107,7 @@ describe('VocdoniAppClient', () => {
       let capturedAuth: string | null = null
 
       server.use(
-        http.get(`${BASE_URL}/process/:id/metadata`, ({ request }) => {
+        http.get(`${BASE_URL}/process/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
           return HttpResponse.json({ ...mockElection, id: 'abc123' })
         }),

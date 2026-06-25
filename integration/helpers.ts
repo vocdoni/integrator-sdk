@@ -15,6 +15,8 @@ export function makeClient(authToken?: () => string | null | undefined): Vocdoni
 const DEFAULT_BUNDLE_ID = '6a2a93d3783a1022d6816674'
 const DEFAULT_PROCESS_ID = '6be21a5a9dc034ede83966b661e6a648854bd92b7d209d2c97c203000000004f'
 const DEFAULT_MEMBER_NUMBER = '5'
+/** A live process addressed by its Mongo id (READY), for the process-info proof. */
+const DEFAULT_PROCESS_MONGO_ID = '6a3cfc6b3af4e390f5f79291'
 
 /**
  * Fixtures used by the data-dependent suites. The bundle/process/member default
@@ -24,6 +26,8 @@ const DEFAULT_MEMBER_NUMBER = '5'
 export const fixtures = {
   bundleId: process.env.INTEGRATION_BUNDLE_ID ?? DEFAULT_BUNDLE_ID,
   processId: process.env.INTEGRATION_PROCESS_ID ?? DEFAULT_PROCESS_ID,
+  /** Mongo id used to fetch merged process info via `elections.get`. */
+  processMongoId: process.env.INTEGRATION_PROCESS_INFO_ID ?? DEFAULT_PROCESS_MONGO_ID,
   /** Member number for the auth-only login suite (authField "memberNumber"). */
   memberNumber: process.env.INTEGRATION_MEMBER_NUMBER ?? DEFAULT_MEMBER_NUMBER,
   /** JSON array passed as the auth step-0 `authData` for 2FA censuses. */

@@ -2,6 +2,9 @@ import { http, HttpResponse } from 'msw'
 
 const BASE = 'http://localhost'
 export const BUNDLE_ID = 'bundle-1'
+/** Vochain process id (64-hex) the process info exposes as `address`. */
+export const MOCK_PROCESS_ADDRESS =
+  '6be21a5a9dc01036097ea184999095aed31735e7264a19652130030800000001'
 /** A valid 64-byte hex CSP signature placeholder (decodable by the vote builder). */
 export const MOCK_CSP_SIGNATURE = 'ab'.repeat(64)
 /** Hex-encoded weight "2a" === 42. */
@@ -46,8 +49,25 @@ export const mockAuthToken = {
 }
 
 export const handlers = [
-  http.get(`${BASE}/process/:id/metadata`, ({ params }) =>
-    HttpResponse.json({ ...mockElection, id: params.id as string }),
+  // Process info, addressed by Mongo id. Returns the merged shape: vochain id as
+  // `address`, `chainId`, and the election definition nested under electionParams.
+  http.get(`${BASE}/process/:id`, ({ params }) =>
+    HttpResponse.json({
+      id: params.id as string,
+      address: MOCK_PROCESS_ADDRESS,
+      chainId: 'test',
+      status: mockElection.status,
+      orgAdress: mockElection.organizationId,
+      metadata: { title: mockElection.title, description: mockElection.description },
+      electionParams: {
+        startDate: mockElection.startDate,
+        endDate: mockElection.endDate,
+        questions: mockElection.questions,
+        voteType: mockElection.voteType,
+        electionType: mockElection.electionType,
+      },
+      publishedAt: '2024-01-01T00:00:00Z',
+    }),
   ),
 
   // Vote relay — flat public POST /vote; the process is named in the envelope.

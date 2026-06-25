@@ -13,12 +13,20 @@ import type {
 } from '@vocdoni/api-types'
 import type { UpFetch } from 'up-fetch'
 import { handleError } from './errors'
+import { mapProcessToElection, type ProcessResponse } from './process-mapper'
 
 export class ElectionsClient {
   constructor(private readonly fetch: UpFetch) {}
 
+  /**
+   * Fetch a process by its Mongo ObjectID. `GET /process/{id}` returns the merged
+   * info (vochain `address`, `chainId`, census, nested `electionParams`); we map
+   * it onto the flat {@link Election}. The vochain id lives on `election.address`.
+   */
   async get(id: string): Promise<Election> {
-    return this.fetch<Election>(`/process/${id}/metadata`).catch(handleError)
+    return this.fetch<ProcessResponse>(`/process/${id}`)
+      .then(mapProcessToElection)
+      .catch(handleError)
   }
 
   async getResults(id: string): Promise<ElectionResults> {
