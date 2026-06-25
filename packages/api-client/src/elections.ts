@@ -57,8 +57,12 @@ export class ElectionsClient {
     }).catch(handleError)
   }
 
-  async vote(id: string, payload: RelayVoteRequest): Promise<RelayVoteResponse> {
-    return this.fetch<RelayVoteResponse>(`/process/${id}/vote`, {
+  /**
+   * Relay an already-signed vote. The target process is taken from the signed
+   * envelope, so the relay endpoint is the flat, public `POST /vote`.
+   */
+  async vote(payload: RelayVoteRequest): Promise<RelayVoteResponse> {
+    return this.fetch<RelayVoteResponse>('/vote', {
       method: 'POST',
       body: payload,
     }).catch(handleError)

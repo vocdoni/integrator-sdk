@@ -105,7 +105,7 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
         cspSignature: signature,
         cspWeight: weight,
         encryptionKeys: election.encryptionPublicKeys,
-        relayFn: (req) => client.elections.vote(election.id, req),
+        relayFn: (req) => client.elections.vote(req),
       })
 
       // The relay is async — poll the job for the resulting nullifier.

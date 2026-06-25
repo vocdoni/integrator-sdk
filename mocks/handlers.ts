@@ -50,11 +50,12 @@ export const handlers = [
     HttpResponse.json({ ...mockElection, id: params.id as string }),
   ),
 
-  // Vote relay — returns an async job id (202).
-  http.post(`${BASE}/process/:id/vote`, async ({ params, request }) => {
+  // Vote relay — flat public POST /vote; the process is named in the envelope.
+  // Returns an async job id (202).
+  http.post(`${BASE}/vote`, async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>
     return HttpResponse.json(
-      { jobId: `job-${params.id}-${String(body.txPayload ?? '').slice(0, 8)}` },
+      { jobId: `job-${String(body.txPayload ?? '').slice(0, 8)}` },
       { status: 202 },
     )
   }),

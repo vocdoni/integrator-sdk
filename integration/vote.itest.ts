@@ -48,7 +48,7 @@ suite('full vote flow (live, auth-only — consumes the member)', () => {
       cspSignature: sign.signature!,
       cspWeight: sign.weight,
     })
-    const { jobId } = await client.elections.vote(processId, { txPayload })
+    const { jobId } = await client.elections.vote({ txPayload })
     expect(jobId).toBeTruthy()
 
     // 6. Poll the relay job for the resulting nullifier.

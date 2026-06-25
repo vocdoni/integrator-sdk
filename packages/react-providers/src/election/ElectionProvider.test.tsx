@@ -76,7 +76,7 @@ describe('ElectionProvider', () => {
       voteId = await result.current.election.vote([0])
     })
 
-    expect(voteId).toMatch(/^nullifier-job-abc123/)
+    expect(voteId).toMatch(/^nullifier-job-/)
     expect(result.current.election.voteId).toBe(voteId)
     expect(result.current.election.hasVoted).toBe(true)
   })
