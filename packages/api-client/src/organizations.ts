@@ -23,18 +23,18 @@ export class OrganizationsClient {
     }).catch(handleError)
   }
 
-  async getIntegratorInfo(address: string): Promise<IntegratorInfo> {
-    return this.fetch<IntegratorInfo>(`/organizations/${address}/integrator`).catch(handleError)
+  async getIntegratorInfo(): Promise<IntegratorInfo> {
+    return this.fetch<IntegratorInfo>('/integrator').catch(handleError)
   }
 
-  async listManaged(address: string, page?: number): Promise<Organization[]> {
-    return this.fetch<Organization[]>(`/organizations/${address}/managed`, {
+  async listManaged(page?: number): Promise<Organization[]> {
+    return this.fetch<Organization[]>('/integrator/managed', {
       params: page !== undefined ? { page } : undefined,
     }).catch(handleError)
   }
 
-  async createManaged(address: string, data: CreateOrganizationRequest): Promise<Organization> {
-    return this.fetch<Organization>(`/organizations/${address}/managed`, {
+  async createManaged(data: CreateOrganizationRequest): Promise<Organization> {
+    return this.fetch<Organization>('/integrator/managed', {
       method: 'POST',
       body: data,
     }).catch(handleError)
