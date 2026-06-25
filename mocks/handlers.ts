@@ -103,6 +103,19 @@ export const handlers = [
     HttpResponse.json({ ...mockOrganization, address: params.address as string }),
   ),
 
+  // Org update — echo the merged organization so update() assertions can see the change.
+  http.put(`${BASE}/organizations/:address`, async ({ params, request }) => {
+    const body = (await request.json()) as Record<string, unknown>
+    return HttpResponse.json({
+      ...mockOrganization,
+      address: params.address as string,
+      ...body,
+    })
+  }),
+
+  // Process status change (pause/resume/end/cancel) — 200, body is { status }.
+  http.put(`${BASE}/process/:id/status`, () => HttpResponse.json({}, { status: 200 })),
+
   http.post(`${BASE}/auth/login`, () => HttpResponse.json(mockAuthToken)),
   http.post(`${BASE}/auth/refresh`, () => HttpResponse.json(mockAuthToken)),
 
