@@ -1,4 +1,5 @@
 import type {
+  CensusInfo,
   Election,
   ElectionStatus,
   ElectionType,
@@ -30,6 +31,15 @@ export interface ProcessResponse {
   status?: ElectionStatus
   /** Owner organization address (hex). API typo: single "d". */
   orgAdress?: string
+  census?: {
+    id?: string
+    type?: string
+    weighted?: boolean
+    size?: number
+    published?: { uri?: string; root?: string }
+    authFields?: string[]
+    twoFaFields?: string[]
+  }
   metadata?: {
     title?: string | LocalizedString
     description?: string | LocalizedString
@@ -57,6 +67,20 @@ function plain(value?: string | LocalizedString): string | undefined {
   return value.default
 }
 
+/** Flattens the process census onto the public {@link CensusInfo} (uri from published). */
+function mapCensus(c?: ProcessResponse['census']): CensusInfo | undefined {
+  if (!c) return undefined
+  return {
+    id: c.id,
+    type: c.type,
+    weighted: c.weighted,
+    size: c.size,
+    uri: c.published?.uri,
+    authFields: c.authFields,
+    twoFaFields: c.twoFaFields,
+  }
+}
+
 /**
  * Maps the raw `GET /process/{id}` response onto the public, flat {@link Election}.
  * Keeps `id` as the Mongo id and exposes the vochain id as `address` plus the
@@ -79,6 +103,7 @@ export function mapProcessToElection(p: ProcessResponse): Election {
     questions: params.questions ?? [],
     voteType: params.voteType as VoteType,
     electionType: params.electionType as ElectionType,
+    census: mapCensus(p.census),
     voteCount: p.voteCount ?? 0,
     finalResults: p.finalResults ?? false,
     encryptionPublicKeys: p.encryptionPublicKeys,

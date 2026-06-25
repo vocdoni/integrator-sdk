@@ -21,6 +21,9 @@ suite('process info (live, by mongo id)', () => {
     // Definition mapped out of electionParams.
     expect(election.status).toBeTruthy()
     expect(Array.isArray(election.questions)).toBe(true)
+    // Census info (auth fields for the login form) is now on the process.
+    expect(Array.isArray(election.census?.authFields)).toBe(true)
+    expect(Array.isArray(election.census?.twoFaFields)).toBe(true)
 
     console.info(
       `[integration] process ${election.id} → address ${election.address} on ${election.chainId}`,

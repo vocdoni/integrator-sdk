@@ -25,6 +25,15 @@ const base: ProcessResponse = {
     electionType: { interruptible: true, secretUntilTheEnd: false, anonymous: false },
     maxCensusSize: 100,
   },
+  census: {
+    id: 'census-1',
+    type: 'csp',
+    weighted: false,
+    size: 10,
+    published: { uri: 'https://example.org/census-1', root: '0xroot' },
+    authFields: ['memberNumber'],
+    twoFaFields: ['phone'],
+  },
 }
 
 describe('mapProcessToElection', () => {
@@ -62,5 +71,18 @@ describe('mapProcessToElection', () => {
     const e = mapProcessToElection(base)
     expect(e.voteCount).toBe(0)
     expect(e.finalResults).toBe(false)
+  })
+
+  it('flattens census auth fields, taking uri from published.uri', () => {
+    const e = mapProcessToElection(base)
+    expect(e.census?.type).toBe('csp')
+    expect(e.census?.weighted).toBe(false)
+    expect(e.census?.authFields).toEqual(['memberNumber'])
+    expect(e.census?.twoFaFields).toEqual(['phone'])
+    expect(e.census?.uri).toBe('https://example.org/census-1')
+  })
+
+  it('leaves census undefined when the process has none', () => {
+    expect(mapProcessToElection({ ...base, census: undefined }).census).toBeUndefined()
   })
 })

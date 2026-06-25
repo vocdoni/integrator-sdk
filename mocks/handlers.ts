@@ -58,6 +58,15 @@ export const handlers = [
       chainId: 'test',
       status: mockElection.status,
       orgAdress: mockElection.organizationId,
+      census: {
+        id: 'census-1',
+        type: 'csp',
+        weighted: false,
+        size: 10,
+        published: { uri: 'https://example.org/census-1', root: '0xroot' },
+        authFields: ['memberNumber'],
+        twoFaFields: [],
+      },
       metadata: { title: mockElection.title, description: mockElection.description },
       electionParams: {
         startDate: mockElection.startDate,

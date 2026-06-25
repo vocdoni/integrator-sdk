@@ -77,10 +77,10 @@ export function BundleProvider({ children, id }: BundleProviderProps) {
   })
 
   // Auth-only censuses (no twoFaFields) issue a verified token at step 0.
-  const isAuthOnly = useMemo(() => {
-    const census = bundle?.census as { twoFaFields?: unknown[] } | undefined
-    return !!bundle && (census?.twoFaFields?.length ?? 0) === 0
-  }, [bundle])
+  const isAuthOnly = useMemo(
+    () => !!bundle && (bundle.census?.twoFaFields?.length ?? 0) === 0,
+    [bundle],
+  )
 
   const auth0 = useCallback(
     async (participant: BundleAuthRequest) => {

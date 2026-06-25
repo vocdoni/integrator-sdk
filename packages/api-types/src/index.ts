@@ -64,6 +64,28 @@ export interface Census {
   uri?: string
 }
 
+/**
+ * The richer SaaS census-management shape carried by a process (and its bundle).
+ * Distinct from the voting-time {@link Census}: this describes how voters
+ * authenticate (`authFields` / `twoFaFields`) and the census `type`, which is
+ * what a login form needs. An empty/absent `twoFaFields` means an auth-only
+ * census (step 0 already returns a verified token, no OTP).
+ */
+export interface CensusInfo {
+  id?: string
+  /** SaaS census auth type, e.g. "csp", "sms" — not a {@link CensusSource}. */
+  type?: string
+  /** Whether votes are weighted by the census. */
+  weighted?: boolean
+  size?: number
+  /** Published census URI (from `published.uri`). */
+  uri?: string
+  /** Identity fields the voter must supply at auth step 0. */
+  authFields?: string[]
+  /** 2FA contact fields; empty/absent ⇒ auth-only census. */
+  twoFaFields?: string[]
+}
+
 export interface CreateCensusRequest {
   source: CensusSource
   size?: number
@@ -126,7 +148,8 @@ export interface Election {
   voteCount: number
   finalResults: boolean
   results?: string[][]
-  census?: Census
+  /** Process census info (auth fields, type, size) — see {@link CensusInfo}. */
+  census?: CensusInfo
   questions: Question[]
   voteType: VoteType
   electionType: ElectionType
@@ -260,12 +283,8 @@ export interface Bundle {
   processes: string[]
   /** Owner organization address (hex). */
   orgAddress?: string
-  /**
-   * Census-management object for the bundle (type, authFields, size…). This is
-   * the richer SaaS census shape, distinct from the voting-time {@link Census};
-   * left untyped until we need to read it client-side.
-   */
-  census?: Record<string, unknown>
+  /** Census-management info shared by the bundle's processes — see {@link CensusInfo}. */
+  census?: CensusInfo
 }
 
 // ─── Bundle CSP auth ────────────────────────────────────────────────────────────
