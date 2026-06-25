@@ -11,7 +11,7 @@ vi.mock('@vocdoni/react-providers', () => ({ useElection: () => state }))
 
 import { VoteButton } from './VoteButton'
 
-const Slot = ({ disabled, label }: { disabled?: boolean; label: string }) => (
+const Slot = ({ disabled, label }: any) => (
   <button data-testid="vote" disabled={disabled}>
     {label}
   </button>

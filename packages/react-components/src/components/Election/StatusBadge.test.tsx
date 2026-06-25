@@ -8,9 +8,7 @@ vi.mock('@vocdoni/react-providers', () => ({ useElection: () => state }))
 // Imported after the mock is registered.
 import { ElectionStatusBadge } from './StatusBadge'
 
-const Slot = ({ tone, label }: { tone: string; label: string }) => (
-  <span data-testid="badge">{`${tone}:${label}`}</span>
-)
+const Slot = ({ tone, label }: any) => <span data-testid="badge">{`${tone}:${label}`}</span>
 
 const slots = { components: { ElectionStatusBadge: Slot } }
 

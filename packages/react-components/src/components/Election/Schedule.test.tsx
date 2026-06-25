@@ -7,7 +7,7 @@ vi.mock('@vocdoni/react-providers', () => ({ useElection: () => state }))
 
 import { ElectionSchedule } from './Schedule'
 
-const Slot = ({ text }: { text: string }) => <p data-testid="sched">{text}</p>
+const Slot = ({ text }: any) => <p data-testid="sched">{text}</p>
 const slots = { components: { ElectionSchedule: Slot } }
 
 describe('ElectionSchedule', () => {
