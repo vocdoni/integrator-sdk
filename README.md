@@ -44,7 +44,7 @@
     <a href="https://github.com/vocdoni/census3">Census3</a>
   </div>
 
-# Vocdoni Api SDK
+# Vocdoni Integrator SDK
 
 A modular, tree-shakeable toolkit for building voting applications on top of the
 Vocdoni SaaS API. It replaces the monolithic `@vocdoni/sdk` with a set of small,
