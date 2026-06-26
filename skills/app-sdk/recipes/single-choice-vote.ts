@@ -43,12 +43,14 @@ const election = await client.elections.get(ELECTION_MONGO_ID)
 const processId = election.address // hex vochain id
 if (!processId) throw new Error('Election has no vochain address (not yet published?)')
 
-// Log the available options so we can pick one
+// Log the available options so we can pick one. Election text is a language map
+// ({ default, … }), so resolve it rather than casting to string.
+const text = (t: string | Record<string, string>) => (typeof t === 'string' ? t : t.default)
 console.log('Questions:')
 for (const [qi, q] of election.questions.entries()) {
-  console.log(`  Q${qi}: ${q.title as string}`)
+  console.log(`  Q${qi}: ${text(q.title)}`)
   for (const [ci, c] of q.choices.entries()) {
-    console.log(`    [${ci}] ${c.title as string}`)
+    console.log(`    [${ci}] ${text(c.title)}`)
   }
 }
 

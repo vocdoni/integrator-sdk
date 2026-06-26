@@ -159,6 +159,11 @@ const txPayload = buildVoteTransaction({
 
 When multiple keys are present they are applied in ascending `index` order (innermost first), matching how the Vochain unseals them.
 
+> **Freshly published secret elections:** the keykeepers publish the encryption
+> keys asynchronously, so `election.encryptionPublicKeys` can be empty for a few
+> seconds right after publish. Poll `client.elections.get(mongoId)` until it is
+> populated before building the vote (see `integration/full-flow.itest.ts`).
+
 ---
 
 ## BallotEncryptor (advanced)

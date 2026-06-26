@@ -118,21 +118,65 @@ const results = await client.elections.getResults(mongoId)
 // results.voteCount
 // results.status
 
-// Admin: create a draft election
-const draft = await client.elections.create({ organizationId, title, questions, ... })
+// Admin: create a draft election → returns the draft id (Mongo hex string).
+// Election text (title/description, question & choice titles) may be a plain
+// string or a { default, <lang> } language map — plain strings are normalized
+// to { default } for you.
+const draftId = await client.elections.create({
+  orgAddress,
+  electionParams: {
+    title: 'My election',
+    questions: [
+      { title: 'Approve?', choices: [{ title: 'No', value: 0 }, { title: 'Yes', value: 1 }] },
+    ],
+    voteType: { maxCount: 1, maxValue: 1 },
+    electionType: { autostart: true, interruptible: true },
+    maxCensusSize: 100,
+    // endDate is required; omit startDate (with autostart) to start immediately.
+    endDate: new Date(Date.now() + 2 * 3_600_000).toISOString(),
+  },
+})
 
-// Admin: publish the draft (triggers on-chain creation)
-const { processId } = await client.elections.publish(draft.id)
+// Admin: publish the draft on-chain. Async — returns { jobId } to poll (or
+// { address, status } if already published). publishAndWait does the polling.
+const published = await client.elections.publishAndWait(draftId)
+// published.address — on-chain (vochain) process id
 
-// Admin: lifecycle management
-await client.elections.setStatus(mongoId, { status: 'paused' })   // pause
-await client.elections.setStatus(mongoId, { status: 'ready' })    // resume
-await client.elections.setStatus(mongoId, { status: 'ended' })    // end early
-await client.elections.setStatus(mongoId, { status: 'canceled' }) // cancel
+// Admin: lifecycle — also async (each returns { jobId }); *AndWait polls for you.
+await client.elections.setStatusAndWait(mongoId, { status: 'paused' })   // pause
+await client.elections.setStatusAndWait(mongoId, { status: 'ready' })    // resume
+await client.elections.setStatusAndWait(mongoId, { status: 'ended' })    // end early
+await client.elections.setStatusAndWait(mongoId, { status: 'canceled' }) // cancel
+// Non-blocking variants returning the job: publish(), setStatus().
+// Also: getMetadata(id), delete(id), signInfo(id, body).
 
 // Relay a vote (called internally by VotingClient — you rarely call this directly)
 const { jobId } = await client.elections.vote({ txPayload })
 ```
+
+---
+
+## CensusClient (`client.census`) & OrganizationsClient (`client.organizations`)
+
+The organizer-side surface used to set up an election before anyone votes. Only
+relevant for admin/integrator flows (an API key with `managed:write` +
+`members:write`); voter apps never touch these.
+
+```ts
+// Census: create an org-level CSP census, then publish it from a member group.
+const { id: censusId } = await client.census.create({ orgAddress, authFields: ['memberNumber'] })
+await client.census.publishGroup(censusId, groupId, { authFields: ['memberNumber'], weighted: false })
+
+// Organizations: managed orgs, members, groups, and reads.
+const org = await client.organizations.createManaged({ type: 'company', website })
+const { jobId } = await client.organizations.addMembers(org.address, members) // async
+await client.organizations.waitForMembersJob(org.address, jobId)
+const { groups } = await client.organizations.listGroups(org.address)         // auto "All members" group
+```
+
+`OrganizationsClient` also covers groups CRUD, meta, api keys, subscription, and
+list-reads (censuses/processes/drafts/jobs). See `packages/api-client/src/{census,organizations}.ts`
+for the full set — the live `integration/full-flow.itest.ts` drives the whole flow end to end.
 
 ---
 

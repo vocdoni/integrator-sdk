@@ -251,13 +251,14 @@ function VotingForm() {
   if (!election) return <p>Loading…</p>
   if (hasVoted) return <p>Your vote: {voteId}</p>
 
-  const handleVote = () => vote([0]) // single-choice: option index 0
+  // Election text is a language map ({ default, … }); resolve it for display.
+  const text = (t: string | Record<string, string>) => (typeof t === 'string' ? t : t.default)
   return (
     <div>
-      <h2>{election.questions[0].title as string}</h2>
+      <h2>{text(election.questions[0].title)}</h2>
       {election.questions[0].choices.map((c, i) => (
         <button key={i} onClick={() => vote([i])} disabled={!isAbleToVote}>
-          {c.title as string}
+          {text(c.title)}
         </button>
       ))}
     </div>
