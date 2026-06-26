@@ -15,33 +15,42 @@ The command builds the workspace packages first, then runs vitest with
 | Env var                   | Default                              | Purpose |
 | ------------------------- | ------------------------------------ | ------- |
 | `INTEGRATION_API_URL`     | `https://saas-api-dev.vocdoni.net`   | Target API base URL |
-| `INTEGRATION_BUNDLE_ID`   | —                                    | Real bundle id — unlocks the bundle + vote suites |
-| `INTEGRATION_PROCESS_ID`  | —                                    | A process id within that bundle (vote flow) |
-| `INTEGRATION_AUTH0_DATA`  | —                                    | JSON array for auth step-0 `authData` (participant id + contact) |
-| `INTEGRATION_OTP`         | —                                    | OTP / challenge solution for auth step 1 |
+| `INTEGRATION_BUNDLE_ID`   | `6a2a93d3…` (dev fixture)            | Real bundle id — unlocks the bundle + login suites |
+| `INTEGRATION_PROCESS_ID`  | `6be21a5a…` (dev fixture)            | A process id within that bundle (login suite) |
+| `INTEGRATION_MEMBER_NUMBER` | `5`                                | Member number for the auth-only login suite |
+| `INTEGRATION_PROCESS_INFO_ID` | `6a3cfc6b…`                      | Mongo id of a READY process (process-info mapping proof) |
 | `INTEGRATION_ENCRYPTED_PROCESS_ID`  | `6a3e5e3e…` (dev secret election) | Mongo id of a `secretUntilTheEnd` process (info proof) |
-| `INTEGRATION_ENCRYPTED_BUNDLE_ID`   | `6a3e5e93…`                          | Bundle of that encrypted election (vote flow) |
-| `INTEGRATION_ENCRYPTED_VOTE_MEMBER` | —                                    | Member number (1–100) — unlocks the encrypted vote flow (consumes it) |
+| `INTEGRATION_API_KEY`     | —                                    | Integrator API key (`vsk_…`) — unlocks the full-flow suite |
 
 ## Suites
 
 - **connectivity** — always runs; only needs a reachable API (`/ping` + error contract).
-- **bundle** — runs when `INTEGRATION_BUNDLE_ID` is set; validates the bundle shape
-  and asserts `chainId` is present (this is the field the vote signature depends on).
-- **vote** — the full end-to-end flow (auth → sign → relay → nullifier). Runs only
-  when `BUNDLE_ID`, `PROCESS_ID`, `AUTH0_DATA` and `OTP` are all provided. Because the
-  OTP arrives by email/SMS, this is a manual, opt-in run.
-- **vote-encrypted** — `secretUntilTheEnd` voting. The info proof (process carries
-  `encryptionPublicKeys`) runs out of the box against the dev fixture; the full
-  seal-and-cast flow runs only when `INTEGRATION_ENCRYPTED_VOTE_MEMBER` is set to a
-  fresh member (1–100), since each success burns that member.
+- **bundle** — validates the bundle shape and asserts `chainId` is present (the field
+  the vote signature depends on), against a dev fixture.
+- **login** — auth-only `authStep0` + membership `check` (no OTP), non-consuming, against
+  a dev fixture.
+- **process-info** — proves `/process/{mongoId}` maps onto a flat election (vochain
+  `address`, `chainId`, census fields). Non-consuming.
+- **vote-encrypted** — non-consuming proof that a `secretUntilTheEnd` process surfaces
+  `encryptionPublicKeys`. The full seal-and-cast flow is now covered by **full-flow**.
+- **full-flow** — the entire organizer→voter lifecycle driven only by an integrator
+  API key: creates a managed org, loads 100 members, reads the auto group, builds and
+  publishes a group census, creates and publishes 3 processes (single-choice,
+  multi-choice, and a `secretUntilTheEnd` single-choice) sharing that census, bundles
+  them, and has 3 members vote on each — asserting 9 distinct nullifiers. Runs only when
+  `INTEGRATION_API_KEY` is set. The key's org must be an **integrator** with scopes
+  `managed:write` + `members:write` + `voting:write`, and quota for ≥3 processes /
+  ≥300 census size. Creates real on-chain elections and votes.
 
-Example full run:
+The fixture-based suites (connectivity/bundle/login/process-info/vote-encrypted) run
+against the dev defaults out of the box:
 
 ```bash
-INTEGRATION_BUNDLE_ID=deadbeef… \
-INTEGRATION_PROCESS_ID=cafe… \
-INTEGRATION_AUTH0_DATA='["participant-id","voter@example.com"]' \
-INTEGRATION_OTP=123456 \
 pnpm test:integration
+```
+
+Full-flow run (creates a real org, processes and votes):
+
+```bash
+INTEGRATION_API_KEY=vsk_… pnpm test:integration
 ```

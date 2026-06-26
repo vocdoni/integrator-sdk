@@ -86,15 +86,70 @@ export interface CensusInfo {
   twoFaFields?: string[]
 }
 
+/**
+ * Member-data fields a CSP census can authenticate on. Listed at census
+ * creation / group publish; an auth-only census (no 2FA) is one with only
+ * `authFields` set.
+ */
+export type OrgMemberAuthField = 'name' | 'surname' | 'memberNumber' | 'nationalId' | 'birthDate'
+/** Contact fields used for the 2FA OTP challenge. */
+export type OrgMemberTwoFaField = 'email' | 'phone'
+
+/** Body of `POST /census` — creates an (empty) org-level CSP census. */
 export interface CreateCensusRequest {
-  source: CensusSource
-  size?: number
-  data?: unknown
+  orgAddress: string
+  authFields?: OrgMemberAuthField[]
+  twoFaFields?: OrgMemberTwoFaField[]
 }
 
-export interface CensusMember {
-  key: string
-  weight?: number
+/** Response of `POST /census` — only the new census id (as `id`). */
+export interface CreateCensusResponse {
+  id: string
+}
+
+/** The SaaS census record returned by `GET /census/{id}`. */
+export interface OrganizationCensus {
+  censusId: string
+  type?: string
+  orgAddress: string
+  size?: number
+  weighted?: boolean
+  groupID?: string
+  authFields?: OrgMemberAuthField[]
+  twoFaFields?: OrgMemberTwoFaField[]
+}
+
+/** Body of `POST /census/{id}/group/{groupId}/publish`. */
+export interface PublishCensusGroupRequest {
+  authFields?: OrgMemberAuthField[]
+  twoFaFields?: OrgMemberTwoFaField[]
+  weighted?: boolean
+}
+
+/** Body of `POST /census/{id}/publish`. */
+export interface PublishCensusRequest {
+  authFields?: OrgMemberAuthField[]
+  twoFaFields?: OrgMemberTwoFaField[]
+  weighted?: boolean
+}
+
+/** Response of the census publish endpoints. */
+export interface PublishedCensusResponse {
+  uri: string
+  /** Census Merkle root (hex). */
+  root: string
+  size: number
+}
+
+/** Body of `POST /census/{id}` — adds existing org members to the census. */
+export interface AddCensusParticipantsRequest {
+  memberIds: string[]
+}
+
+/** `GET /census/{id}/participants` — the member ids in the census. */
+export interface CensusParticipantsResponse {
+  censusId: string
+  memberIds: string[]
 }
 
 // ─── Election ─────────────────────────────────────────────────────────────────
@@ -122,7 +177,11 @@ export interface VoteType {
 }
 
 export interface ElectionType {
+  /** Whether the process starts automatically at its start date. */
+  autostart?: boolean
   interruptible: boolean
+  /** Whether the census can grow after the process starts. */
+  dynamicCensus?: boolean
   secretUntilTheEnd: boolean
   anonymous: boolean
   metadata?: { encrypted: boolean }
@@ -169,18 +228,50 @@ export interface EncryptionKey {
 
 // ─── Election API ─────────────────────────────────────────────────────────────
 
-export interface CreateElectionRequest {
-  organizationId?: string
+/** Vote-type input for {@link ElectionParams}; omitted fields default to 0/false. */
+export interface VoteTypeInput {
+  /** Number of choices a voter selects (>1 for multi-choice). */
+  maxCount: number
+  /** Maximum value a single choice can take. */
+  maxValue: number
+  maxVoteOverwrites?: number
+  costExponent?: number
+  uniqueChoices?: boolean
+  costFromWeight?: boolean
+}
+
+/** Election-type input for {@link ElectionParams}; omitted fields default to false. */
+export interface ElectionTypeInput {
+  autostart?: boolean
+  interruptible?: boolean
+  dynamicCensus?: boolean
+  secretUntilTheEnd?: boolean
+  anonymous?: boolean
+}
+
+/** High-level election definition carried by a process draft (used at publish). */
+export interface ElectionParams {
   title: string | Record<string, string>
   description?: string | Record<string, string>
   header?: string
+  streamUri?: string
   startDate?: string
   endDate?: string
-  duration?: number
-  maxCensusSize?: number
   questions: Question[]
-  voteType?: Partial<VoteType>
-  electionType?: Partial<ElectionType>
+  voteType: VoteTypeInput
+  electionType: ElectionTypeInput
+  maxCensusSize?: number
+}
+
+/** Body of `POST /process` — creates a process draft. Returns the draft id (hex). */
+export interface CreateProcessRequest {
+  orgAddress: string
+  /** On-chain id, only for importing an already-published process. */
+  address?: string
+  /** SaaS census id to attach. */
+  censusId?: string
+  metadata?: Record<string, unknown>
+  electionParams?: ElectionParams
 }
 
 export interface UpdateElectionRequest {
@@ -190,12 +281,11 @@ export interface UpdateElectionRequest {
   endDate?: string
 }
 
-export interface PublishElectionRequest {
-  startDate?: string
-}
-
-export interface PublishElectionResponse {
-  processId: string
+/** Synchronous response of `POST /process/{id}/publish` when already published. */
+export interface PublishProcessResponse {
+  /** On-chain (Vochain) process id, hex. */
+  address: string
+  status: string
 }
 
 export interface SetElectionStatusRequest {
@@ -380,6 +470,323 @@ export interface ConsumedAddressResponse {
   nullifier: string
   /** Consumption timestamp. */
   at: string
+}
+
+// ─── Pagination ─────────────────────────────────────────────────────────────────
+
+export interface Pagination {
+  totalItems: number
+  previousPage: number | null
+  currentPage: number
+  nextPage: number | null
+  lastPage: number
+}
+
+// ─── Organizations (full SaaS shape) ───────────────────────────────────────────
+// The rich org record the SaaS API returns. Distinct from the lean {@link
+// Organization} the UI components consume; used by the integrator/managed flows.
+
+export interface OrganizationInfo {
+  address: string
+  website?: string
+  createdAt?: string
+  type?: string
+  size?: string
+  color?: string
+  subdomain?: string
+  country?: string
+  timezone?: string
+  active?: boolean
+  communications?: boolean
+  meta?: Record<string, unknown>
+  /** Whether this org is integrator-enabled. */
+  integrator?: boolean
+}
+
+/** Body of `POST /integrator/organizations` — creates a managed organization. */
+export interface CreateManagedOrganizationRequest {
+  /** Organization type, e.g. "company" (see `GET /organizations/types`). */
+  type: string
+  website?: string
+  size?: string
+  color?: string
+  country?: string
+  timezone?: string
+  /** Optionally assign an existing user (by email) as the managed org's admin. */
+  ownerEmail?: string
+}
+
+export interface ManagedOrganizationsResponse {
+  organizations: OrganizationInfo[]
+  pagination?: Pagination
+}
+
+// ─── Organization members (memberbase) ──────────────────────────────────────────
+
+export interface OrgMember {
+  /** Internal member id (member UID); assigned by the backend. */
+  id?: string
+  email?: string
+  phone?: string
+  memberNumber?: string
+  nationalId?: string
+  name?: string
+  surname?: string
+  birthDate?: string
+  weight?: number
+  other?: Record<string, unknown>
+}
+
+export interface AddMembersRequest {
+  members: OrgMember[]
+}
+
+/** Response of `POST /organizations/{address}/members`. Async for large batches. */
+export interface AddMembersResponse {
+  added: number
+  errors?: string[]
+  /** Present when the add runs asynchronously — poll the members job. */
+  jobId?: string
+}
+
+/** Status of an async member-add job (`progress === 100` means done). */
+export interface AddMembersJobResponse {
+  added: number
+  total: number
+  /** added / total * 100. */
+  progress: number
+  errors?: string[]
+}
+
+export interface OrganizationMembersResponse {
+  members: OrgMember[]
+  pagination?: Pagination
+}
+
+export interface DeleteMembersRequest {
+  ids?: string[]
+  all?: boolean
+}
+
+export interface DeleteMembersResponse {
+  count: number
+}
+
+// ─── Organization member groups ─────────────────────────────────────────────────
+// Uploading members auto-creates the "All members" auto group, listed first.
+
+export interface OrganizationGroup {
+  id: string
+  title?: string
+  description?: string
+  memberIds?: string[]
+  censusIds?: string[]
+  membersCount?: number
+  /** The auto-generated "All members" group (cannot be deleted/edited). */
+  isAutoGroup?: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface OrganizationGroupsResponse {
+  groups: OrganizationGroup[]
+  pagination?: Pagination
+}
+
+export interface CreateGroupRequest {
+  title: string
+  description?: string
+  /** Optional when `includeAllMembers` is true. */
+  memberIds?: string[]
+  includeAllMembers?: boolean
+}
+
+export interface CreateGroupResponse {
+  id: string
+}
+
+export interface UpdateGroupRequest {
+  title?: string
+  description?: string
+  addMembers?: string[]
+  removeMembers?: string[]
+}
+
+export interface ListGroupMembersResponse {
+  members: OrgMember[]
+  pagination?: Pagination
+}
+
+export interface ValidateGroupRequest {
+  authFields?: OrgMemberAuthField[]
+  twoFaFields?: OrgMemberTwoFaField[]
+}
+
+// ─── Process bundle creation ────────────────────────────────────────────────────
+
+export interface CreateProcessBundleRequest {
+  censusId: string
+  /** On-chain process ids (hex) to include in the bundle. */
+  processes: string[]
+}
+
+/** Response of `POST /process/bundle`. The bundle id is the last segment of `uri`. */
+export interface CreateProcessBundleResponse {
+  uri: string
+  root: string
+}
+
+/** Body of `POST /process/bundle/{bundleId}/participants/check`. */
+export interface BundleParticipantsCheckRequest {
+  /** Member field to match on, e.g. "memberNumber". */
+  fieldName: string
+  value: string
+  /** On-chain process id (hex). */
+  processID: string
+}
+
+export interface BundleParticipantEntry {
+  memberId: string
+  name?: string
+  surname?: string
+  email?: string
+  memberNumber?: string
+  hasVoted: boolean
+}
+
+export interface BundleParticipantsCheckResponse {
+  participants: BundleParticipantEntry[]
+}
+
+// ─── API keys (integrator) ──────────────────────────────────────────────────────
+
+export interface CreateApiKeyRequest {
+  label: string
+  /** Subset of: quota:read, managed:read, managed:write, voting:write, members:write. */
+  scopes: string[]
+  expiresAt?: string
+}
+
+export interface ApiKeyInfo {
+  id: string
+  label: string
+  prefix: string
+  scopes: string[]
+  createdBy: string
+  createdAt: string
+  lastUsedAt?: string
+  expiresAt?: string
+  revoked: boolean
+}
+
+/** Returned once at creation — `secret` is never retrievable again. */
+export interface CreateApiKeyResponse extends ApiKeyInfo {
+  secret: string
+}
+
+export interface ListApiKeysResponse {
+  apiKeys: ApiKeyInfo[]
+}
+
+// ─── Organization meta ──────────────────────────────────────────────────────────
+
+export interface OrganizationMetaRequest {
+  meta: Record<string, unknown>
+}
+
+export interface OrganizationMetaResponse {
+  meta: Record<string, unknown>
+}
+
+// ─── Misc reads ─────────────────────────────────────────────────────────────────
+
+export interface OrganizationAddresses {
+  addresses: string[]
+}
+
+export interface JobInfo {
+  jobId: string
+  type: JobType
+  total: number
+  added: number
+  errors?: string[]
+  createdAt: string
+  completedAt?: string
+  completed: boolean
+}
+
+export interface JobsResponse {
+  jobs: JobInfo[]
+  pagination?: Pagination
+}
+
+export interface OrganizationRole {
+  role: string
+  name: string
+  organizationWritePermission: boolean
+  processWritePermission: boolean
+}
+
+export interface OrganizationType {
+  type: string
+  name: string
+}
+
+export interface OrganizationCensusesResponse {
+  censuses: OrganizationCensus[]
+}
+
+export interface SubscriptionDetails {
+  planId: string
+  startDate: string
+  renewalDate: string
+  lastPaymentDate: string
+  active: boolean
+  email: string
+}
+
+export interface SubscriptionUsage {
+  sentSMS: number
+  sentEmails: number
+  subOrgs: number
+  users: number
+  processes: number
+}
+
+/** A subscription plan (`GET /plans`). Nested limit objects are left open-ended. */
+export interface SubscriptionPlan {
+  id: string
+  name: string
+  monthlyPrice: number
+  yearlyPrice: number
+  default: boolean
+  organization?: unknown
+  votingTypes?: unknown
+  features?: unknown
+  integratorLimits?: unknown
+}
+
+export interface OrganizationSubscriptionInfo {
+  subscriptionDetails: SubscriptionDetails
+  usage: SubscriptionUsage
+  plan: SubscriptionPlan
+}
+
+/** A process bundle owned by an organization (`GET /organizations/{address}/processes`). */
+export interface OrganizationBundle {
+  bundleId: string
+  primaryProcessId: string
+  processes: string[]
+}
+
+/** `GET /organizations/{address}/processes/drafts`. `processes` are raw process docs. */
+export interface OrganizationProcessDraftsResponse {
+  processes: unknown[]
+  pagination?: Pagination
+}
+
+export interface DeleteManagedOrganizationResponse {
+  address: string
 }
 
 // ─── Client config ────────────────────────────────────────────────────────────

@@ -4,8 +4,13 @@ import type {
   Bundle,
   BundleAuthChallengeRequest,
   BundleAuthRequest,
+  BundleParticipantsCheckRequest,
+  BundleParticipantsCheckResponse,
   CheckMembershipRequest,
   CheckMembershipResponse,
+  CreateProcessBundleRequest,
+  CreateProcessBundleResponse,
+  OrgMember,
   SignRequest,
   UserWeightRequest,
   UserWeightResponse,
@@ -13,15 +18,43 @@ import type {
 import type { UpFetch } from 'up-fetch'
 import { handleError } from './errors'
 
+/** A created/updated bundle plus its parsed id (the last segment of `uri`). */
+export interface CreatedBundle extends CreateProcessBundleResponse {
+  bundleId: string
+}
+
+/** Extract the bundle id from the `uri` the create/update endpoints return. */
+function bundleIdFromUri(uri: string): string {
+  return uri.replace(/\/+$/, '').split('/').pop() ?? ''
+}
+
 /**
- * Client for the SaaS bundle CSP auth flow under /process/bundle/{bundleId}/*.
- *
- * A bundle groups processes that share a census. A voter authenticates against
- * the bundle once (auth step 0 + step 1) and reuses the verified `authToken`
- * for every process in the bundle (check, sign, weight).
+ * Client for the SaaS bundle endpoints. A bundle groups processes that share a
+ * census; it is created by an organizer ({@link create}) and then used by voters
+ * for the CSP auth flow under /process/bundle/{bundleId}/* (a voter authenticates
+ * once via auth step 0 + step 1 and reuses the verified `authToken` for every
+ * process in the bundle — check, sign, weight).
  */
 export class BundleClient {
   constructor(private readonly fetch: UpFetch) {}
+
+  /** Create a process bundle from a census and one or more on-chain processes. */
+  async create(body: CreateProcessBundleRequest): Promise<CreatedBundle> {
+    const res = await this.fetch<CreateProcessBundleResponse>('/process/bundle', {
+      method: 'POST',
+      body,
+    }).catch(handleError)
+    return { ...res, bundleId: bundleIdFromUri(res.uri) }
+  }
+
+  /** Update an existing bundle's process list. */
+  async update(bundleId: string, body: CreateProcessBundleRequest): Promise<CreatedBundle> {
+    const res = await this.fetch<CreateProcessBundleResponse>(`/process/bundle/${bundleId}`, {
+      method: 'PUT',
+      body,
+    }).catch(handleError)
+    return { ...res, bundleId: bundleIdFromUri(res.uri) }
+  }
 
   /** Fetch public bundle info (processes, census, Vochain chain id). */
   async get(bundleId: string): Promise<Bundle> {
@@ -78,5 +111,21 @@ export class BundleClient {
       method: 'POST',
       body,
     }).catch(handleError)
+  }
+
+  /** Public info for a single participant of the bundle. */
+  async getParticipant(bundleId: string, participantId: string): Promise<OrgMember> {
+    return this.fetch<OrgMember>(`/process/bundle/${bundleId}/${participantId}`).catch(handleError)
+  }
+
+  /** Look up participants by a member field and report whether they have voted. */
+  async participantsCheck(
+    bundleId: string,
+    body: BundleParticipantsCheckRequest,
+  ): Promise<BundleParticipantsCheckResponse> {
+    return this.fetch<BundleParticipantsCheckResponse>(
+      `/process/bundle/${bundleId}/participants/check`,
+      { method: 'POST', body },
+    ).catch(handleError)
   }
 }
