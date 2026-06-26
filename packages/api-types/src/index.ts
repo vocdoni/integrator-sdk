@@ -384,7 +384,7 @@ export interface ConsumedAddressResponse {
 
 // ─── Client config ────────────────────────────────────────────────────────────
 
-export interface AppClientConfig {
+export interface ApiClientConfig {
   apiUrl: string
   authToken?: string | (() => string | null | undefined) | (() => Promise<string | null | undefined>)
 }

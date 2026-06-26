@@ -6,15 +6,15 @@ import {
   mockOrganization,
   MOCK_PROCESS_ADDRESS,
 } from '../../../mocks/handlers'
-import { createClient, VocdoniAppClient } from './client'
+import { VocdoniApiClient } from './client'
 
 const BASE_URL = 'http://localhost'
 
-describe('VocdoniAppClient', () => {
-  let client: VocdoniAppClient
+describe('VocdoniApiClient', () => {
+  let client: VocdoniApiClient
 
   beforeEach(() => {
-    client = createClient({ apiUrl: BASE_URL })
+    client = new VocdoniApiClient({ apiUrl: BASE_URL })
   })
 
   describe('elections.get', () => {
@@ -56,7 +56,7 @@ describe('VocdoniAppClient', () => {
         }),
       )
 
-      const authedClient = createClient({
+      const authedClient = new VocdoniApiClient({
         apiUrl: BASE_URL,
         authToken: 'my-static-token',
       })
@@ -75,7 +75,7 @@ describe('VocdoniAppClient', () => {
         }),
       )
 
-      const authedClient = createClient({
+      const authedClient = new VocdoniApiClient({
         apiUrl: BASE_URL,
         authToken: () => 'sync-getter-token',
       })
@@ -94,7 +94,7 @@ describe('VocdoniAppClient', () => {
         }),
       )
 
-      const authedClient = createClient({
+      const authedClient = new VocdoniApiClient({
         apiUrl: BASE_URL,
         authToken: async () => 'async-getter-token',
       })

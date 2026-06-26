@@ -20,7 +20,7 @@ typed wrapper around the SaaS REST endpoints and the foundation the rest of the 
 builds on. Every call goes through the SaaS API — the client never talks to the blockchain
 directly.
 
-A single `VocdoniAppClient` groups the API surface into focused sub-clients:
+A single `VocdoniApiClient` groups the API surface into focused sub-clients:
 
 - **`elections`** — read, create, publish and manage voting processes.
 - **`organizations`** — manage organizations and their members.
@@ -41,9 +41,9 @@ pnpm add @vocdoni/api-client
 ## Usage
 
 ~~~ts
-import { createClient } from '@vocdoni/api-client'
+import { VocdoniApiClient } from '@vocdoni/api-client'
 
-const client = createClient({ apiUrl: 'https://saas-api.vocdoni.net' })
+const client = new VocdoniApiClient({ apiUrl: 'https://saas-api.vocdoni.net' })
 
 const election = await client.elections.get('<electionId>')
 ~~~

@@ -1,8 +1,8 @@
-import { VocdoniAppClient } from '@vocdoni/api-client'
+import { VocdoniApiClient } from '@vocdoni/api-client'
 import { createContext, useContext, useMemo, type ReactNode } from 'react'
 
 export interface ClientContextValue {
-  client: VocdoniAppClient
+  client: VocdoniApiClient
   apiUrl: string
 }
 
@@ -17,7 +17,7 @@ const ClientContext = createContext<ClientContextValue | undefined>(undefined)
 
 export function ClientProvider({ children, apiUrl, authToken }: ClientProviderProps) {
   const client = useMemo(
-    () => new VocdoniAppClient({ apiUrl, authToken }),
+    () => new VocdoniApiClient({ apiUrl, authToken }),
     // Re-create only when apiUrl changes; authToken is a getter so we pass it by reference
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [apiUrl],

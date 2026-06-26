@@ -1,4 +1,4 @@
-import type { AppClientConfig } from '@vocdoni/api-types'
+import type { ApiClientConfig } from '@vocdoni/api-types'
 import { up } from 'up-fetch'
 import { AuthClient } from './auth'
 import { BundleClient } from './bundle'
@@ -8,7 +8,7 @@ import { JobsClient } from './jobs'
 import { OrganizationsClient } from './organizations'
 
 async function resolveToken(
-  authToken: AppClientConfig['authToken'],
+  authToken: ApiClientConfig['authToken'],
 ): Promise<string | null | undefined> {
   if (typeof authToken === 'function') {
     return authToken()
@@ -16,7 +16,7 @@ async function resolveToken(
   return authToken
 }
 
-export class VocdoniAppClient {
+export class VocdoniApiClient {
   readonly elections: ElectionsClient
   readonly organizations: OrganizationsClient
   readonly census: CensusClient
@@ -24,7 +24,7 @@ export class VocdoniAppClient {
   readonly bundle: BundleClient
   readonly jobs: JobsClient
 
-  constructor(config: AppClientConfig) {
+  constructor(config: ApiClientConfig) {
     const fetcher = up(fetch, async () => {
       const token = await resolveToken(config.authToken)
       return {
@@ -46,8 +46,4 @@ export class VocdoniAppClient {
     this.bundle = new BundleClient(fetcher)
     this.jobs = new JobsClient(fetcher)
   }
-}
-
-export function createClient(config: AppClientConfig): VocdoniAppClient {
-  return new VocdoniAppClient(config)
 }

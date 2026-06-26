@@ -1,12 +1,12 @@
-import { createClient, type VocdoniAppClient } from '@vocdoni/api-client'
+import { VocdoniApiClient } from '@vocdoni/api-client'
 
 /** Base URL of the SaaS API under test (trailing slash trimmed). */
 export const API_URL = (
   process.env.INTEGRATION_API_URL ?? 'https://saas-api-dev.vocdoni.net'
 ).replace(/\/$/, '')
 
-export function makeClient(authToken?: () => string | null | undefined): VocdoniAppClient {
-  return createClient({ apiUrl: API_URL, authToken })
+export function makeClient(authToken?: () => string | null | undefined): VocdoniApiClient {
+  return new VocdoniApiClient({ apiUrl: API_URL, authToken })
 }
 
 // Known-good dev fixtures (a concluded, auth-only bundle on saas-api-dev). These

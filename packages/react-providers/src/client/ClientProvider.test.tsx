@@ -1,4 +1,4 @@
-import { VocdoniAppClient } from '@vocdoni/api-client'
+import { VocdoniApiClient } from '@vocdoni/api-client'
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { TestProvider } from '../test-utils'
@@ -18,13 +18,13 @@ describe('ClientProvider', () => {
     )
   })
 
-  it('returns a VocdoniAppClient instance inside a provider', () => {
+  it('returns a VocdoniApiClient instance inside a provider', () => {
     const { result } = renderHook(() => useClient(), {
       wrapper: ({ children }) => (
         <ClientProvider apiUrl="http://localhost">{children}</ClientProvider>
       ),
     })
-    expect(result.current.client).toBeInstanceOf(VocdoniAppClient)
+    expect(result.current.client).toBeInstanceOf(VocdoniApiClient)
   })
 
   it('exposes the apiUrl passed to the provider', () => {

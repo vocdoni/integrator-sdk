@@ -1,7 +1,7 @@
 export { AuthClient } from './auth'
 export { BundleClient } from './bundle'
 export { CensusClient } from './census'
-export { VocdoniAppClient, createClient } from './client'
+export { VocdoniApiClient } from './client'
 export { ElectionsClient } from './elections'
 export { VocdoniApiError } from './errors'
 export { JobsClient, JobFailedError, type WaitForJobOptions } from './jobs'
