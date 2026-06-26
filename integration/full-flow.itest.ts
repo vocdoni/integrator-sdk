@@ -1,4 +1,4 @@
-import { buildVoteTransaction, EphemeralSigner } from '@vocdoni/api-voting'
+import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 import { apiKey, makeAdminClient, makeClient } from './helpers'
 
 // End-to-end organizer→voter flow, SaaS-only, driven entirely through the SDK
@@ -39,6 +39,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
     async () => {
       const admin = makeAdminClient()
       const voterClient = makeClient() // public endpoints (bundle auth, vote, jobs)
+      const voting = new VotingClient({ client: voterClient }) // builds, signs & relays votes
       const step = (msg: string) => console.info(`[full-flow] ${msg}`)
 
       // 1. Managed organization.
@@ -238,7 +239,9 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           })
           expect(sign.signature, `no CSP signature (${p.label})`).toBeTruthy()
 
-          const txPayload = buildVoteTransaction({
+          // Build + sign + relay through the public VotingClient — the path an
+          // integrator uses. It returns the relay job id to poll for the nullifier.
+          const jobId = await voting.vote({
             processId: p.address,
             choices: p.choices,
             chainId: p.chainId,
@@ -247,7 +250,6 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             cspWeight: sign.weight,
             encryptionKeys: p.encryptionKeys,
           })
-          const { jobId } = await voterClient.elections.vote({ txPayload })
           const job = await voterClient.jobs.waitFor(jobId, {
             timeoutMs: 90000,
             intervalMs: 2000,
