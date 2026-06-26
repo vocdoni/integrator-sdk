@@ -14,7 +14,7 @@
     "dev": "turbo run dev --parallel",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "changeset publish"
+    "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.1",
