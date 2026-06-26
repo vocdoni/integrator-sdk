@@ -52,7 +52,7 @@ describe('VocdoniAppClient', () => {
       server.use(
         http.get(`${BASE_URL}/process/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
-          return HttpResponse.json({ ...mockElection, id: 'abc123' })
+          return HttpResponse.json({ ...mockElection, id: 'abc123', address: MOCK_PROCESS_ADDRESS })
         }),
       )
 
@@ -71,7 +71,7 @@ describe('VocdoniAppClient', () => {
       server.use(
         http.get(`${BASE_URL}/process/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
-          return HttpResponse.json({ ...mockElection, id: 'abc123' })
+          return HttpResponse.json({ ...mockElection, id: 'abc123', address: MOCK_PROCESS_ADDRESS })
         }),
       )
 
@@ -90,7 +90,7 @@ describe('VocdoniAppClient', () => {
       server.use(
         http.get(`${BASE_URL}/process/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
-          return HttpResponse.json({ ...mockElection, id: 'abc123' })
+          return HttpResponse.json({ ...mockElection, id: 'abc123', address: MOCK_PROCESS_ADDRESS })
         }),
       )
 
@@ -109,7 +109,7 @@ describe('VocdoniAppClient', () => {
       server.use(
         http.get(`${BASE_URL}/process/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
-          return HttpResponse.json({ ...mockElection, id: 'abc123' })
+          return HttpResponse.json({ ...mockElection, id: 'abc123', address: MOCK_PROCESS_ADDRESS })
         }),
       )
 
