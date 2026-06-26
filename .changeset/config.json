@@ -7,5 +7,5 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": []
+  "ignore": ["@vocdoni/api-voting-zk", "@vocdoni/react-components", "@vocdoni/react-providers"]
 }

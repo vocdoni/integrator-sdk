@@ -1,6 +1,6 @@
 {
   "name": "@vocdoni/api-client",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "license": "GPL-3.0-or-later",
   "description": "HTTP client for the Vocdoni SaaS API",
   "keywords": [
