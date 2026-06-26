@@ -85,4 +85,25 @@ describe('mapProcessToElection', () => {
   it('leaves census undefined when the process has none', () => {
     expect(mapProcessToElection({ ...base, census: undefined }).census).toBeUndefined()
   })
+
+  it('throws when the process has no vochain address', () => {
+    expect(() => mapProcessToElection({ ...base, address: undefined })).toThrow(/vochain address/)
+  })
+
+  it('falls back to default vote/election types when electionParams omits them', () => {
+    const e = mapProcessToElection({ ...base, electionParams: undefined })
+    expect(e.voteType).toEqual({
+      maxCount: 1,
+      maxValue: 1,
+      maxVoteOverwrites: 0,
+      costExponent: 1,
+      uniqueChoices: false,
+      costFromWeight: false,
+    })
+    expect(e.electionType).toEqual({
+      interruptible: true,
+      secretUntilTheEnd: false,
+      anonymous: false,
+    })
+  })
 })

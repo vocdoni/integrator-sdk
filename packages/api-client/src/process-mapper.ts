@@ -60,6 +60,23 @@ export interface ProcessResponse {
   publishedAt?: string
 }
 
+/** Vote defaults for a single-choice, non-weighted election (used when the process omits voteType). */
+const DEFAULT_VOTE_TYPE: VoteType = {
+  maxCount: 1,
+  maxValue: 1,
+  maxVoteOverwrites: 0,
+  costExponent: 1,
+  uniqueChoices: false,
+  costFromWeight: false,
+}
+
+/** Election defaults for a standard interruptible, public, non-anonymous election. */
+const DEFAULT_ELECTION_TYPE: ElectionType = {
+  interruptible: true,
+  secretUntilTheEnd: false,
+  anonymous: false,
+}
+
 /** Picks a plain string from either a raw string or a `{ default }` localized object. */
 function plain(value?: string | LocalizedString): string | undefined {
   if (value == null) return undefined
@@ -89,6 +106,13 @@ function mapCensus(c?: ProcessResponse['census']): CensusInfo | undefined {
 export function mapProcessToElection(p: ProcessResponse): Election {
   const params = p.electionParams ?? {}
 
+  // The vochain id is what the vote/sign/check flow signs against; the Mongo id
+  // is a different identifier space and not a valid substitute. Surface a missing
+  // address loudly rather than letting a wrong-id vote fail opaquely downstream.
+  if (!p.address) {
+    throw new Error(`Process ${p.id} has no vochain address; cannot map to a votable Election`)
+  }
+
   return {
     id: p.id,
     address: p.address,
@@ -101,8 +125,8 @@ export function mapProcessToElection(p: ProcessResponse): Election {
     startDate: params.startDate ?? '',
     endDate: params.endDate ?? '',
     questions: params.questions ?? [],
-    voteType: params.voteType as VoteType,
-    electionType: params.electionType as ElectionType,
+    voteType: params.voteType ?? DEFAULT_VOTE_TYPE,
+    electionType: params.electionType ?? DEFAULT_ELECTION_TYPE,
     census: mapCensus(p.census),
     voteCount: p.voteCount ?? 0,
     finalResults: p.finalResults ?? false,

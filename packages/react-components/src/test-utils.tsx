@@ -52,6 +52,7 @@ export function renderWithComponents(
 export function makeElection(overrides: Partial<Election> = {}): Election {
   return {
     id: 'election-1',
+    address: '6be21a5a9dc01036097ea184999095aed31735e7264a19652130030800000001',
     title: 'Test Election',
     status: 'READY',
     startDate: '2024-01-01T00:00:00Z',

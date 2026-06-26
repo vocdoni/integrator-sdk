@@ -70,9 +70,9 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
       return
     }
     let cancelled = false
-    // CSP endpoints are keyed by the vochain id, which is `address`.
+    // CSP endpoints are keyed by the vochain id (`address`).
     bundle
-      .check(election.address ?? election.id)
+      .check(election.address)
       .then((res) => {
         if (cancelled) return
         setIsInCensus(res.belongs)
@@ -97,7 +97,7 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
       }
 
       // CSP + vote envelope use the vochain id (`address`), not the Mongo id.
-      const processId = election.address ?? election.id
+      const processId = election.address
 
       // Per-vote ephemeral identity; the CSP signs its address.
       const signer = new EphemeralSigner()

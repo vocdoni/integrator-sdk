@@ -134,8 +134,12 @@ export interface Election {
    * On-chain (Vochain) process id, 64-hex. Returned as `address` by
    * `GET /process/{id}`; this is the id the vote/sign/check flow signs against.
    * The top-level `id` is the Mongo ObjectID used to fetch the process.
+   *
+   * Required: the CSP check/sign and the vote envelope are keyed by this id, and
+   * the Mongo id is not a valid substitute. {@link mapProcessToElection} throws
+   * if the process response omits it.
    */
-  address?: string
+  address: string
   /** Vochain chain id the vote signs against, e.g. "vocdoni/DEV/36". */
   chainId?: string
   title: string | Record<string, string>
