@@ -9,21 +9,27 @@ describe('SaaS API connectivity', () => {
   })
 
   it('rejects an invalid bundle id with a 400 VocdoniApiError', async () => {
-    const err = await makeClient()
-      .bundle.get('not-a-real-bundle')
-      .catch((e) => e)
+    let err: unknown
+    try {
+      await makeClient().bundle.get('not-a-real-bundle')
+    } catch (e) {
+      err = e
+    }
     expect(err).toBeInstanceOf(VocdoniApiError)
-    expect(err.status).toBe(400)
+    expect((err as VocdoniApiError).status).toBe(400)
     // surfaced from the API's `{ error, code }` body
-    expect(typeof err.message).toBe('string')
-    expect(err.message.length).toBeGreaterThan(0)
+    expect(typeof (err as VocdoniApiError).message).toBe('string')
+    expect((err as VocdoniApiError).message.length).toBeGreaterThan(0)
   })
 
   it('rejects an invalid process id with a 400 VocdoniApiError', async () => {
-    const err = await makeClient()
-      .elections.get('not-a-real-process')
-      .catch((e) => e)
+    let err: unknown
+    try {
+      await makeClient().elections.get('not-a-real-process')
+    } catch (e) {
+      err = e
+    }
     expect(err).toBeInstanceOf(VocdoniApiError)
-    expect(err.status).toBe(400)
+    expect((err as VocdoniApiError).status).toBe(400)
   })
 })

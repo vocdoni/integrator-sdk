@@ -5,9 +5,7 @@
       "outputs": ["dist/**"],
       "dependsOn": ["^build"]
     },
-    "lint": {
-      "dependsOn": ["^build"]
-    },
+    "lint": {},
     "clean": {},
     "dev": {
       "cache": false,

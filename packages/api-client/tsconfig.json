@@ -1,7 +1,11 @@
 {
-  "extends": "tsconfig/library.json",
+  "extends": "../tsconfig/library.json",
   "include": ["src"],
   "compilerOptions": {
-    "outDir": "dist"
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@vocdoni/api-types": ["../api-types/src/index.ts"]
+    }
   }
 }

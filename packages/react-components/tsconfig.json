@@ -1,7 +1,14 @@
 {
-  "extends": "tsconfig/react-library.json",
+  "extends": "../tsconfig/react-library.json",
   "include": ["src"],
   "compilerOptions": {
-    "outDir": "dist"
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@vocdoni/api-types": ["../api-types/src/index.ts"],
+      "@vocdoni/react-providers": ["../react-providers/src/index.ts"],
+      "@vocdoni/api-client": ["../api-client/src/index.ts"],
+      "@vocdoni/api-voting": ["../api-voting/src/index.ts"]
+    }
   }
 }

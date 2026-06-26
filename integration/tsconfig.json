@@ -1,0 +1,14 @@
+{
+  "extends": "../packages/tsconfig/library.json",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["node", "vitest/globals"],
+    "baseUrl": "..",
+    "paths": {
+      "@vocdoni/api-client": ["packages/api-client/src/index.ts"],
+      "@vocdoni/api-voting": ["packages/api-voting/src/index.ts"],
+      "@vocdoni/api-types": ["packages/api-types/src/index.ts"]
+    }
+  },
+  "include": ["**/*.ts"]
+}
