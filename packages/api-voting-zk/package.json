@@ -42,7 +42,12 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@vocdoni/api-voting": "workspace:*"
+    "@noble/hashes": "^1.4.0",
+    "@vocdoni/api-types": "workspace:*",
+    "@vocdoni/api-voting": "workspace:*",
+    "@vocdoni/proto": "1.15.12",
+    "circomlibjs": "^0.1.7",
+    "snarkjs": "^0.7.5"
   },
   "devDependencies": {
     "tsconfig": "workspace:*",

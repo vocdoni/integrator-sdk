@@ -10,6 +10,7 @@ onlyBuiltDependencies:
   - msw
 
 allowBuilds:
+  blake-hash: false
   esbuild: true
   msw: true
   protobufjs: false
