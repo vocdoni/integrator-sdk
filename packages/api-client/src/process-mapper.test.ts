@@ -86,9 +86,9 @@ describe('mapProcessToElection', () => {
     expect(mapProcessToElection({ ...base, census: undefined }).census).toBeUndefined()
   })
 
-  it('surfaces publicKeys (encrypted elections) as encryptionPublicKeys', () => {
+  it('surfaces encryptionKeys (encrypted elections) as encryptionPublicKeys', () => {
     const keys = [{ index: 1, key: 'e34968e44589b4cdfda2365de5f9404b86fcc88ed015bea3f8b29975d958306e' }]
-    const e = mapProcessToElection({ ...base, publicKeys: keys })
+    const e = mapProcessToElection({ ...base, encryptionKeys: keys })
     expect(e.encryptionPublicKeys).toEqual(keys)
   })
 

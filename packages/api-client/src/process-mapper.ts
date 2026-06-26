@@ -57,7 +57,7 @@ export interface ProcessResponse {
   voteCount?: number
   finalResults?: boolean
   /** On-chain encryption public keys, present for `secretUntilTheEnd` elections. */
-  publicKeys?: EncryptionKey[]
+  encryptionKeys?: EncryptionKey[]
   publishedAt?: string
 }
 
@@ -131,8 +131,8 @@ export function mapProcessToElection(p: ProcessResponse): Election {
     census: mapCensus(p.census),
     voteCount: p.voteCount ?? 0,
     finalResults: p.finalResults ?? false,
-    // The API exposes encryption keys as `publicKeys`; we surface them under the
-    // descriptive `encryptionPublicKeys`, which the vote builder seals with.
-    encryptionPublicKeys: p.publicKeys,
+    // The API exposes encryption keys as `encryptionKeys`; we surface them under
+    // the descriptive `encryptionPublicKeys`, which the vote builder seals with.
+    encryptionPublicKeys: p.encryptionKeys,
   }
 }
