@@ -156,14 +156,28 @@ export interface CensusParticipantsResponse {
 
 export type ElectionStatus = 'READY' | 'PAUSED' | 'ENDED' | 'CANCELED' | 'UPCOMING'
 
+/**
+ * Language-keyed election text, e.g. `{ default: 'Hello', es: 'Hola' }`. The SaaS
+ * API stores every human-facing string (titles, descriptions, choice labels) this
+ * way and rejects a bare string; the `default` key is the fallback locale.
+ */
+export type MultiLangString = Record<string, string>
+
+/**
+ * Election text as accepted by the SDK: either a plain `string` — which the
+ * client normalizes to `{ default: value }` before sending — or an explicit
+ * {@link MultiLangString}. Responses always come back as a {@link MultiLangString}.
+ */
+export type LocalizedInput = string | MultiLangString
+
 export interface Choice {
-  title: string | Record<string, string>
+  title: LocalizedInput
   value: number
 }
 
 export interface Question {
-  title: string | Record<string, string>
-  description?: string | Record<string, string>
+  title: LocalizedInput
+  description?: LocalizedInput
   choices: Choice[]
 }
 
@@ -201,8 +215,8 @@ export interface Election {
   address: string
   /** Vochain chain id the vote signs against, e.g. "vocdoni/DEV/36". */
   chainId?: string
-  title: string | Record<string, string>
-  description?: string | Record<string, string>
+  title: LocalizedInput
+  description?: LocalizedInput
   header?: string
   status: ElectionStatus
   startDate: string
@@ -251,8 +265,8 @@ export interface ElectionTypeInput {
 
 /** High-level election definition carried by a process draft (used at publish). */
 export interface ElectionParams {
-  title: string | Record<string, string>
-  description?: string | Record<string, string>
+  title: LocalizedInput
+  description?: LocalizedInput
   header?: string
   streamUri?: string
   startDate?: string
@@ -275,8 +289,8 @@ export interface CreateProcessRequest {
 }
 
 export interface UpdateElectionRequest {
-  title?: string | Record<string, string>
-  description?: string | Record<string, string>
+  title?: LocalizedInput
+  description?: LocalizedInput
   header?: string
   endDate?: string
 }
@@ -293,8 +307,8 @@ export interface SetElectionStatusRequest {
 }
 
 export interface ElectionMetadata {
-  title: string | Record<string, string>
-  description?: string | Record<string, string>
+  title: LocalizedInput
+  description?: LocalizedInput
   questions: Question[]
   media?: { header?: string }
 }

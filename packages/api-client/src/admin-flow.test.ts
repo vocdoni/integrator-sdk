@@ -125,6 +125,43 @@ describe('admin / integrator client methods', () => {
       expect(draftId).toBe('draft-123')
       expect((body as { orgAddress: string }).orgAddress).toBe(ORG)
     })
+
+    it('normalizes plain-string election text to { default } language maps', async () => {
+      let body: any
+      server.use(
+        http.post(`${BASE_URL}/process`, async ({ request }) => {
+          body = await request.json()
+          return HttpResponse.json('draft-ml')
+        }),
+      )
+
+      await client.elections.create({
+        orgAddress: ORG,
+        electionParams: {
+          title: 'Plain title',
+          description: 'Plain description',
+          questions: [
+            {
+              title: 'Question?',
+              choices: [
+                { title: 'No', value: 0 },
+                { title: { default: 'Yes', es: 'Sí' }, value: 1 },
+              ],
+            },
+          ],
+          voteType: { maxCount: 1, maxValue: 1 },
+          electionType: { autostart: true, interruptible: true },
+          maxCensusSize: 100,
+        },
+      })
+
+      // Plain strings become { default }, existing maps pass through untouched.
+      expect(body.electionParams.title).toEqual({ default: 'Plain title' })
+      expect(body.electionParams.description).toEqual({ default: 'Plain description' })
+      expect(body.electionParams.questions[0].title).toEqual({ default: 'Question?' })
+      expect(body.electionParams.questions[0].choices[0].title).toEqual({ default: 'No' })
+      expect(body.electionParams.questions[0].choices[1].title).toEqual({ default: 'Yes', es: 'Sí' })
+    })
   })
 
   describe('elections.publishAndWait', () => {

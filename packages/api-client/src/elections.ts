@@ -5,8 +5,11 @@ import type {
   Election,
   ElectionListParams,
   ElectionMetadata,
+  ElectionParams,
   ElectionResults,
   EnqueuedResponse,
+  LocalizedInput,
+  MultiLangString,
   PaginatedElections,
   PublishProcessResponse,
   RelayVoteRequest,
@@ -22,6 +25,31 @@ import { mapProcessToElection, type ProcessResponse } from './process-mapper'
 /** True when a publish response is the async enqueued form (vs. already published). */
 function isEnqueued(res: PublishProcessResponse | EnqueuedResponse): res is EnqueuedResponse {
   return (res as EnqueuedResponse).jobId !== undefined
+}
+
+/**
+ * Coerce election text to the API's language-map form: a plain string becomes
+ * `{ default: value }`, an existing {@link MultiLangString} is passed through.
+ * The SaaS API rejects a bare string, so this lets callers pass either form.
+ */
+function toMultiLang(value: LocalizedInput | undefined): MultiLangString | undefined {
+  if (value == null) return undefined
+  return typeof value === 'string' ? { default: value } : value
+}
+
+/** Normalize every human-facing string in an election draft to a language map. */
+function normalizeElectionParams(params: ElectionParams): ElectionParams {
+  return {
+    ...params,
+    title: toMultiLang(params.title)!,
+    description: toMultiLang(params.description),
+    questions: params.questions?.map((q) => ({
+      ...q,
+      title: toMultiLang(q.title)!,
+      description: toMultiLang(q.description),
+      choices: q.choices?.map((c) => ({ ...c, title: toMultiLang(c.title)! })),
+    })),
+  }
 }
 
 /**
@@ -60,18 +88,30 @@ export class ElectionsClient {
     return this.fetch<PaginatedElections>('/process', { params }).catch(handleError)
   }
 
-  /** Create a process draft. Returns the draft id (Mongo ObjectID hex). */
+  /**
+   * Create a process draft. Returns the draft id (Mongo ObjectID hex). Election
+   * text (title/description, question and choice titles) may be a plain string or
+   * a {@link MultiLangString}; plain strings are normalized to `{ default }`.
+   */
   async create(draft: CreateProcessRequest): Promise<string> {
+    const body = draft.electionParams
+      ? { ...draft, electionParams: normalizeElectionParams(draft.electionParams) }
+      : draft
     return this.fetch<string>('/process', {
       method: 'POST',
-      body: draft,
+      body,
     }).catch(handleError)
   }
 
   async update(draftId: string, data: UpdateElectionRequest): Promise<Election> {
+    const body: UpdateElectionRequest = {
+      ...data,
+      title: toMultiLang(data.title),
+      description: toMultiLang(data.description),
+    }
     return this.fetch<Election>(`/process/${draftId}`, {
       method: 'PUT',
-      body: data,
+      body,
     }).catch(handleError)
   }
 

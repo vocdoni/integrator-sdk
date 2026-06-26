@@ -39,6 +39,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
     async () => {
       const admin = makeAdminClient()
       const voterClient = makeClient() // public endpoints (bundle auth, vote, jobs)
+      const step = (msg: string) => console.info(`[full-flow] ${msg}`)
 
       // 1. Managed organization.
       const org = await admin.organizations.createManaged({
@@ -47,7 +48,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       })
       const orgAddress = org.address
       expect(orgAddress, 'managed org has no address').toBeTruthy()
-      console.info('[integration] created org', orgAddress)
+      step(`1. organization created — ${orgAddress}`)
 
       // 2. Memberbase: 100 members, only memberNumber set (1..100).
       const members = Array.from({ length: MEMBER_COUNT }, (_, i) => ({
@@ -61,7 +62,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         })
         expect(job.progress).toBe(100)
       }
-      console.info('[integration] added', MEMBER_COUNT, 'members')
+      step(`2. ${MEMBER_COUNT} members added (memberNumber 1..${MEMBER_COUNT})`)
 
       // 3. Auto-created "All members" group.
       const groups = await admin.organizations.listGroups(orgAddress)
@@ -69,6 +70,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       const autoGroup = groups.groups[0]
       expect(autoGroup.isAutoGroup, 'group 0 is not the auto group').toBe(true)
       const groupId = autoGroup.id
+      step(`3. auto group read — ${groupId}`)
 
       // 4. CSP census from the group (auth-only: memberNumber, no 2FA).
       const census = await admin.census.create({
@@ -76,11 +78,12 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         authFields: ['memberNumber'],
       })
       const censusId = census.id
+      step(`4. census created — ${censusId}`)
       await admin.census.publishGroup(censusId, groupId, {
         authFields: ['memberNumber'],
         weighted: false,
       })
-      console.info('[integration] published group census', censusId)
+      step(`4. census published from group ${groupId}`)
 
       // 5. Three processes sharing the one census. endDate is required; omitting
       // startDate (with autostart) makes each election start immediately on
@@ -94,13 +97,14 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           body: {
             orgAddress,
             electionParams: {
-              title: { default: 'Single choice' },
+              // Plain strings on purpose: the SDK normalizes them to language maps.
+              title: 'Single choice',
               questions: [
                 {
-                  title: { default: 'Approve?' },
+                  title: 'Approve?',
                   choices: [
-                    { title: { default: 'No' }, value: 0 },
-                    { title: { default: 'Yes' }, value: 1 },
+                    { title: 'No', value: 0 },
+                    { title: 'Yes', value: 1 },
                   ],
                 },
               ],
@@ -118,14 +122,14 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           body: {
             orgAddress,
             electionParams: {
-              title: { default: 'Multi choice' },
+              title: 'Multi choice',
               questions: [
                 {
-                  title: { default: 'Pick options' },
+                  title: 'Pick options',
                   choices: [
-                    { title: { default: 'A' }, value: 0 },
-                    { title: { default: 'B' }, value: 1 },
-                    { title: { default: 'C' }, value: 2 },
+                    { title: 'A', value: 0 },
+                    { title: 'B', value: 1 },
+                    { title: 'C', value: 2 },
                   ],
                 },
               ],
@@ -143,13 +147,13 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           body: {
             orgAddress,
             electionParams: {
-              title: { default: 'Secret single choice' },
+              title: 'Secret single choice',
               questions: [
                 {
-                  title: { default: 'Approve (secret)?' },
+                  title: 'Approve (secret)?',
                   choices: [
-                    { title: { default: 'No' }, value: 0 },
-                    { title: { default: 'Yes' }, value: 1 },
+                    { title: 'No', value: 0 },
+                    { title: 'Yes', value: 1 },
                   ],
                 },
               ],
@@ -165,11 +169,13 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       const processes: ProcessSpec[] = []
       for (const d of drafts) {
         const draftId = await admin.elections.create(d.body)
+        step(`5. draft created — ${d.label} (${draftId})`)
         const published = await admin.elections.publishAndWait(draftId, {
           timeoutMs: 120000,
           intervalMs: 2000,
         })
         expect(published.address, `${d.label} not published`).toBeTruthy()
+        step(`5. process published — ${d.label} → ${published.address}`)
 
         // Merged process info → chainId (+ encryption keys for the secret one).
         const info = await admin.elections.get(draftId)
@@ -186,6 +192,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             encryptionKeys = (await admin.elections.get(draftId)).encryptionPublicKeys
           }
           expect(encryptionKeys?.length, 'secret process has no encryption keys').toBeGreaterThan(0)
+          step(`5. encryption keys ready — ${encryptionKeys!.length} key(s) for ${d.label}`)
         }
 
         processes.push({
@@ -197,7 +204,6 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           choices: d.choices,
           encryptionKeys,
         })
-        console.info('[integration] published', d.label, '→', published.address)
       }
 
       // 6. One bundle holding all three processes.
@@ -207,7 +213,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       })
       const bundleId = bundle.bundleId
       expect(bundleId, 'bundle has no id').toBeTruthy()
-      console.info('[integration] created bundle', bundleId)
+      step(`6. bundle created — ${bundleId} (${processes.length} processes)`)
 
       // 7. Each of 3 members votes on every process.
       const nullifiers = new Set<string>()
@@ -215,6 +221,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         const step0 = await voterClient.bundle.authStep0(bundleId, { memberNumber })
         const authToken = step0.authToken
         expect(authToken, `auth failed for member ${memberNumber}`).toBeTruthy()
+        step(`7. member ${memberNumber} authenticated`)
 
         for (const p of processes) {
           const membership = await voterClient.bundle.check(bundleId, {
@@ -250,11 +257,12 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           expect(nullifier, `no nullifier (${p.label}, member ${memberNumber})`).toBeTruthy()
           expect(nullifiers.has(nullifier!), 'duplicate nullifier').toBe(false)
           nullifiers.add(nullifier!)
+          step(`7. vote emitted — member ${memberNumber} on ${p.label} → ${nullifier!.slice(0, 12)}…`)
         }
       }
 
       expect(nullifiers.size).toBe(VOTERS.length * processes.length)
-      console.info('[integration] cast', nullifiers.size, 'votes across 3 processes')
+      step(`done — ${nullifiers.size} votes cast across ${processes.length} processes`)
     },
     600000,
   )
