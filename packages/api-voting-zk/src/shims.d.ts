@@ -4,7 +4,7 @@
 declare module 'snarkjs' {
   export const groth16: {
     fullProve(
-      input: Record<string, unknown>,
+      input: object,
       wasm: Uint8Array | string,
       zkey: Uint8Array | string,
     ): Promise<{
