@@ -1,9 +1,13 @@
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
+/**
+ * Response of `POST /auth/login` and `POST /auth/refresh`. The JWT plus its
+ * expiry; there is no refresh token — `refresh()` re-issues using the current
+ * token. `expirity` mirrors the API's (misspelled) field name.
+ */
 export interface AuthToken {
   token: string
-  expiresAt: string
-  refresh: string
+  expirity: string
 }
 
 export interface JWTPayload {

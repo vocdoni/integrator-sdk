@@ -206,13 +206,24 @@ const job = await client.jobs.waitFor(jobId, {
 
 ## AuthClient (`client.auth`)
 
-Admin / organization authentication (not the voter CSP flow — that's `BundleClient`).
+The **normal SaaS user** auth flow: a signed-up user logs in with email/password
+to get a JWT, then drives the SDK under their own organization (create processes,
+etc.). This is distinct from the **integrator** flow (a `vsk_…` API key passed as
+the client's `authToken`, used to manage orgs), and from the **voter** CSP flow
+(`BundleClient`).
 
 ```ts
-const authToken = await client.auth.login(address, signature)
-// authToken.token, authToken.refresh, authToken.expiresAt
+const session = await client.auth.login('user@example.com', 'secret')
+// session.token   — JWT; feed it back as the client's Bearer to authenticate calls:
+//                   new VocdoniApiClient({ apiUrl, authToken: () => session.token })
+// session.expirity — expiry timestamp (the API's field spelling)
 
-const refreshed = await client.auth.refresh(refreshToken)
+// Re-issue using the current token (no refresh token exists — the client must
+// already be sending the JWT as Bearer).
+const refreshed = await client.auth.refresh()
+
+// Organizations the logged-in user belongs to:
+const { addresses } = await client.auth.addresses()
 ```
 
 ---

@@ -29,7 +29,7 @@ describe('AuthProvider', () => {
     const { result } = renderHook(useAuth, { wrapper: wrapper() })
 
     await act(async () => {
-      await result.current.login('0xaddr', '0xsig')
+      await result.current.login('user@example.com', 'secret')
     })
 
     expect(result.current.token).toBe(mockAuthToken.token)
@@ -39,7 +39,7 @@ describe('AuthProvider', () => {
   it('logout clears the token', async () => {
     const { result } = renderHook(useAuth, { wrapper: wrapper() })
     await act(async () => {
-      await result.current.login('0xaddr', '0xsig')
+      await result.current.login('user@example.com', 'secret')
     })
     expect(result.current.isAuthenticated).toBe(true)
 
@@ -52,10 +52,10 @@ describe('AuthProvider', () => {
   it('refresh throws before login, then refreshes the token afterwards', async () => {
     const { result } = renderHook(useAuth, { wrapper: wrapper() })
 
-    await expect(result.current.refresh()).rejects.toThrow('No refresh token available')
+    await expect(result.current.refresh()).rejects.toThrow('Not authenticated')
 
     await act(async () => {
-      await result.current.login('0xaddr', '0xsig')
+      await result.current.login('user@example.com', 'secret')
     })
 
     // Next refresh returns a distinct token so we can see it propagate.
@@ -71,15 +71,14 @@ describe('AuthProvider', () => {
     expect(result.current.token).toBe('refreshed-token')
   })
 
-  it('persists token + refresh to localStorage and re-reads them on remount', async () => {
+  it('persists the token to localStorage and re-reads it on remount', async () => {
     const key = 'vocdoni-auth'
     const { result, unmount } = renderHook(useAuth, { wrapper: wrapper(key) })
 
     await act(async () => {
-      await result.current.login('0xaddr', '0xsig')
+      await result.current.login('user@example.com', 'secret')
     })
     expect(localStorage.getItem(`${key}.token`)).toBe(mockAuthToken.token)
-    expect(localStorage.getItem(`${key}.refresh`)).toBe(mockAuthToken.refresh)
 
     unmount()
     // A fresh provider with the same key hydrates from storage.
@@ -94,7 +93,7 @@ describe('AuthProvider', () => {
   it('keeps tokens in memory only when no storageKey is given', async () => {
     const { result } = renderHook(useAuth, { wrapper: wrapper() })
     await act(async () => {
-      await result.current.login('0xaddr', '0xsig')
+      await result.current.login('user@example.com', 'secret')
     })
     // Nothing leaked into storage under any key we control.
     expect(localStorage.getItem('vocdoni-auth.token')).toBeNull()

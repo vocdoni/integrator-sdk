@@ -4,7 +4,7 @@ import { useClient } from '../client/ClientProvider'
 export interface AuthContextValue {
   token: string | null
   isAuthenticated: boolean
-  login(address: string, signature: string): Promise<void>
+  login(email: string, password: string): Promise<void>
   logout(): void
   refresh(): Promise<void>
 }
@@ -17,30 +17,22 @@ export interface AuthProviderProps {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
-function readStorage(key: string | undefined): { token: string | null; refresh: string | null } {
-  if (!key || typeof window === 'undefined') return { token: null, refresh: null }
+function readToken(key: string | undefined): string | null {
+  if (!key || typeof window === 'undefined') return null
   try {
-    return {
-      token: localStorage.getItem(`${key}.token`),
-      refresh: localStorage.getItem(`${key}.refresh`),
-    }
+    return localStorage.getItem(`${key}.token`)
   } catch {
-    return { token: null, refresh: null }
+    return null
   }
 }
 
-function writeStorage(key: string | undefined, token: string | null, refresh: string | null) {
+function writeToken(key: string | undefined, token: string | null) {
   if (!key || typeof window === 'undefined') return
   try {
     if (token) {
       localStorage.setItem(`${key}.token`, token)
     } else {
       localStorage.removeItem(`${key}.token`)
-    }
-    if (refresh) {
-      localStorage.setItem(`${key}.refresh`, refresh)
-    } else {
-      localStorage.removeItem(`${key}.refresh`)
     }
   } catch {
     // ignore storage errors
@@ -50,34 +42,28 @@ function writeStorage(key: string | undefined, token: string | null, refresh: st
 export function AuthProvider({ children, storageKey }: AuthProviderProps) {
   const { client } = useClient()
 
-  const [token, setToken] = useState<string | null>(() => readStorage(storageKey).token)
-  const [refreshToken, setRefreshToken] = useState<string | null>(
-    () => readStorage(storageKey).refresh,
-  )
+  const [token, setToken] = useState<string | null>(() => readToken(storageKey))
 
   const login = useCallback(
-    async (address: string, signature: string) => {
-      const authToken = await client.auth.login(address, signature)
+    async (email: string, password: string) => {
+      const authToken = await client.auth.login(email, password)
       setToken(authToken.token)
-      setRefreshToken(authToken.refresh)
-      writeStorage(storageKey, authToken.token, authToken.refresh)
+      writeToken(storageKey, authToken.token)
     },
     [client.auth, storageKey],
   )
 
   const logout = useCallback(() => {
     setToken(null)
-    setRefreshToken(null)
-    writeStorage(storageKey, null, null)
+    writeToken(storageKey, null)
   }, [storageKey])
 
   const refresh = useCallback(async () => {
-    if (!refreshToken) throw new Error('No refresh token available. Please log in first.')
-    const authToken = await client.auth.refresh(refreshToken)
+    if (!token) throw new Error('Not authenticated. Please log in first.')
+    const authToken = await client.auth.refresh()
     setToken(authToken.token)
-    setRefreshToken(authToken.refresh)
-    writeStorage(storageKey, authToken.token, authToken.refresh)
-  }, [client.auth, refreshToken, storageKey])
+    writeToken(storageKey, authToken.token)
+  }, [client.auth, token, storageKey])
 
   const value: AuthContextValue = {
     token,

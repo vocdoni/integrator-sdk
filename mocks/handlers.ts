@@ -44,8 +44,7 @@ export const mockOrganization = {
 
 export const mockAuthToken = {
   token: 'test-jwt-token',
-  expiresAt: '2099-01-01T00:00:00Z',
-  refresh: 'test-refresh-token',
+  expirity: '2099-01-01T00:00:00Z',
 }
 
 export const handlers = [

@@ -120,10 +120,10 @@ describe('VocdoniApiClient', () => {
   })
 
   describe('auth.login', () => {
-    it('returns an AuthToken on successful login', async () => {
-      const token = await client.auth.login('0xaddr', '0xsig')
+    it('returns an AuthToken on successful email/password login', async () => {
+      const token = await client.auth.login('user@example.com', 'secret')
       expect(token.token).toBe(mockAuthToken.token)
-      expect(token.refresh).toBe(mockAuthToken.refresh)
+      expect(token.expirity).toBe(mockAuthToken.expirity)
     })
   })
 })

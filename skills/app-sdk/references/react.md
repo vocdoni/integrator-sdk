@@ -58,7 +58,10 @@ const { client, apiUrl } = useClient()
 
 ## AuthProvider / useAuth
 
-Admin/organization session management. Not the voter CSP flow (that's `BundleProvider`). Persists JWT to `localStorage` when `storageKey` is provided.
+Normal-SaaS-user session management — a signed-up user logging in with
+email/password to drive the SDK under their own organization. Not the integrator
+API-key flow, and not the voter CSP flow (that's `BundleProvider`). Persists the
+JWT to `localStorage` when `storageKey` is provided.
 
 ```tsx
 import { AuthProvider, useAuth } from '@vocdoni/react-providers'
@@ -67,10 +70,14 @@ import { AuthProvider, useAuth } from '@vocdoni/react-providers'
 
 const { token, isAuthenticated, login, logout, refresh } = useAuth()
 
-await login(address, signature)  // EIP-191 signature over a message
+await login('user@example.com', 'secret')  // email + password → JWT
 logout()
-await refresh()                  // rotates the token using the refresh token
+await refresh()                            // re-issues the JWT using the current token
 ```
+
+For authenticated calls to actually carry the JWT, wire the same token into
+`ClientProvider` (e.g. `authToken={() => readTokenFromStorage()}`) so the client
+sends it as Bearer.
 
 ---
 
