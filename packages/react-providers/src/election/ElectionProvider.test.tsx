@@ -50,6 +50,31 @@ describe('ElectionProvider', () => {
     await waitFor(() => expect(result.current.bundle.chainId).toBe('test'))
   })
 
+  it('surfaces the on-chain encryption keys of a secretUntilTheEnd election', async () => {
+    const publicKeys = [
+      { index: 1, key: 'e34968e44589b4cdfda2365de5f9404b86fcc88ed015bea3f8b29975d958306e' },
+    ]
+    server.use(
+      http.get(`http://localhost/process/:id`, ({ params }) =>
+        HttpResponse.json({
+          id: params.id as string,
+          address: '6be21a5a9dc06e84f132f7257865308a9298b06d6a6273f4e844030400000000',
+          chainId: 'test',
+          status: 'READY',
+          electionParams: {
+            questions: [],
+            electionType: { interruptible: true, secretUntilTheEnd: true, anonymous: false },
+          },
+          publicKeys,
+        }),
+      ),
+    )
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    // These flow straight into buildVoteTransaction, which seals the ballot.
+    expect(result.current.election.election?.encryptionPublicKeys).toEqual(publicKeys)
+  })
+
   it('connects through the bundle auth flow and resolves membership + weight', async () => {
     const { result } = renderHook(useVoter, { wrapper })
     await waitFor(() => expect(result.current.election.election).not.toBeNull())

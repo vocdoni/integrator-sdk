@@ -86,6 +86,16 @@ describe('mapProcessToElection', () => {
     expect(mapProcessToElection({ ...base, census: undefined }).census).toBeUndefined()
   })
 
+  it('surfaces publicKeys (encrypted elections) as encryptionPublicKeys', () => {
+    const keys = [{ index: 1, key: 'e34968e44589b4cdfda2365de5f9404b86fcc88ed015bea3f8b29975d958306e' }]
+    const e = mapProcessToElection({ ...base, publicKeys: keys })
+    expect(e.encryptionPublicKeys).toEqual(keys)
+  })
+
+  it('leaves encryptionPublicKeys undefined for non-encrypted processes', () => {
+    expect(mapProcessToElection(base).encryptionPublicKeys).toBeUndefined()
+  })
+
   it('throws when the process has no vochain address', () => {
     expect(() => mapProcessToElection({ ...base, address: undefined })).toThrow(/vochain address/)
   })
