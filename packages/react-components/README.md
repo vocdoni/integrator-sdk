@@ -16,7 +16,7 @@
 # @vocdoni/react-components
 
 React UI components for building Vocdoni voting interfaces. This is the batteries-included
-entry point to the App SDK on the frontend: it pairs ready-made components with the data
+entry point to the Integrator SDK on the frontend: it pairs ready-made components with the data
 wiring, so most apps only need to install this one package.
 
 On top of the components it ships:

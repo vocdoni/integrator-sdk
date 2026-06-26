@@ -281,6 +281,6 @@ interface CensusInfo {
 
 ## Cross-references
 
-- [[app-sdk]] — vote flow overview
+- [[integrator-sdk]] — vote flow overview
 - [[voting]] — `buildVoteTransaction`, `VotingClient`, choices format
 - [[react]] — `ClientProvider` wraps `VocdoniApiClient` for React apps

@@ -31,5 +31,5 @@ The package exists so it can be developed alongside the rest of the SDK, but the
 
 ## Cross-references
 
-- [[app-sdk]] — overview and stable packages
+- [[integrator-sdk]] — overview and stable packages
 - [[voting]] — the current (non-ZK) CSP-based vote flow

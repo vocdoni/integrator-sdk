@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "license": "GPL-3.0-or-later",
-  "description": "Vocdoni App SDK monorepo",
+  "description": "Vocdoni Integrator SDK monorepo",
   "scripts": {
     "build": "turbo run build",
     "test": "vitest run",

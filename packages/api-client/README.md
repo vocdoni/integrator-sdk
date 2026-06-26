@@ -16,7 +16,7 @@
 # @vocdoni/api-client
 
 The HTTP client for the [Vocdoni SaaS API](https://developer.vocdoni.io/). It is a thin,
-typed wrapper around the SaaS REST endpoints and the foundation the rest of the App SDK
+typed wrapper around the SaaS REST endpoints and the foundation the rest of the Integrator SDK
 builds on. Every call goes through the SaaS API — the client never talks to the blockchain
 directly.
 

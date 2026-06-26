@@ -184,6 +184,6 @@ const opened = BallotEncryptor.open(sealed, recipientPk, recipientSk)
 
 ## Cross-references
 
-- [[app-sdk]] — overview and vote flow sequence
+- [[integrator-sdk]] — overview and vote flow sequence
 - [[client]] — `BundleClient` (auth, check, sign), `JobsClient` (waitFor), `ElectionsClient` (vote relay)
 - [[react]] — `useElection().vote()` automates this entire flow in React

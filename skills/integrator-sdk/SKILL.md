@@ -1,9 +1,9 @@
 ---
-name: app-sdk
-description: Use this skill whenever working with the Vocdoni App SDK packages — @vocdoni/api-client, @vocdoni/api-voting, @vocdoni/react-providers, or @vocdoni/react-components. Triggers on imports from any of those packages, mentions of VocdoniApiClient, VotingClient, BundleProvider, ElectionProvider, CSP auth flow, vote relay, encrypted ballots (secretUntilTheEnd), or any task like "cast a vote", "set up voting in React", "build the vote transaction", "poll a job". The SDK talks exclusively to the Vocdoni SaaS API — no direct blockchain access.
+name: integrator-sdk
+description: Use this skill whenever working with the Vocdoni Integrator SDK packages — @vocdoni/api-client, @vocdoni/api-voting, @vocdoni/react-providers, or @vocdoni/react-components. Triggers on imports from any of those packages, mentions of VocdoniApiClient, VotingClient, BundleProvider, ElectionProvider, CSP auth flow, vote relay, encrypted ballots (secretUntilTheEnd), or any task like "cast a vote", "set up voting in React", "build the vote transaction", "poll a job". The SDK talks exclusively to the Vocdoni SaaS API — no direct blockchain access.
 ---
 
-# Vocdoni App SDK
+# Vocdoni Integrator SDK
 
 A monorepo of TypeScript packages that replaces the `@vocdoni/sdk` with a SaaS-first approach. Everything goes through the Vocdoni SaaS API; the SDK never talks to the blockchain directly.
 

@@ -15,7 +15,7 @@
 
 # @vocdoni/react-providers
 
-Headless React providers and hooks for the Vocdoni App SDK. This package owns all the state
+Headless React providers and hooks for the Vocdoni Integrator SDK. This package owns all the state
 and data wiring for a voting app — fetching, caching and exposing SaaS data through context
 — while shipping **no UI at all**. You bring your own components and render however you
 like.
