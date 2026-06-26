@@ -5,5 +5,9 @@ export {
   buildVoteTransaction,
   type BuildVoteTransactionOptions,
 } from './vote-transaction'
-export { VotingClient, type VoteOptions } from './voting-client'
+export {
+  VotingClient,
+  type VotingClientOptions,
+  type VoteApiClient,
+} from './voting-client'
 export { strip0x, ensure0x, fromHex, toHex } from './hex'

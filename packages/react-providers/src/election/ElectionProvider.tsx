@@ -1,4 +1,4 @@
-import type { Election, RelayVoteResponse } from '@vocdoni/api-types'
+import type { Election } from '@vocdoni/api-types'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -103,7 +103,7 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
       const signer = new EphemeralSigner()
       const { signature, weight } = await bundle.sign(processId, signer.address)
 
-      const votingClient = new VotingClient()
+      const votingClient = new VotingClient({ client })
       const jobId = await votingClient.vote({
         processId,
         choices,
@@ -112,7 +112,6 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
         cspSignature: signature,
         cspWeight: weight,
         encryptionKeys: election.encryptionPublicKeys,
-        relayFn: (req): Promise<RelayVoteResponse> => client.elections.vote(req),
       })
 
       // The relay is async — poll the job for the resulting nullifier.

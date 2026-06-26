@@ -22,7 +22,7 @@ vote envelope, which is then relayed to the SaaS API.
 It provides:
 
 - **`VotingClient`** — the high-level entry point. `vote()` builds, signs and relays a vote
-  in one call, returning an async job id.
+  in one call, returning an async job id. The api-client is injected at construction (see below).
 - **`buildVotePackage`** — assembles the vote package, optionally encrypting the ballot for
   `secretUntilTheEnd` elections.
 - **`buildVoteTransaction`** — builds the protobuf Vochain vote transaction with its CSP
@@ -36,27 +36,41 @@ package picks up from there and produces the vote.
 
 ## Install
 
+This package builds and signs the vote, but it does **not** talk to the network — it stays
+free of any HTTP client so its (eventually large, with ZK) bundle never leaks into read-only
+consumers. The actual relay is performed by [`@vocdoni/api-client`](../api-client), which you
+inject. Install both:
+
 ~~~bash
-pnpm add @vocdoni/api-voting
+pnpm add @vocdoni/api-voting @vocdoni/api-client
 ~~~
 
 ## Usage
 
+`VotingClient` takes your api-client at construction and relays through it internally — you
+don't have to know which endpoint it uses. The `VoteApiClient` interface is satisfied
+structurally by the full `VocdoniApiClient`, so you pass the client you already have, and
+api-voting never imports api-client:
+
 ~~~ts
-import { VotingClient } from '@vocdoni/api-voting'
+import { VocdoniApiClient } from '@vocdoni/api-client'
+import { VotingClient, EphemeralSigner } from '@vocdoni/api-voting'
 
-const client = new VotingClient()
+const client = new VocdoniApiClient({ apiUrl })
+const voting = new VotingClient({ client })
 
-const jobId = await client.vote({
+// `signer` and `cspSignature` come from the bundle auth/sign flow (via api-client).
+const jobId = await voting.vote({
   processId,
   chainId, // Vochain chain id the vote is destined for
   choices: [1],
   signer, // ephemeral signer whose address the CSP signed
   cspSignature, // signature returned by the bundle sign endpoint
-  relayFn: (req) => api.relayVote(req),
 })
 
 // Poll GET /jobs/{jobId} to obtain the vote nullifier once the job completes.
+const job = await client.jobs.waitFor(jobId)
+const nullifier = job.result?.voteID
 ~~~
 
 ## License
