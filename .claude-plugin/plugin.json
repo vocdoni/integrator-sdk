@@ -1,0 +1,28 @@
+{
+  "name": "vocdoni-integrator-sdk",
+  "version": "0.1.0",
+  "description": "Reference skill for the Vocdoni Integrator SDK (@vocdoni/api-client, @vocdoni/api-voting, @vocdoni/react-providers, @vocdoni/react-components): CSP auth flow, vote relay, ballot building, and React integration, with copy-pasteable recipes.",
+  "author": {
+    "name": "Vocdoni",
+    "url": "https://vocdoni.io"
+  },
+  "homepage": "https://github.com/vocdoni/integrator-sdk",
+  "repository": "https://github.com/vocdoni/integrator-sdk",
+  "license": "AGPL-3.0-or-later",
+  "keywords": [
+    "claude-code",
+    "skills",
+    "vocdoni",
+    "integrator-sdk",
+    "voting",
+    "elections",
+    "csp",
+    "react"
+  ],
+  "skills": [
+    {
+      "name": "integrator-sdk",
+      "path": "skills/integrator-sdk"
+    }
+  ]
+}
