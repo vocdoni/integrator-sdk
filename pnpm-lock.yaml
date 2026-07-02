@@ -146,6 +146,22 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/ballot:
+    dependencies:
+      '@vocdoni/api-types':
+        specifier: workspace:*
+        version: link:../api-types
+    devDependencies:
+      tsconfig:
+        specifier: workspace:*
+        version: link:../tsconfig
+      tsdown:
+        specifier: ^0.22.3
+        version: 0.22.3(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/react-components:
     dependencies:
       latinize:
