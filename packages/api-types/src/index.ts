@@ -530,6 +530,7 @@ export interface CreateManagedOrganizationRequest {
   color?: string
   country?: string
   timezone?: string
+  meta?: Record<string, unknown>
   /** Optionally assign an existing user (by email) as the managed org's admin. */
   ownerEmail?: string
 }

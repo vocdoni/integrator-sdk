@@ -45,7 +45,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       // 1. Managed organization.
       const org = await admin.organizations.createManaged({
         type: 'company',
-        website: `https://e2e-${Date.now()}.example`,
+        meta: { name: `e2e-${Date.now()}` },
       })
       const orgAddress = org.address
       expect(orgAddress, 'managed org has no address').toBeTruthy()

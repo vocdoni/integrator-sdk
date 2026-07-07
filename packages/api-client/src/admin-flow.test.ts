@@ -22,9 +22,9 @@ describe('admin / integrator client methods', () => {
         }),
       )
 
-      const org = await client.organizations.createManaged({ type: 'company', website: 'https://x' })
+      const org = await client.organizations.createManaged({ type: 'company', meta: { name: 'Acme Corp' } })
       expect(org.address).toBe(ORG)
-      expect(body).toEqual({ type: 'company', website: 'https://x' })
+      expect(body).toEqual({ type: 'company', meta: { name: 'Acme Corp' } })
     })
   })
 
