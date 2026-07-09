@@ -36,10 +36,11 @@ export const mockElection = {
   },
 }
 
+// name/description are locale maps on read (shorthands for meta["name"] etc.).
 export const mockOrganization = {
   address: '0xdeadbeef',
-  name: 'Test Org',
-  description: 'A test organization',
+  name: { default: 'Test Org' },
+  description: { default: 'A test organization' },
 }
 
 export const mockAuthToken = {

@@ -1,4 +1,5 @@
 import { ComponentPropsWithoutRef } from 'react'
+import { resolveTitle } from '../../election/normalized'
 import { useComponents } from '../context/useComponents'
 import { linkifyIpfs } from '../shared/ipfs'
 import { useOrganization } from '@vocdoni/react-providers'
@@ -7,7 +8,9 @@ export const OrganizationAvatar = (props: ComponentPropsWithoutRef<'img'> & Reco
   const { organization } = useOrganization()
   const { OrganizationAvatar: Slot } = useComponents()
 
-  return <Slot {...props} src={linkifyIpfs(organization?.logo)} alt={organization?.name} />
+  return (
+    <Slot {...props} src={linkifyIpfs(resolveTitle(organization?.logo))} alt={resolveTitle(organization?.name)} />
+  )
 }
 
 export const OrganizationImage = OrganizationAvatar

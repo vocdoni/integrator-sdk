@@ -18,19 +18,86 @@ export interface JWTPayload {
 
 // ─── Organization ─────────────────────────────────────────────────────────────
 
+/**
+ * Locale-keyed text, e.g. `{ default: 'Acme', es: 'Acme SA' }`. The SaaS API
+ * stores an organization's `name` / `description` / `logo` (shorthands for the
+ * matching `meta[...]` keys) this way; the `default` key is the fallback locale.
+ */
+export type MultilingualText = Record<string, string>
+
+/**
+ * The full organization record the SaaS API returns from
+ * `GET /organizations/{address}` — the `apicommon.OrganizationInfo` schema. The
+ * API marks no field as required and omits absent ones, so everything past
+ * `address` is optional.
+ */
 export interface Organization {
+  /**
+   * Organization address as a hex string. The swagger models this as a byte
+   * array (`[]integer`), but the JSON the client sends and receives is the hex
+   * string form, so it is typed as `string` here.
+   */
   address: string
-  name: string
-  description: string
+  /** Shorthand for `meta["name"]`; a locale map on read. */
+  name?: MultilingualText
+  /** Shorthand for `meta["description"]`; a locale map on read. */
+  description?: MultilingualText
+  /** Shorthand for `meta["logo"]`; a locale map on read. */
+  logo?: MultilingualText
   website?: string
-  logo?: string
+  /** Brand color in hex format. */
+  color?: string
+  /** Size category of the organization. */
+  size?: string
+  /** Organization type (see `GET /organizations/types`). */
+  type?: string
+  country?: string
+  timezone?: string
+  subdomain?: string
+  active?: boolean
+  communications?: boolean
+  /** Whether this org is subscribed to the (free) integrator plan. */
+  integrator?: boolean
+  /** Creation timestamp, RFC3339. */
+  createdAt?: string
+  /**
+   * Integrator org (hex) that manages this org; absent for regular orgs. Lets
+   * clients tell managed orgs apart from the user's own orgs.
+   */
+  managedBy?: string
+  /** Arbitrary metadata; `name` / `description` / `logo` mirror `meta[...]`. */
+  meta?: Record<string, unknown>
+  /** Usage counters for the organization. */
+  counters?: SubscriptionUsage
+  /** Subscription details for the organization. */
+  subscription?: SubscriptionDetails
+  /** Parent organization when this is a sub-organization. */
+  parent?: Organization
 }
 
+/**
+ * Body of `POST /organizations` (and, as a `Partial`, `PUT /organizations/{address}`).
+ * Mirrors the SaaS `apicommon.CreateOrganizationRequest`: the write shape of
+ * {@link Organization} plus `provisionAccount`. On write, `name` / `description` /
+ * `logo` accept a plain string (stored as `{ default: value }`) or a locale map.
+ */
 export interface CreateOrganizationRequest {
-  name: string
-  description?: string
+  name: string | MultilingualText
+  description?: string | MultilingualText
+  logo?: string | MultilingualText
   website?: string
-  logo?: string
+  color?: string
+  size?: string
+  type?: string
+  country?: string
+  timezone?: string
+  subdomain?: string
+  active?: boolean
+  communications?: boolean
+  /** Opt-in to the free integrator plan at creation. */
+  integrator?: boolean
+  meta?: Record<string, unknown>
+  /** Opt-in to eagerly provision the on-chain account at creation (default false). */
   provisionAccount?: boolean
 }
 
@@ -501,25 +568,11 @@ export interface Pagination {
 }
 
 // ─── Organizations (full SaaS shape) ───────────────────────────────────────────
-// The rich org record the SaaS API returns. Distinct from the lean {@link
-// Organization} the UI components consume; used by the integrator/managed flows.
+// The integrator / managed-org flows use the same `apicommon.OrganizationInfo`
+// schema as {@link Organization}. Kept as an alias so existing call sites keep
+// working without duplicating the field list.
 
-export interface OrganizationInfo {
-  address: string
-  website?: string
-  createdAt?: string
-  type?: string
-  size?: string
-  color?: string
-  subdomain?: string
-  country?: string
-  timezone?: string
-  active?: boolean
-  communications?: boolean
-  meta?: Record<string, unknown>
-  /** Whether this org is integrator-enabled. */
-  integrator?: boolean
-}
+export type OrganizationInfo = Organization
 
 /** Body of `POST /integrator/organizations` — creates a managed organization. */
 export interface CreateManagedOrganizationRequest {
@@ -765,11 +818,18 @@ export interface SubscriptionDetails {
 }
 
 export interface SubscriptionUsage {
-  sentSMS: number
-  sentEmails: number
-  subOrgs: number
-  users: number
+  /** Number of voting processes created. */
   processes: number
+  /** Number of emails sent. */
+  sentEmails: number
+  /** Number of SMS messages sent. */
+  sentSMS: number
+  /** Number of votes relayed. */
+  sentVotes: number
+  /** Number of sub-organizations created. */
+  subOrgs: number
+  /** Number of users in the organization. */
+  users: number
 }
 
 /** A subscription plan (`GET /plans`). Nested limit objects are left open-ended. */

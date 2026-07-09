@@ -41,7 +41,7 @@ describe('VocdoniApiClient', () => {
     it('returns organization data for the given address', async () => {
       const org = await client.organizations.get('0xdeadbeef')
       expect(org.address).toBe('0xdeadbeef')
-      expect(org.name).toBe(mockOrganization.name)
+      expect(org.name).toEqual(mockOrganization.name)
     })
   })
 

@@ -24,7 +24,7 @@ describe('OrganizationProvider', () => {
 
     await waitFor(() => expect(result.current.organization).not.toBeNull())
     expect(result.current.organization?.address).toBe(ADDRESS)
-    expect(result.current.organization?.name).toBe(mockOrganization.name)
+    expect(result.current.organization?.name).toEqual(mockOrganization.name)
     expect(result.current.loading).toBe(false)
   })
 
