@@ -29,7 +29,7 @@ export function validateSelections(
 
   switch (ballotType) {
     case BallotType.SingleChoice:
-      validateSingleChoice(voteType, selections)
+      validateSingleChoice(questions, selections)
       break
 
     case BallotType.Approval:
@@ -51,9 +51,10 @@ export function validateSelections(
 }
 
 /**
- * Validate single-choice selections.
+ * Validate single-choice selections: at most one choice per question, and that
+ * choice must be a valid value of that question.
  */
-function validateSingleChoice(voteType: VoteType, selections: number[][]): void {
+function validateSingleChoice(questions: Question[], selections: number[][]): void {
   for (let q = 0; q < selections.length; q++) {
     const questionSelections = selections[q]
 
@@ -64,9 +65,14 @@ function validateSingleChoice(voteType: VoteType, selections: number[][]): void 
       )
     }
 
-    // Validate the selected index is within range
-    if (questionSelections.length === 1 && questionSelections[0] < 0) {
-      throw new Error(`Question ${q}: invalid choice index ${questionSelections[0]} (must be >= 0)`)
+    if (questionSelections.length === 1) {
+      const validValues = new Set(questions[q].choices.map((c) => c.value))
+      const value = questionSelections[0]
+      if (!validValues.has(value)) {
+        throw new Error(
+          `Question ${q}: invalid choice ${value}; must be one of [${Array.from(validValues).join(', ')}]`
+        )
+      }
     }
   }
 }
@@ -109,22 +115,25 @@ function validateMultiChoice(voteType: VoteType, question: Question, selections:
 
 /**
  * Validate budget or quadratic selections.
+ *
+ * These selections are per-option *amounts* (not choice indices): one non-negative
+ * integer per option, in choice order. The total-cost bounds (maxTotalCost /
+ * costExponent) are not part of the on-chain voteType surface here, so only the
+ * per-option shape is validated.
  */
 function validateBudgetOrQuadratic(question: Question, selections: number[]): void {
-  const validIndices = new Set(question.choices.map((c) => c.value))
-
-  for (const idx of selections) {
-    if (!validIndices.has(idx)) {
-      throw new Error(
-        `Invalid choice index ${idx} for budget/quadratic ballot; must be one of [${Array.from(validIndices).join(', ')}]`
-      )
-    }
-  }
-
-  // Budget/quadratic typically require all options to have an amount assigned
+  // Budget/quadratic require exactly one amount per option.
   if (selections.length !== question.choices.length) {
     throw new Error(
       `Question 0: budget/quadratic requires ${question.choices.length} amounts, got ${selections.length}`
     )
+  }
+
+  for (const amount of selections) {
+    if (!Number.isInteger(amount) || amount < 0) {
+      throw new Error(
+        `Invalid amount ${amount} for budget/quadratic ballot; amounts must be non-negative integers`
+      )
+    }
   }
 }

@@ -4,15 +4,16 @@ import { inferBallotType } from './infer.js'
 
 /**
  * Encode high-level voter selections into the on-chain ballot array format.
- * 
+ *
  * Encoding rules (must match vochain scrutinizer):
- * - single-choice (multi-question): one chosen choice-index per question: [i0, i1, …]
+ * - single-choice (multi-question): one chosen choice value per question: [v0, v1, …]
  * - approval: dense 0/1 vector over options: choices.map(c => selected.has(c) ? 1 : 0)
- * - multichoice: list of selected option indices, padded to maxCount with abstain values if canAbstain
+ * - multichoice: exactly `maxCount` picked option values, unfilled slots padded with abstain
+ *   sentinels (values ≥ choices.length; see encodeMultiChoice)
  * - budget / quadratic: per-option amount array [a0, a1, …]
- * 
+ *
  * @param input - Election config with questions and voteType
- * @param selections - Per-question choice indices (single/multi) or per-option amounts (budget/quadratic)
+ * @param selections - Per-question choice values (single/multi) or per-option amounts (budget/quadratic)
  * @returns The ballot array as numbers
  */
 export function encodeBallot(
@@ -36,7 +37,7 @@ export function encodeBallot(
 
     case BallotType.Budget:
     case BallotType.Quadratic:
-      return encodeBudgetOrQuadratic(questions[0], selections[0] ?? [])
+      return encodeBudgetOrQuadratic(selections[0] ?? [])
 
     default:
       throw new Error(`Unknown ballot type: ${ballotType}`)
@@ -44,16 +45,24 @@ export function encodeBallot(
 }
 
 /**
- * Encode single-choice ballot: one choice index per question.
+ * Encode single-choice ballot: one choice value per question.
+ *
+ * Each question is a field whose value is the chosen choice. Value 0 is a real
+ * choice, so there is no reserved sentinel for "no selection". Rather than silently
+ * encode an abstention as a vote for the first choice, refuse it: the single-choice
+ * model can't represent an abstain the scrutinizer would count as such.
  */
 function encodeSingleChoice(questions: Question[], selections: number[][]): number[] {
-  return selections.map((indices) => {
-    if (indices.length === 0) {
-      // No selection = abstain; use 0 as default
-      return 0
+  return selections.map((choices, q) => {
+    if (choices.length === 0) {
+      throw new Error(
+        `Question ${q}: cannot encode an abstention for a single-choice question — ` +
+          `value 0 is a real choice, so there is no representable abstain value. ` +
+          `Provide exactly one choice.`
+      )
     }
-    // Pick the first selected index (should be exactly one for single-choice)
-    return indices[0]
+    // Pick the first selected value (should be exactly one for single-choice)
+    return choices[0]
   })
 }
 
@@ -66,24 +75,59 @@ function encodeApproval(question: Question, selections: number[]): number[] {
 }
 
 /**
- * Encode multichoice ballot: list of selected option indices.
- * For now, returns the selections directly; padding logic can be added if needed.
+ * Encode multichoice ballot: exactly `maxCount` picked option values.
+ *
+ * The scrutinizer expects a fixed `maxCount`-length ballot (one value per pick-slot),
+ * so any selection shorter than `maxCount` must be padded with abstain sentinels. The
+ * sentinels are the values just past the valid choice indices (`0..choices.length-1`);
+ * the ballot config reserves them by setting `maxValue >= choices.length` (legacy SDK:
+ * `maxValue = choices.length - 1 + abstainAllowance`):
+ *
+ * - `uniqueChoices === false` (choices may repeat): a single abstain value `choices.length`,
+ *   reused for every empty slot.
+ * - `uniqueChoices === true` (choices are unique): distinct ascending values
+ *   `choices.length, choices.length + 1, …`, one per empty slot, so no value repeats.
+ *
+ * Throws when there are more selections than `maxCount`, or fewer than `maxCount` in an
+ * election that does not reserve abstain values (`maxValue < choices.length`) — in that
+ * case the voter must pick exactly `maxCount` choices.
  */
-function encodeMultiChoice(
-  voteType: VoteType,
-  question: Question,
-  selections: number[]
-): number[] {
-  // Return selections as-is; they represent the chosen choice indices
-  // Padding to maxCount with abstain values could be added here if canAbstain logic is available
-  return [...selections]
+function encodeMultiChoice(voteType: VoteType, question: Question, selections: number[]): number[] {
+  const numChoices = question.choices.length
+  const { maxCount } = voteType
+  const ballot = [...selections]
+
+  if (ballot.length > maxCount) {
+    throw new Error(
+      `multichoice: too many selections (${ballot.length}); at most maxCount (${maxCount}) allowed`
+    )
+  }
+  if (ballot.length === maxCount) return ballot
+
+  // Fewer picks than slots: pad with abstain sentinels if the config reserves them.
+  const abstainAllowed = voteType.maxValue >= numChoices
+  if (!abstainAllowed) {
+    throw new Error(
+      `multichoice: got ${ballot.length} selection(s) for a ${maxCount}-slot ballot, but this ` +
+        `election does not allow abstaining (maxValue ${voteType.maxValue} < choices ${numChoices}); ` +
+        `select exactly ${maxCount} choices`
+    )
+  }
+
+  const unique = voteType.uniqueChoices
+  let abstainSlot = 0
+  while (ballot.length < maxCount) {
+    ballot.push(unique ? numChoices + abstainSlot : numChoices)
+    abstainSlot++
+  }
+  return ballot
 }
 
 /**
- * Encode budget or quadratic ballot: per-option amount array.
+ * Encode budget or quadratic ballot: per-option amount array, in choice order.
  */
-function encodeBudgetOrQuadratic(question: Question, selections: number[]): number[] {
-  // For budget/quadratic, selections represent the amounts allocated to each option
-  // Return as-is; they should already be in the correct format
+function encodeBudgetOrQuadratic(selections: number[]): number[] {
+  // For budget/quadratic, selections are the amounts allocated to each option; the
+  // caller supplies them already in choice order, so pass them through unchanged.
   return [...selections]
 }

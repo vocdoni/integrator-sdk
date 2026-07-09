@@ -57,6 +57,29 @@ const ballot = encodeBallot({ questions, voteType }, selections)
 const decoded = decodeResults({ questions, voteType, results })
 ```
 
+## Encoding semantics
+
+`encodeBallot` takes `selections` as one array per question and produces the on-chain
+ballot the scrutinizer expects:
+
+| Type | `selections[q]` | Ballot |
+|---|---|---|
+| single-choice | the chosen choice value (one entry) | one value per question `[v0, v1, …]` |
+| approval | the approved choice values | dense `0/1` vector over every option |
+| multichoice | the picked choice values | exactly `maxCount` values; unfilled slots padded with abstain sentinels |
+| budget / quadratic | the per-option amounts, in choice order | the amount array unchanged |
+
+**Abstaining:**
+
+- **single-choice** has no reserved abstain value (value `0` is a real choice), so an empty
+  selection **throws** rather than silently counting as a vote for the first choice.
+- **multichoice** pads short selections up to `maxCount` with abstain sentinels — a single
+  repeated value `choices.length` when `uniqueChoices` is `false`, or distinct ascending
+  values `choices.length, choices.length + 1, …` when `uniqueChoices` is `true`. This
+  requires the election to reserve them (`maxValue >= choices.length`); otherwise a partial
+  selection throws and the voter must pick exactly `maxCount` choices. `decodeResults` drops
+  the sentinel columns.
+
 ## Installation
 
 ```bash

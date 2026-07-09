@@ -40,11 +40,11 @@ describe('encodeBallot', () => {
       expect(ballot).toEqual([0, 2, 4])
     })
 
-    it('handles abstain (empty selection) as 0', () => {
+    it('refuses to encode an abstention (empty selection) instead of silently voting for choice 0', () => {
       const election = createElection({ maxCount: 1, maxValue: 2 }, 2)
       const selections = [[], [1]] // First question abstain, second selects choice 1
-      const ballot = encodeBallot(election, selections)
-      expect(ballot).toEqual([0, 1])
+      // value 0 is a real choice, so an abstain is not representable — must throw
+      expect(() => encodeBallot(election, selections)).toThrow(/abstention/i)
     })
 
     it('picks first selection when multiple are provided (should not happen in practice)', () => {
@@ -86,32 +86,40 @@ describe('encodeBallot', () => {
   })
 
   describe('Multichoice encoding', () => {
-    it('encodes multichoice as list of selected indices', () => {
+    // 5 choices per question (values 0..4). maxValue === 4 means no abstain room;
+    // maxValue >= 5 reserves abstain sentinels starting at 5.
+    it('passes a full selection through when it already fills maxCount', () => {
       const election = createElection({ maxCount: 3, maxValue: 4 })
-      const selections = [[1, 3]] // Select choices 1 and 3
-      const ballot = encodeBallot(election, selections)
-      expect(ballot).toEqual([1, 3])
-    })
-
-    it('encodes empty multichoice selection as empty array', () => {
-      const election = createElection({ maxCount: 3, maxValue: 4 })
-      const selections = [[]]
-      const ballot = encodeBallot(election, selections)
-      expect(ballot).toEqual([])
-    })
-
-    it('encodes full multichoice selection up to maxCount', () => {
-      const election = createElection({ maxCount: 3, maxValue: 4 })
-      const selections = [[0, 2, 4]] // Select 3 choices (maxCount)
+      const selections = [[0, 2, 4]] // Exactly maxCount picks
       const ballot = encodeBallot(election, selections)
       expect(ballot).toEqual([0, 2, 4])
     })
 
-    it('handles partial selection below maxCount', () => {
-      const election = createElection({ maxCount: 5, maxValue: 10 })
-      const selections = [[2]] // Select only 1 choice when maxCount is 5
-      const ballot = encodeBallot(election, selections)
-      expect(ballot).toEqual([2])
+    it('pads unfilled slots with a repeated abstain sentinel (uniqueChoices === false)', () => {
+      // maxValue 5 === choices.length reserves a single abstain value (5).
+      const election = createElection({ maxCount: 3, maxValue: 5, uniqueChoices: false })
+      expect(encodeBallot(election, [[1, 3]])).toEqual([1, 3, 5])
+      expect(encodeBallot(election, [[]])).toEqual([5, 5, 5])
+      expect(encodeBallot(election, [[0, 2, 4]])).toEqual([0, 2, 4])
+    })
+
+    it('pads unfilled slots with distinct ascending sentinels (uniqueChoices === true)', () => {
+      // Unique choices need unique abstain values: 5, 6, 7, …
+      const election = createElection({ maxCount: 3, maxValue: 7, uniqueChoices: true })
+      expect(encodeBallot(election, [[1, 3]])).toEqual([1, 3, 5])
+      expect(encodeBallot(election, [[1]])).toEqual([1, 5, 6])
+      expect(encodeBallot(election, [[]])).toEqual([5, 6, 7])
+    })
+
+    it('throws when a partial selection cannot be padded (no abstain room)', () => {
+      const election = createElection({ maxCount: 3, maxValue: 4 }) // maxValue === choices-1
+      expect(() => encodeBallot(election, [[1, 3]])).toThrow(/does not allow abstaining/i)
+      expect(() => encodeBallot(election, [[]])).toThrow(/does not allow abstaining/i)
+    })
+
+    it('throws when there are more selections than maxCount', () => {
+      const election = createElection({ maxCount: 2, maxValue: 4 })
+      expect(() => encodeBallot(election, [[0, 1, 2]])).toThrow(/too many selections/i)
     })
 
     it('handles the 2-option edge case (maxValue === 1)', () => {
