@@ -13,8 +13,17 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Run the test suite (and coverage) first. If it fails, release is skipped
+  # and nothing is published. Defined in .github/workflows/test.yml.
+  test:
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+      pull-requests: write
+
   release:
     name: Release
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
