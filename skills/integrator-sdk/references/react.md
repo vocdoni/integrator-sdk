@@ -68,12 +68,25 @@ import { AuthProvider, useAuth } from '@vocdoni/react-providers'
 
 <AuthProvider storageKey="vocdoni-auth">...</AuthProvider>
 
-const { token, isAuthenticated, login, logout, refresh } = useAuth()
+const { token, expiry, isAuthenticated, login, logout, refresh, setSession } = useAuth()
 
-await login('user@example.com', 'secret')  // email + password → JWT
+const { expirity } = await login('user@example.com', 'secret')  // email + password → JWT; returns AuthToken
 logout()
-await refresh()                            // re-issues the JWT using the current token
+await refresh()                            // re-issues the JWT using the current token; returns AuthToken
+
+// `expiry` is the stored expiry timestamp of the current token (from
+// `AuthToken.expirity`), or null when there is no session. The provider runs no
+// timers — inspect `expiry` and call `refresh()` on whatever renew policy you own.
+
+// `setSession` injects a token obtained out-of-band (OAuth, or the app's own
+// login mutation) without calling the API. Persists token + expiry like `login`.
+setSession({ token: '<jwt>', expirity: '<iso-timestamp>' })
 ```
+
+`login`, `refresh`, and `setSession` persist both the token (`${storageKey}.token`)
+and its expiry (`${storageKey}.expiry`) to `localStorage` when `storageKey` is set;
+`logout()` clears both. `login` and `refresh` return the full `AuthToken`
+(`{ token, expirity }`) — awaiting them for side effects only still works.
 
 For authenticated calls to actually carry the JWT, wire the same token into
 `ClientProvider` (e.g. `authToken={() => readTokenFromStorage()}`) so the client

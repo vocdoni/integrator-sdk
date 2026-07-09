@@ -1,12 +1,27 @@
+import type { AuthToken } from '@vocdoni/api-types'
 import { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
 import { useClient } from '../client/ClientProvider'
 
 export interface AuthContextValue {
   token: string | null
+  /**
+   * Expiry timestamp of the current token (from `AuthToken.expirity`), or null
+   * when there is no session. Exposed so the consuming app can decide when to
+   * renew — the provider itself runs no timers.
+   */
+  expiry: string | null
   isAuthenticated: boolean
-  login(email: string, password: string): Promise<void>
+  /** Log in with email + password. Persists token + expiry and returns the `AuthToken`. */
+  login(email: string, password: string): Promise<AuthToken>
   logout(): void
-  refresh(): Promise<void>
+  /** Re-issue the JWT using the current token. Persists token + expiry and returns the `AuthToken`. */
+  refresh(): Promise<AuthToken>
+  /**
+   * Store a session obtained out-of-band (e.g. OAuth, or the app's own login
+   * mutation) without calling the API. Persists token + expiry to state and
+   * `localStorage` (when a `storageKey` is set).
+   */
+  setSession(session: AuthToken): void
 }
 
 export interface AuthProviderProps {
@@ -17,22 +32,22 @@ export interface AuthProviderProps {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
-function readToken(key: string | undefined): string | null {
+function readItem(key: string | undefined, suffix: string): string | null {
   if (!key || typeof window === 'undefined') return null
   try {
-    return localStorage.getItem(`${key}.token`)
+    return localStorage.getItem(`${key}.${suffix}`)
   } catch {
     return null
   }
 }
 
-function writeToken(key: string | undefined, token: string | null) {
+function writeItem(key: string | undefined, suffix: string, value: string | null) {
   if (!key || typeof window === 'undefined') return
   try {
-    if (token) {
-      localStorage.setItem(`${key}.token`, token)
+    if (value) {
+      localStorage.setItem(`${key}.${suffix}`, value)
     } else {
-      localStorage.removeItem(`${key}.token`)
+      localStorage.removeItem(`${key}.${suffix}`)
     }
   } catch {
     // ignore storage errors
@@ -42,35 +57,49 @@ function writeToken(key: string | undefined, token: string | null) {
 export function AuthProvider({ children, storageKey }: AuthProviderProps) {
   const { client } = useClient()
 
-  const [token, setToken] = useState<string | null>(() => readToken(storageKey))
+  const [token, setToken] = useState<string | null>(() => readItem(storageKey, 'token'))
+  const [expiry, setExpiry] = useState<string | null>(() => readItem(storageKey, 'expiry'))
+
+  const persistSession = useCallback(
+    (session: AuthToken | null) => {
+      const nextToken = session?.token ?? null
+      const nextExpiry = session?.expirity ?? null
+      setToken(nextToken)
+      setExpiry(nextExpiry)
+      writeItem(storageKey, 'token', nextToken)
+      writeItem(storageKey, 'expiry', nextExpiry)
+    },
+    [storageKey],
+  )
+
+  const setSession = useCallback((session: AuthToken) => persistSession(session), [persistSession])
 
   const login = useCallback(
     async (email: string, password: string) => {
       const authToken = await client.auth.login(email, password)
-      setToken(authToken.token)
-      writeToken(storageKey, authToken.token)
+      persistSession(authToken)
+      return authToken
     },
-    [client.auth, storageKey],
+    [client.auth, persistSession],
   )
 
-  const logout = useCallback(() => {
-    setToken(null)
-    writeToken(storageKey, null)
-  }, [storageKey])
+  const logout = useCallback(() => persistSession(null), [persistSession])
 
   const refresh = useCallback(async () => {
     if (!token) throw new Error('Not authenticated. Please log in first.')
     const authToken = await client.auth.refresh()
-    setToken(authToken.token)
-    writeToken(storageKey, authToken.token)
-  }, [client.auth, token, storageKey])
+    persistSession(authToken)
+    return authToken
+  }, [client.auth, token, persistSession])
 
   const value: AuthContextValue = {
     token,
+    expiry,
     isAuthenticated: !!token,
     login,
     logout,
     refresh,
+    setSession,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
