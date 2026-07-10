@@ -42,9 +42,11 @@ function decodeQuestion(
     }
 
     case BallotType.Approval: {
-      // One field per option, value ∈ {0,1} (dense 0/1 vector). The approval count
-      // for an option is the number of voters who put 1 → results[optionIndex][1].
-      const counts = question.choices.map((c) => toInt((results[c.value] ?? [])[1]))
+      // One field per option, value ∈ {0,1} (dense 0/1 vector). The field index is the
+      // option's *position* in choices (that's how encode lays out the dense vector),
+      // NOT its choice.value — those differ when values are non-contiguous. The approval
+      // count for an option is the number of voters who put 1 → results[optionIndex][1].
+      const counts = question.choices.map((_c, i) => toInt((results[i] ?? [])[1]))
       return withPercentages(question, counts)
     }
 
@@ -70,11 +72,13 @@ function decodeQuestion(
 
     case BallotType.Budget:
     case BallotType.Quadratic: {
-      // One field per option; value = amount allocated (maxValue === 0 marker).
-      // The per-option total is the index-weighted sum of its histogram row:
-      // Σ value * count(value).
-      const counts = question.choices.map((c) => {
-        const row = results[c.value] ?? []
+      // One field per option; value = amount allocated (maxValue === 0 marker). The
+      // field index is the option's *position* in choices (amounts are laid out in
+      // choice order by encode), NOT its choice.value — those differ when values are
+      // non-contiguous. The per-option total is the index-weighted sum of its histogram
+      // row: Σ value * count(value).
+      const counts = question.choices.map((_c, i) => {
+        const row = results[i] ?? []
         return row.reduce((sum, cell, value) => sum + value * toInt(cell), 0)
       })
       return withPercentages(question, counts)

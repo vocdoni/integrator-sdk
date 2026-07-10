@@ -43,7 +43,7 @@ export type BallotSelections = number[] | number[][]
  * A decoded result entry for a single choice within a question.
  */
 export interface DecodedChoiceResult {
-  /** The index of the choice in the original question's choices array */
+  /** The choice's `value` (its `choice.value`, not its position in the choices array) */
   choice: number
   /** The vote count/tally for this choice */
   votes: number

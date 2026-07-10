@@ -19,6 +19,14 @@ const questions = (n: number, choices: number) =>
     choices: Array.from({ length: choices }, (_, j) => ({ title: { default: `C${j}` }, value: j })),
   }))
 
+/** Build a single question whose choices carry the given (possibly non-contiguous) values. */
+const questionWithValues = (values: number[]) => [
+  {
+    title: { default: 'Q0' },
+    choices: values.map((v) => ({ title: { default: `C${v}` }, value: v })),
+  },
+]
+
 describe('decodeResults', () => {
   describe('single-choice', () => {
     it('single question: tally is the field histogram row directly', () => {
@@ -68,6 +76,25 @@ describe('decodeResults', () => {
       expect(decoded[0].map((c) => c.votes)).toEqual([2, 3, 3, 1, 0])
       // percentage is share of total approvals (9)
       expect(decoded[0][1].percentage).toBeCloseTo((3 / 9) * 100, 6)
+    })
+
+    it('reads rows by option position, not choice value (non-contiguous values)', () => {
+      // Fields are positional (choice-order dense 0/1 vector), so row index must be
+      // the option position — NOT choice.value. Values 0,2,5 → rows 0,1,2.
+      const decoded = decodeResults({
+        voteType: vt({ maxCount: 3, maxValue: 1, uniqueChoices: false }),
+        questions: questionWithValues([0, 2, 5]),
+        results: [
+          ['1', '2'], // position 0 (value 0): approve x2
+          ['0', '3'], // position 1 (value 2): approve x3
+          ['4', '1'], // position 2 (value 5): approve x1
+        ],
+      })
+      expect(decoded[0].map((c) => [c.choice, c.votes])).toEqual([
+        [0, 2],
+        [2, 3],
+        [5, 1],
+      ])
     })
   })
 
@@ -155,6 +182,25 @@ describe('decodeResults', () => {
         ],
       })
       expect(decoded[0].map((c) => c.votes)).toEqual([2, 2, 0])
+    })
+
+    it('reads rows by option position, not choice value (non-contiguous values)', () => {
+      // Budget/quadratic fields are positional (amounts in choice order), so the row
+      // index must be the option position — NOT choice.value. Values 0,4,9 → rows 0,1,2.
+      const decoded = decodeResults({
+        voteType: vt({ maxCount: 3, maxValue: 0, costExponent: 1 }),
+        questions: questionWithValues([0, 4, 9]),
+        results: [
+          ['0', '0', '1'], // position 0 (value 0): amount 2 once → 2
+          ['0', '2'], // position 1 (value 4): amount 1 twice → 2
+          ['1'], // position 2 (value 9): amount 0 once → 0
+        ],
+      })
+      expect(decoded[0].map((c) => [c.choice, c.votes])).toEqual([
+        [0, 2],
+        [4, 2],
+        [9, 0],
+      ])
     })
   })
 
