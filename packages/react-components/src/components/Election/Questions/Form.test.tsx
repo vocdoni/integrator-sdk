@@ -34,47 +34,66 @@ const twoQuestions = [
   { title: 'Q2', choices: [{ title: 'A', value: 0 }, { title: 'B', value: 1 }] },
 ]
 
+const threeChoices = [
+  { title: 'Q1', choices: [{ title: 'A', value: 0 }, { title: 'B', value: 1 }, { title: 'C', value: 2 }] },
+]
+
+const fourChoices = [
+  {
+    title: 'Q1',
+    choices: [
+      { title: 'A', value: 0 },
+      { title: 'B', value: 1 },
+      { title: 'C', value: 2 },
+      { title: 'D', value: 3 },
+    ],
+  },
+]
+
+const voteType = (overrides: Record<string, unknown>) => ({
+  maxCount: 1,
+  maxValue: 1,
+  maxVoteOverwrites: 0,
+  costExponent: 1,
+  uniqueChoices: false,
+  costFromWeight: false,
+  ...overrides,
+})
+
+// The payloads below go through @vocdoni/ballot's encodeBallot, so the expected
+// vectors are the real on-chain encodings (all four are live-verified in the
+// full-flow integration test), not the raw field values.
 describe('QuestionsFormProvider vote payload', () => {
-  it('single choice: maps each question field to an int array', async () => {
+  it('single choice: one chosen value per question', async () => {
     const { result } = setup(makeElection({ questions: twoQuestions }))
     await result.current.vote({ '0': '1', '1': '0' })
     expect(state.vote).toHaveBeenCalledWith([1, 0])
   })
 
-  it('multiple choice: takes the selected array from the last field', async () => {
+  it('approval: dense 0/1 vector over all choices (not an index list)', async () => {
     const { result } = setup(
-      makeElection({
-        questions: [twoQuestions[0]],
-        voteType: {
-          maxCount: 3,
-          maxValue: 1,
-          maxVoteOverwrites: 0,
-          costExponent: 1,
-          uniqueChoices: true,
-          costFromWeight: false,
-        },
-      }),
+      makeElection({ questions: threeChoices, voteType: voteType({ maxCount: 3, maxValue: 1 }) }),
     )
-    await result.current.vote({ '0': ['2', '0'] })
-    expect(state.vote).toHaveBeenCalledWith([2, 0])
+    // Approve A and C → [1,0,1]. The old code wrongly emitted the index list [0,2].
+    await result.current.vote({ '0': ['0', '2'] })
+    expect(state.vote).toHaveBeenCalledWith([1, 0, 1])
   })
 
-  it('approval (maxCount>1, not unique): same array path as multiple', async () => {
+  it('multichoice (fully filled): the picked values, in pick order', async () => {
     const { result } = setup(
-      makeElection({
-        questions: [twoQuestions[0]],
-        voteType: {
-          maxCount: 3,
-          maxValue: 1,
-          maxVoteOverwrites: 0,
-          costExponent: 1,
-          uniqueChoices: false,
-          costFromWeight: false,
-        },
-      }),
+      makeElection({ questions: threeChoices, voteType: voteType({ maxCount: 3, maxValue: 2, uniqueChoices: true }) }),
     )
+    await result.current.vote({ '0': ['2', '0', '1'] })
+    expect(state.vote).toHaveBeenCalledWith([2, 0, 1])
+  })
+
+  it('multichoice (abstain): unfilled slots padded with the abstain sentinel', async () => {
+    const { result } = setup(
+      makeElection({ questions: fourChoices, voteType: voteType({ maxCount: 3, maxValue: 4 }) }),
+    )
+    // One real pick for a 3-slot ballot → [1,4,4] (value 4 is the abstain sentinel).
     await result.current.vote({ '0': ['1'] })
-    expect(state.vote).toHaveBeenCalledWith([1])
+    expect(state.vote).toHaveBeenCalledWith([1, 4, 4])
   })
 
   it('does not vote when the confirmation is declined', async () => {
