@@ -2,6 +2,7 @@ import type { Election, Question, VoteType } from '@vocdoni/api-types'
 import { BallotType, type BallotSelections } from './types.js'
 import { inferBallotType } from './infer.js'
 import { normalizeSelections } from './selections.js'
+import { requiredAbstainMaxValue } from './abstain.js'
 
 /**
  * Encode high-level voter selections into the on-chain ballot array format.
@@ -111,7 +112,7 @@ function encodeMultiChoice(voteType: VoteType, question: Question, selections: n
   // Fewer picks than slots: pad with abstain sentinels if the config reserves them.
   // Repeatable ballots reuse a single sentinel (+1); unique ballots need one distinct
   // ascending sentinel per slot (+maxCount) — matching the legacy maxValue reservation.
-  const neededMaxValue = numChoices - 1 + (voteType.uniqueChoices ? maxCount : 1)
+  const neededMaxValue = requiredAbstainMaxValue(numChoices, voteType)
   const abstainAllowed = voteType.maxValue >= neededMaxValue
   if (!abstainAllowed) {
     throw new Error(

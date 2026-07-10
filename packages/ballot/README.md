@@ -40,6 +40,12 @@ export function validateSelections(
   input: Pick<Election, 'questions' | 'voteType'>,
   selections: BallotSelections
 ): void
+
+// Whether a multichoice election reserves enough maxValue room to abstain-pad a
+// partial selection (false for every other ballot type). Handy for UI validation.
+export function multichoiceReservesAbstain(
+  input: Pick<Election, 'questions' | 'voteType'>
+): boolean
 ```
 
 ## Usage

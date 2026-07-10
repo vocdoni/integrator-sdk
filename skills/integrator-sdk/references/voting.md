@@ -117,6 +117,15 @@ You rarely need this — it's what `encodeBallot` emits per type, and what the v
 
 Abstain is a **multichoice-only** concept: when a voter picks fewer than `maxCount` options, the empty slots are filled with sentinel values (`≥ #choices`) that the election reserves via `maxValue`. Single-choice has no abstain — an "Abstain" there is just another choice the creator added.
 
+`multichoiceReservesAbstain(election)` reports whether a multichoice election reserves enough `maxValue` room for that padding (false for every other type). Use it in a UI to decide whether a *partial* selection (fewer than `maxCount` picks) is castable, or whether the voter must pick exactly `maxCount`:
+
+```ts
+import { multichoiceReservesAbstain } from '@vocdoni/ballot'
+
+const min = multichoiceReservesAbstain(election) ? 1 : election.voteType.maxCount
+// require between `min` and `maxCount` selections
+```
+
 ### Reading results back
 
 `decodeResults(election)` turns the raw `election.results` histogram (`string[][]`) into per-question, per-choice tallies with percentages — and, for multichoice, a unified abstain bucket — so you never index the matrix positionally:

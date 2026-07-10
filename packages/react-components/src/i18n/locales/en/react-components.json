@@ -84,6 +84,7 @@
     "required": "This field is required",
     "min_length": "This field must be at least {{ min }} characters long",
     "choices_count": "Select {{ count }} choices",
+    "choices_range": "Select between {{ min }} and {{ max }} options",
     "at_least_one": "You must select at least one option"
   },
   "vote": {

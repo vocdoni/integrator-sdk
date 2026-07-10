@@ -1,5 +1,5 @@
-import type { Choice, Question } from '@vocdoni/api-types'
-import { BallotType, inferBallotType } from '@vocdoni/ballot'
+import type { Choice, Election, Question } from '@vocdoni/api-types'
+import { BallotType, inferBallotType, multichoiceReservesAbstain } from '@vocdoni/ballot'
 import { Controller, useFormContext } from 'react-hook-form'
 import { QuestionChoicePresentation, QuestionLayout, QuestionSelectionMode } from '../../context/types'
 import { useComponents } from '../../context/useComponents'
@@ -17,6 +17,20 @@ export type QuestionProps = {
 // Single-choice presents as radios; every other ballot type presents as checkboxes.
 const selectionModeForType = (ballotType: BallotType): QuestionSelectionMode =>
   ballotType === BallotType.SingleChoice ? 'single' : 'multiple'
+
+/**
+ * How many options a multichoice question requires. When the election reserves abstain
+ * values, a voter may pick *fewer* than maxCount (encodeBallot pads the empty pick-slots
+ * with sentinels), so any count in `[1, maxCount]` is castable; otherwise exactly
+ * maxCount is required.
+ */
+export const multiChoiceSelectionRange = (
+  election: Pick<Election, 'questions' | 'voteType'>
+): { min: number; max: number } => {
+  const max = election.voteType.maxCount
+  const min = multichoiceReservesAbstain(election) ? 1 : max
+  return { min, max }
+}
 
 const getQuestionPresentation = (question: Question): QuestionChoicePresentation =>
   question.choices.some(hasExtendedChoiceMeta) ? 'extended' : 'basic'
@@ -102,10 +116,17 @@ const MultiChoice = ({
       name={index}
       rules={{
         validate: (value: string[]) => {
-          return (
-            (value && value.length === maxCount) ||
-            t('validation.choices_count', { count: maxCount })
-          )
+          const count = Array.isArray(value) ? value.length : 0
+          const { min, max } = multiChoiceSelectionRange(election)
+          if (count >= min && count <= max) return true
+          // Exactly-N when abstain isn't reserved; a range when it is (partial castable).
+          return min === max
+            ? t('validation.choices_count', { count: max })
+            : t('validation.choices_range', {
+                min,
+                max,
+                defaultValue: `Select between ${min} and ${max} options`,
+              })
         },
       }}
       render={({ field, fieldState }) => {

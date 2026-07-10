@@ -10,7 +10,7 @@ vi.mock('@vocdoni/react-providers', () => ({
   useElection: () => ({ election: state.election, isAbleToVote: true }),
 }))
 
-import { ElectionQuestion } from './Fields'
+import { ElectionQuestion, multiChoiceSelectionRange } from './Fields'
 
 const FormHost = ({ children }: { children: ReactNode }) => {
   const methods = useForm()
@@ -90,5 +90,25 @@ describe('ElectionQuestion field switching (via inferBallotType)', () => {
     )
     expect(captured.selectionMode).toBe('multiple')
     expect(onlyControl(captured.controls)).toEqual(['checkbox'])
+  })
+})
+
+describe('multiChoiceSelectionRange', () => {
+  it('requires exactly maxCount when abstain is not reserved', () => {
+    // uniqueChoices needs maxValue >= 5 here (3 - 1 + 3); maxValue 2 does not reserve.
+    const election = makeElection({
+      questions: [threeChoices],
+      voteType: voteType({ maxCount: 3, maxValue: 2, uniqueChoices: true }),
+    })
+    expect(multiChoiceSelectionRange(election)).toEqual({ min: 3, max: 3 })
+  })
+
+  it('allows 1..maxCount when abstain is reserved (partial selection castable)', () => {
+    // repeatable multichoice, numChoices 3 → needed maxValue 3; maxValue 3 reserves.
+    const election = makeElection({
+      questions: [threeChoices],
+      voteType: voteType({ maxCount: 3, maxValue: 3, uniqueChoices: false }),
+    })
+    expect(multiChoiceSelectionRange(election)).toEqual({ min: 1, max: 3 })
   })
 })
