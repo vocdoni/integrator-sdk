@@ -1,4 +1,5 @@
-import type { Choice, Election, Question } from '@vocdoni/api-types'
+import type { Election, Question } from '@vocdoni/api-types'
+import { decodeResults } from '@vocdoni/ballot'
 import { format } from 'date-fns'
 import { ComponentPropsWithoutRef } from 'react'
 import { useComponents } from '../context/useComponents'
@@ -7,7 +8,7 @@ import { useReactComponentsLocalize } from '../../i18n/localize'
 import { useElection } from '@vocdoni/react-providers'
 import { resolveTitle } from '../../election/normalized'
 
-const percent = (result: number, total: number) => ((Number(result) / total) * 100 || 0).toFixed(1) + '%'
+const formatPercent = (pct: number | null) => (pct ?? 0).toFixed(1) + '%'
 
 export type ElectionResultsProps = ComponentPropsWithoutRef<'div'> & {
   forceRender?: boolean
@@ -33,24 +34,36 @@ export const ElectionResults = ({ forceRender, ...rest }: ElectionResultsProps) 
     )
   }
 
-  // Parse results from the string[][] format
-  const rawResults: string[][] = election.results ?? []
+  // Decode the raw string[][] histogram into per-choice tallies. `decodeResults` is
+  // type-aware (single-choice / approval / multichoice / budget / quadratic) and, for
+  // multichoice, appends a unified abstain bucket — so we render every ballot type
+  // through one shape instead of the old positional read.
+  const decoded = decodeResults(election)
 
   const questions = election.questions.map((question: Question, qIdx: number) => {
-    const questionResults: string[] = rawResults[qIdx] ?? []
-    const totalVotes = questionResults.reduce((acc, r) => acc + Number(r), 0)
+    const rows = decoded[qIdx] ?? []
+    const choiceByValue = new Map(question.choices.map((choice) => [choice.value, choice]))
 
     return {
       title: localize('results.title', { title: resolveTitle(question.title) }),
-      choices: question.choices.map((choice: Choice, cIdx: number) => {
-        const votes = Number(questionResults[cIdx] ?? 0)
-        const meta = (choice as any).meta ?? {}
+      choices: rows.map((row) => {
+        if (row.choice === 'abstain') {
+          return {
+            title: localize('vote.abstain'),
+            votes: String(row.votes),
+            percent: formatPercent(row.percentage),
+            image: undefined,
+          }
+        }
+
+        const choice = choiceByValue.get(row.choice)
+        const meta = (choice as any)?.meta ?? {}
         const image = meta?.image?.default as string | undefined
 
         return {
-          title: resolveTitle(choice.title),
-          votes: String(votes),
-          percent: percent(votes, totalVotes),
+          title: choice ? resolveTitle(choice.title) : String(row.choice),
+          votes: String(row.votes),
+          percent: formatPercent(row.percentage),
           image: linkifyIpfs(image),
         }
       }),

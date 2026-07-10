@@ -186,6 +186,9 @@ importers:
       '@vocdoni/api-types':
         specifier: workspace:*
         version: link:../api-types
+      '@vocdoni/ballot':
+        specifier: workspace:*
+        version: link:../ballot
       '@vocdoni/react-providers':
         specifier: workspace:*
         version: link:../react-providers

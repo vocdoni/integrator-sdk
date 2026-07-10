@@ -6,6 +6,7 @@
     "baseUrl": ".",
     "paths": {
       "@vocdoni/api-types": ["../api-types/src/index.ts"],
+      "@vocdoni/ballot": ["../ballot/src/index.ts"],
       "@vocdoni/react-providers": ["../react-providers/src/index.ts"],
       "@vocdoni/api-client": ["../api-client/src/index.ts"],
       "@vocdoni/api-voting": ["../api-voting/src/index.ts"]
