@@ -14,9 +14,12 @@ export type QuestionProps = {
   index: string
 }
 
-// Single-choice presents as radios; every other ballot type presents as checkboxes.
+// Approval and multichoice present as checkboxes ('multiple'); everything else presents
+// as radios ('single'). Budget/quadratic have no dedicated amount-input widget yet, so
+// they fall back to the SingleChoice (radio) widget — keep their selectionMode 'single'
+// so the prop matches the rendered control (see FieldSwitcher's default branch).
 const selectionModeForType = (ballotType: BallotType): QuestionSelectionMode =>
-  ballotType === BallotType.SingleChoice ? 'single' : 'multiple'
+  ballotType === BallotType.MultiChoice || ballotType === BallotType.Approval ? 'multiple' : 'single'
 
 /**
  * How many options a multichoice question requires. When the election reserves abstain

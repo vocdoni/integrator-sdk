@@ -91,6 +91,19 @@ describe('ElectionQuestion field switching (via inferBallotType)', () => {
     expect(captured.selectionMode).toBe('multiple')
     expect(onlyControl(captured.controls)).toEqual(['checkbox'])
   })
+
+  it('budget/quadratic: selectionMode matches the rendered radios (no dedicated widget yet)', () => {
+    // maxValue 0 → budget/quadratic; they fall through to the SingleChoice widget
+    // (radios), so selectionMode must stay 'single' to match what is rendered.
+    const captured = renderQuestion(
+      makeElection({
+        questions: [threeChoices],
+        voteType: voteType({ maxCount: 3, maxValue: 0, costExponent: 1 }),
+      }),
+    )
+    expect(captured.selectionMode).toBe('single')
+    expect(onlyControl(captured.controls)).toEqual(['radio'])
+  })
 })
 
 describe('multiChoiceSelectionRange', () => {

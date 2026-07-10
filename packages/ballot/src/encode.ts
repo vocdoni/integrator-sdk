@@ -64,7 +64,9 @@ function encodeSingleChoice(questions: Question[], selections: number[][]): numb
     if (choices.length === 0) {
       throw new Error(`Question ${q}: single-choice requires exactly one choice`)
     }
-    // Pick the single selected value (validateSelections enforces exactly one)
+    // Take the first selected value. encodeBallot does not run validateSelections, so it
+    // only guards against an empty pick here; if a caller passes more than one value, the
+    // extras are ignored. Call validateSelections separately to reject that up front.
     return choices[0]
   })
 }

@@ -62,8 +62,8 @@ describe('validateSelections', () => {
       expect(() => validateSelections(election, [[]])).not.toThrow()
     })
 
-    it('throws on an invalid choice', () => {
-      expect(() => validateSelections(election, [[0, 9]])).toThrow(/invalid choice/i)
+    it('throws on an invalid choice, worded as a value (not an index)', () => {
+      expect(() => validateSelections(election, [[0, 9]])).toThrow(/invalid choice value/i)
     })
   })
 
@@ -78,8 +78,8 @@ describe('validateSelections', () => {
       expect(() => validateSelections(election, [[0, 1, 2, 3]])).toThrow(/at most 3 selections/i)
     })
 
-    it('throws on an invalid choice', () => {
-      expect(() => validateSelections(election, [[0, 9]])).toThrow(/invalid choice/i)
+    it('throws on an invalid choice, worded as a value (not an index)', () => {
+      expect(() => validateSelections(election, [[0, 9]])).toThrow(/invalid choice value/i)
     })
   })
 

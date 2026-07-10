@@ -86,12 +86,12 @@ function validateSingleChoice(questions: Question[], selections: number[][]): vo
  * Validate approval selections.
  */
 function validateApproval(question: Question, selections: number[]): void {
-  const validIndices = new Set(question.choices.map((c) => c.value))
+  const validValues = new Set(question.choices.map((c) => c.value))
 
-  for (const idx of selections) {
-    if (!validIndices.has(idx)) {
+  for (const value of selections) {
+    if (!validValues.has(value)) {
       throw new Error(
-        `Invalid choice index ${idx} for approval ballot; must be one of [${Array.from(validIndices).join(', ')}]`
+        `Invalid choice value ${value} for approval ballot; must be one of [${Array.from(validValues).join(', ')}]`
       )
     }
   }
@@ -101,7 +101,7 @@ function validateApproval(question: Question, selections: number[]): void {
  * Validate multichoice selections.
  */
 function validateMultiChoice(voteType: VoteType, question: Question, selections: number[]): void {
-  const validIndices = new Set(question.choices.map((c) => c.value))
+  const validValues = new Set(question.choices.map((c) => c.value))
 
   if (selections.length > voteType.maxCount) {
     throw new Error(
@@ -109,10 +109,10 @@ function validateMultiChoice(voteType: VoteType, question: Question, selections:
     )
   }
 
-  for (const idx of selections) {
-    if (!validIndices.has(idx)) {
+  for (const value of selections) {
+    if (!validValues.has(value)) {
       throw new Error(
-        `Invalid choice index ${idx} for multichoice ballot; must be one of [${Array.from(validIndices).join(', ')}]`
+        `Invalid choice value ${value} for multichoice ballot; must be one of [${Array.from(validValues).join(', ')}]`
       )
     }
   }
