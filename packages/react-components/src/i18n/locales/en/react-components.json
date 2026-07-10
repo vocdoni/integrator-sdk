@@ -38,6 +38,10 @@
     "multichoice_title": "Multichoice Voting {{ weighted }}",
     "multichoice_desc": "You selected {{selected}} options (max {{maxcount}})",
     "multichoice_desc_abstain": " (or abstain)",
+    "budget_title": "Budget Voting {{ weighted }}",
+    "budget_tooltip": "Budget voting lets you distribute points across the options. The options with the most points win.",
+    "quadratic_title": "Quadratic Voting {{ weighted }}",
+    "quadratic_tooltip": "Quadratic voting lets you distribute credits across the options, where each additional vote for an option costs more. The options with the most votes win.",
     "weighted_voting": "Weighted Voting"
   },
   "schedule": {
