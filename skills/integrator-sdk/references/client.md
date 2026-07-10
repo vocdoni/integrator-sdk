@@ -114,7 +114,9 @@ const { elections, total } = await client.elections.list({ organizationId, page,
 
 // Get results
 const results = await client.elections.getResults(mongoId)
-// results.results    — string[][] (raw histogram matrix; see ballot protocol)
+// results.results    — string[][] raw histogram matrix. Decode it into per-choice
+//                      tallies with decodeResults(election) from @vocdoni/ballot
+//                      rather than indexing positionally (the layout is type-specific).
 // results.voteCount
 // results.status
 

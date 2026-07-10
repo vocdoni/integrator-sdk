@@ -12,6 +12,7 @@ A monorepo of TypeScript packages that replaces the `@vocdoni/sdk` with a SaaS-f
 | Package | What it does |
 |---|---|
 | `@vocdoni/api-types` | Shared TypeScript interfaces — no runtime code |
+| `@vocdoni/ballot` | Ballot semantics — type inference, choice encoding, results decoding (framework-agnostic; runtime dep: only api-types) |
 | `@vocdoni/api-client` | HTTP client wrapping the SaaS REST API ⚠️ surface in flux |
 | `@vocdoni/api-voting` | CSP auth, vote envelope, ballot encryption, vote-tx signing |
 | `@vocdoni/api-voting-zk` | ZK/anonymous voting — phase 2, not stable yet |
@@ -23,6 +24,7 @@ A monorepo of TypeScript packages that replaces the `@vocdoni/sdk` with a SaaS-f
 | User wants to… | Read first | Recipe |
 |---|---|---|
 | Understand the HTTP client, sub-clients, jobs | `references/client.md` | — |
+| Detect a ballot type, encode selections, or decode results | `references/voting.md` | `recipes/single-choice-vote.ts` |
 | Cast a vote (low-level, no React) | `references/voting.md` | `recipes/single-choice-vote.ts` |
 | Cast a multi-choice or approval vote | `references/voting.md` | `recipes/multichoice-vote.ts` |
 | Cast a vote on an encrypted election | `references/voting.md` | `recipes/encrypted-vote.ts` |
@@ -50,17 +52,25 @@ Steps 1–4 are handled by `@vocdoni/api-client` (`BundleClient`).
 Steps 5–6 are handled by `@vocdoni/api-voting` (`VotingClient` or `buildVoteTransaction` directly).
 In React, `BundleProvider` + `ElectionProvider` automate the entire flow.
 
+The `choices` array that step 5 consumes is owned by `@vocdoni/ballot`: call
+`encodeBallot(election, selections)` instead of hand-building it (approval and
+multichoice have non-obvious encodings), and `decodeResults(election)` to turn a
+results histogram into per-choice tallies. See `references/voting.md`.
+
 ## Quick-start (vanilla TS)
 
 ```ts
 import { VocdoniApiClient } from '@vocdoni/api-client'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
+import { encodeBallot } from '@vocdoni/ballot'
 
 const client = new VocdoniApiClient({ apiUrl: 'https://saas-api.vocdoni.net' })
 const voting = new VotingClient({ client })
 
-// 1. Bundle info → chainId
+// 1. Bundle info → chainId, and the election (for its address + ballot config)
 const bundle = await client.bundle.get(bundleId)
+const election = await client.elections.get(electionMongoId)
+const processId = election.address! // vochain hex id — voting uses this, not election.id
 
 // 2. Auth (auth-only census — no 2FA step)
 const { authToken } = await client.bundle.authStep0(bundleId, { memberNumber: '42' })
@@ -75,9 +85,11 @@ const { signature, weight } = await client.bundle.sign(bundleId, {
   authToken, electionId: processId, payload: signer.address,
 })
 
-// 5–6. Build tx, relay, poll for nullifier
+// 5–6. Build tx, relay, poll for nullifier. encodeBallot turns high-level
+// selections (per-question chosen choice values) into the on-chain `choices`
+// vector — here, "pick the choice with value 0" in a single-question election.
 const jobId = await voting.vote({
-  processId, chainId: bundle.chainId!, choices: [0],
+  processId, chainId: bundle.chainId!, choices: encodeBallot(election, [[0]]),
   signer, cspSignature: signature, cspWeight: weight,
 })
 const job = await client.jobs.waitFor(jobId)
