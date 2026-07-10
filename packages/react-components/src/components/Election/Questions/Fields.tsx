@@ -1,4 +1,5 @@
-import type { Choice, Question } from '@vocdoni/api-types'
+import type { Choice, Election, Question } from '@vocdoni/api-types'
+import { BallotType, inferBallotType, multichoiceReservesAbstain } from '@vocdoni/ballot'
 import { Controller, useFormContext } from 'react-hook-form'
 import { QuestionChoicePresentation, QuestionLayout, QuestionSelectionMode } from '../../context/types'
 import { useComponents } from '../../context/useComponents'
@@ -13,9 +14,26 @@ export type QuestionProps = {
   index: string
 }
 
-// Determine selection mode from voteType
-const getSelectionMode = (maxCount: number): QuestionSelectionMode =>
-  maxCount === 1 ? 'single' : 'multiple'
+// Approval and multichoice present as checkboxes ('multiple'); everything else presents
+// as radios ('single'). Budget/quadratic have no dedicated amount-input widget yet, so
+// they fall back to the SingleChoice (radio) widget — keep their selectionMode 'single'
+// so the prop matches the rendered control (see FieldSwitcher's default branch).
+const selectionModeForType = (ballotType: BallotType): QuestionSelectionMode =>
+  ballotType === BallotType.MultiChoice || ballotType === BallotType.Approval ? 'multiple' : 'single'
+
+/**
+ * How many options a multichoice question requires. When the election reserves abstain
+ * values, a voter may pick *fewer* than maxCount (encodeBallot pads the empty pick-slots
+ * with sentinels), so any count in `[1, maxCount]` is castable; otherwise exactly
+ * maxCount is required.
+ */
+export const multiChoiceSelectionRange = (
+  election: Pick<Election, 'questions' | 'voteType'>
+): { min: number; max: number } => {
+  const max = election.voteType.maxCount
+  const min = multichoiceReservesAbstain(election) ? 1 : max
+  return { min, max }
+}
 
 const getQuestionPresentation = (question: Question): QuestionChoicePresentation =>
   question.choices.some(hasExtendedChoiceMeta) ? 'extended' : 'basic'
@@ -31,7 +49,7 @@ export const ElectionQuestion = ({ question, index }: QuestionProps) => {
   } = useFormContext()
   const layout = getQuestionLayout(question)
   const hasExtendedChoices = question.choices.some(hasExtendedChoiceMeta)
-  const selectionMode = election ? getSelectionMode(election.voteType.maxCount) : ('single' as const)
+  const selectionMode = selectionModeForType(election ? inferBallotType(election) : BallotType.SingleChoice)
   const invalid = Boolean((errors as Record<string, unknown>)[index])
   const description = resolveTitle((question as any).description)
 
@@ -62,16 +80,20 @@ const FieldSwitcher = (props: QuestionProps & { layout: QuestionLayout; presenta
   const { election } = useElection()
   if (!election) return null
 
-  const maxCount = election.voteType.maxCount
-  const uniqueChoices = election.voteType.uniqueChoices
-
-  if (maxCount > 1 && uniqueChoices) {
-    return <MultiChoice {...props} />
+  // Pick the input widget from the inferred ballot type, the same inference the
+  // encoder uses. Note this diverges from the old maxCount/uniqueChoices check for
+  // repeatable multichoice that reserves abstain values (maxValue > 1, not unique):
+  // that is a multichoice election, so it now gets the multichoice widget rather
+  // than the approval one.
+  switch (inferBallotType(election)) {
+    case BallotType.MultiChoice:
+      return <MultiChoice {...props} />
+    case BallotType.Approval:
+      return <ApprovalChoice {...props} />
+    default:
+      // single-choice, and budget/quadratic (no dedicated widget yet)
+      return <SingleChoice {...props} />
   }
-  if (maxCount > 1 && !uniqueChoices) {
-    return <ApprovalChoice {...props} />
-  }
-  return <SingleChoice {...props} />
 }
 
 const MultiChoice = ({
@@ -97,10 +119,17 @@ const MultiChoice = ({
       name={index}
       rules={{
         validate: (value: string[]) => {
-          return (
-            (value && value.length === maxCount) ||
-            t('validation.choices_count', { count: maxCount })
-          )
+          const count = Array.isArray(value) ? value.length : 0
+          const { min, max } = multiChoiceSelectionRange(election)
+          if (count >= min && count <= max) return true
+          // Exactly-N when abstain isn't reserved; a range when it is (partial castable).
+          return min === max
+            ? t('validation.choices_count', { count: max })
+            : t('validation.choices_range', {
+                min,
+                max,
+                defaultValue: `Select between ${min} and ${max} options`,
+              })
         },
       }}
       render={({ field, fieldState }) => {

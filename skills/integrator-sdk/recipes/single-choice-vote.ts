@@ -4,19 +4,21 @@
  * Election config (as created by the backend):
  *   voteType.maxCount = 1, voteType.maxValue = numOptions - 1
  *
- * choices[0] = 0-based index of the chosen option
- *   [0] → first option ("Yes" / option A / …)
- *   [1] → second option
- *   [N-1] → last option
+ * The on-chain `choices` vector is built by encodeBallot (@vocdoni/ballot): you
+ * pass high-level selections — the chosen choice *values* — and it returns the
+ * array to relay. selections is a flat number[] (nested number[][], one array per
+ * question, is also accepted). For single-choice it is 1:1:
+ *   encodeBallot(election, [value]) → [value]
  *
  * This is the most common election format and the one used by the integration tests.
  *
  * Prerequisites:
- *   pnpm add @vocdoni/api-client @vocdoni/api-voting
+ *   pnpm add @vocdoni/api-client @vocdoni/api-voting @vocdoni/ballot
  */
 
 import { VocdoniApiClient } from '@vocdoni/api-client'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
+import { encodeBallot } from '@vocdoni/ballot'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -92,21 +94,17 @@ const { signature, weight } = await client.bundle.sign(BUNDLE_ID, {
 if (!signature) throw new Error('CSP did not return a signature')
 
 // ─── 6. Cast the vote ────────────────────────────────────────────────────────
-// choices: [optionIndex] — single element, 0-based index of the chosen option.
-//
-// Examples:
-//   [0] → vote for the first option
-//   [1] → vote for the second option
-//
-// election.voteType.maxCount must equal choices.length (1 here)
-// election.voteType.maxValue must be >= chosen index
+// encodeBallot builds the on-chain `choices` vector from high-level selections.
+// For single-choice, selections is [chosenValue] — the `value` of the choice the
+// voter picked. Read it from the election's choices rather than assuming
+// value === display position.
 
-const CHOSEN_OPTION = 0 // ← change to the option the voter picked
+const CHOSEN_VALUE = election.questions[0].choices[0].value // ← the choice the voter picked
 
 const jobId = await voting.vote({
   processId,
   chainId: bundle.chainId,
-  choices: [CHOSEN_OPTION],
+  choices: encodeBallot(election, [CHOSEN_VALUE]),
   signer,
   cspSignature: signature,
   cspWeight: weight,

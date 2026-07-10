@@ -1,3 +1,4 @@
+import { BallotType, inferBallotType } from '@vocdoni/ballot'
 import { useComponents } from '../../context/useComponents'
 import { useReactComponentsLocalize } from '../../../i18n/localize'
 import { useElection } from '@vocdoni/react-providers'
@@ -13,20 +14,15 @@ export const QuestionTip = () => {
 
   if (!election) return null
 
-  const maxCount = election.voteType.maxCount
-  const uniqueChoices = election.voteType.uniqueChoices
+  // Only multichoice has a "pick up to N" constraint worth surfacing as a tip:
+  // single-choice picks exactly one and approval has no count limit. (The previous
+  // inline guard contradicted itself and never rendered — this restores the intent.)
+  if (inferBallotType(election) !== BallotType.MultiChoice) return null
 
-  // Only show tip for multiple choice elections
-  if (maxCount <= 1 || uniqueChoices) return null
-
-  // Show tip for "multiple" style (not approval — approval doesn't have a maxCount constraint)
-  let text = ''
-  if (maxCount > 1 && uniqueChoices) {
-    text = t('question_types.multichoice_desc', {
-      selected: getValues()[0]?.length,
-      maxcount: maxCount,
-    })
-  }
+  const text = t('question_types.multichoice_desc', {
+    selected: getValues()[0]?.length,
+    maxcount: election.voteType.maxCount,
+  })
 
   if (!text) return null
 

@@ -25,6 +25,7 @@
     "@vocdoni/api-client": "workspace:*",
     "@vocdoni/api-types": "workspace:*",
     "@vocdoni/api-voting": "workspace:*",
+    "@vocdoni/ballot": "workspace:*",
     "jsdom": "^26.0.0",
     "msw": "^2.0.0",
     "turbo": "^2.0.0",

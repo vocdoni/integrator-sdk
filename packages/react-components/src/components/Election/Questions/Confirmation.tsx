@@ -1,4 +1,5 @@
 import type { Election } from '@vocdoni/api-types'
+import { BallotType, inferBallotType } from '@vocdoni/ballot'
 import { FieldValues } from 'react-hook-form'
 import { useComponents } from '../../context/useComponents'
 import { useConfirm } from '../../../confirm/useConfirm'
@@ -15,28 +16,27 @@ export const QuestionsConfirmation = ({ answers, election }: QuestionsConfirmati
   const { proceed, cancel } = useConfirm()
   const t = useReactComponentsLocalize()
 
-  const answersView = election.questions.map((question, index) => {
-    const indexedAnswer = answers[index.toString()]
-    const isSingleChoice = typeof indexedAnswer === 'string'
+  // Single-choice fields (including every question of a multi-question election) hold
+  // one value string; approval/multichoice hold an array of value strings.
+  const isSingleChoice = inferBallotType(election) === BallotType.SingleChoice
 
-    if (isSingleChoice) {
-      const selected = parseInt((answers[index.toString()] as string) || '', 10)
-      const selectedChoice = question.choices.find((choice) => choice.value === selected)
-      return {
-        question: resolveTitle(question.title),
-        answers: [selectedChoice ? resolveTitle(selectedChoice.title) : ''],
-      }
+  const answersView = election.questions.map((question, index) => {
+    const raw = answers[index.toString()]
+
+    // Resolve each selected choice VALUE to its title (value-based, never positional).
+    // A value with no matching choice is an abstain sentinel (multichoice only).
+    const titleForValue = (value: number) => {
+      const choice = question.choices.find((c) => c.value === value)
+      return choice ? resolveTitle(choice.title) : t('vote.abstain')
     }
 
-    const rawSelectedValues = answers[0]
-    const selectedValues = (Array.isArray(rawSelectedValues) ? rawSelectedValues : ['-1']).map((value) => Number(value))
-    const mappedAnswers = selectedValues.map((value) => {
-      const choice = question.choices[value]
-      return choice ? resolveTitle(choice.title) : t('vote.abstain')
-    })
+    const selectedValues = isSingleChoice
+      ? raw !== undefined && raw !== '' ? [Number(raw)] : []
+      : Array.isArray(raw) ? raw.map((value) => Number(value)) : []
+
     return {
       question: resolveTitle(question.title),
-      answers: mappedAnswers,
+      answers: selectedValues.length ? selectedValues.map(titleForValue) : [''],
     }
   })
 

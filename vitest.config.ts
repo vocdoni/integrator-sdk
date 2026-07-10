@@ -15,6 +15,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@vocdoni/api-types': pkg('api-types'),
+      '@vocdoni/ballot': pkg('ballot'),
       '@vocdoni/api-client': pkg('api-client'),
       '@vocdoni/api-voting': pkg('api-voting'),
       '@vocdoni/react-providers': pkg('react-providers'),

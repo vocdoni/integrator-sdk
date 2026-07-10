@@ -1,3 +1,5 @@
+import type { BallotType } from '@vocdoni/ballot'
+import { encodeBallot, inferBallotType } from '@vocdoni/ballot'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 import { apiKey, makeAdminClient, makeClient } from './helpers'
 
@@ -7,13 +9,20 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 //   2. loads a 100-member memberbase (memberNumber 1..100)
 //   3. reads the auto-created "All members" group
 //   4. builds + publishes a CSP census from that group
-//   5. creates and publishes 3 processes (single-choice, multi-choice, and a
+//   5. creates and publishes 4 processes (single-choice, approval, a
+//      multichoice election that reserves abstain sentinels, and a
 //      secretUntilTheEnd single-choice) sharing that one group census
-//   6. bundles the 3 processes and has 3 members vote on every process
-//   7. asserts 9 distinct vote nullifiers
+//   6. bundles the processes and has 3 members vote on every process
+//   7. asserts a distinct vote nullifier per (member, process)
+//
+// The vote vectors are NOT hand-written: each is produced by `encodeBallot`
+// (@vocdoni/ballot) from high-level per-question selections, so this run doubles
+// as live proof that the package's on-chain encoding is accepted by the vochain —
+// including the approval dense-0/1 vector and the multichoice abstain sentinel
+// padding ([1,4,4]) that only exists on the write path.
 //
 // Opt-in: needs INTEGRATION_API_KEY (a `vsk_…` key whose org is an integrator
-// with scopes managed:write + members:write + voting:write, and quota for >=3
+// with scopes managed:write + members:write + voting:write, and quota for >=4
 // processes / >=300 census). It creates real on-chain elections and votes, so it
 // is excluded from the default run.
 const suite = apiKey ? describe : describe.skip
@@ -86,15 +95,29 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       })
       step(`4. census published from group ${groupId}`)
 
-      // 5. Three processes sharing the one census. endDate is required; omitting
+      // 5. Four processes sharing the one census. endDate is required; omitting
       // startDate (with autostart) makes each election start immediately on
       // publish, so the voters below can cast right away.
+      //
+      // Each draft carries high-level `selections` (per-question chosen choice
+      // values) and its `expectedType`; the concrete vote vector is derived below
+      // via `encodeBallot`, never hand-written. That makes the run a live check
+      // that the encoder's output for each ballot type is accepted on-chain.
       const endDate = new Date(Date.now() + 2 * 60 * 60_000).toISOString()
-      const drafts: Array<{ label: string; secret: boolean; choices: number[]; body: Parameters<typeof admin.elections.create>[0] }> = [
+      const drafts: Array<{
+        label: string
+        secret: boolean
+        /** High-level per-question selections fed to encodeBallot. */
+        selections: number[][]
+        /** Ballot type this election must infer to (asserted before voting). */
+        expectedType: BallotType
+        body: Parameters<typeof admin.elections.create>[0]
+      }> = [
         {
           label: 'single-choice',
           secret: false,
-          choices: [1],
+          selections: [[1]], // pick "Yes" → [1]
+          expectedType: 'single-choice',
           body: {
             orgAddress,
             electionParams: {
@@ -117,13 +140,14 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           },
         },
         {
-          label: 'multi-choice',
+          label: 'approval',
           secret: false,
-          choices: [1, 0, 1],
+          selections: [[0, 2]], // approve A and C → dense 0/1 vector [1,0,1]
+          expectedType: 'approval',
           body: {
             orgAddress,
             electionParams: {
-              title: 'Multi choice',
+              title: 'Approval',
               questions: [
                 {
                   title: 'Pick options',
@@ -134,7 +158,40 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
                   ],
                 },
               ],
+              // maxValue 1 + maxCount === #choices + repeatable → approval.
               voteType: { maxCount: 3, maxValue: 1 },
+              electionType: { autostart: true, interruptible: true },
+              maxCensusSize: MEMBER_COUNT,
+              endDate,
+            },
+          },
+        },
+        {
+          label: 'multichoice-abstain',
+          secret: false,
+          // Only one real pick for a 3-slot ballot: the remaining slots are
+          // padded with the abstain sentinel (value 4) → [1,4,4]. This exercises
+          // the abstain reservation that only the write path produces.
+          selections: [[1]],
+          expectedType: 'multichoice',
+          body: {
+            orgAddress,
+            electionParams: {
+              title: 'Multichoice with abstain',
+              questions: [
+                {
+                  title: 'Pick up to three',
+                  choices: [
+                    { title: 'A', value: 0 },
+                    { title: 'B', value: 1 },
+                    { title: 'C', value: 2 },
+                    { title: 'D', value: 3 },
+                  ],
+                },
+              ],
+              // 4 choices, up to 3 picks, maxValue reserves the abstain sentinel:
+              // maxValue = numChoices - 1 + (repeatable ? 1 : maxCount) = 3 + 1 = 4.
+              voteType: { maxCount: 3, maxValue: 4 },
               electionType: { autostart: true, interruptible: true },
               maxCensusSize: MEMBER_COUNT,
               endDate,
@@ -144,7 +201,8 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         {
           label: 'secret single-choice',
           secret: true,
-          choices: [1],
+          selections: [[1]], // pick "Yes" → [1]
+          expectedType: 'single-choice',
           body: {
             orgAddress,
             electionParams: {
@@ -169,6 +227,17 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
 
       const processes: ProcessSpec[] = []
       for (const d of drafts) {
+        // Derive the on-chain vote vector from the package, not by hand. The
+        // create body's electionParams already carries { questions, voteType },
+        // which is exactly what inferBallotType/encodeBallot read.
+        const encodeInput = d.body.electionParams as unknown as Parameters<typeof encodeBallot>[0]
+        const inferred = inferBallotType(encodeInput)
+        expect(inferred, `${d.label} inferred as ${inferred}, expected ${d.expectedType}`).toBe(
+          d.expectedType
+        )
+        const choices = encodeBallot(encodeInput, d.selections)
+        step(`5. ${d.label} → ${inferred} encoded ${JSON.stringify(d.selections)} → [${choices}]`)
+
         const draftId = await admin.elections.create(d.body)
         step(`5. draft created — ${d.label} (${draftId})`)
         const published = await admin.elections.publishAndWait(draftId, {
@@ -202,12 +271,12 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           address: published.address,
           chainId: info.chainId!,
           secret: d.secret,
-          choices: d.choices,
+          choices,
           encryptionKeys,
         })
       }
 
-      // 6. One bundle holding all three processes.
+      // 6. One bundle holding all the processes.
       const bundle = await admin.bundle.create({
         censusId,
         processes: processes.map((p) => p.address),

@@ -233,6 +233,7 @@ Key election components (all from `@vocdoni/react-components`):
 
 ```tsx
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { encodeBallot } from '@vocdoni/ballot'
 import {
   ClientProvider,
   BundleProvider,
@@ -263,8 +264,14 @@ function VotingForm() {
   return (
     <div>
       <h2>{text(election.questions[0].title)}</h2>
-      {election.questions[0].choices.map((c, i) => (
-        <button key={i} onClick={() => vote([i])} disabled={!isAbleToVote}>
+      {/* Single-choice: encodeBallot turns the picked choice value into the
+          on-chain vector. vote() then signs + relays it. */}
+      {election.questions[0].choices.map((c) => (
+        <button
+          key={c.value}
+          onClick={() => vote(encodeBallot(election, [c.value]))}
+          disabled={!isAbleToVote}
+        >
           {text(c.title)}
         </button>
       ))}

@@ -1,4 +1,4 @@
-import type { Election } from '@vocdoni/api-types'
+import { encodeBallot } from '@vocdoni/ballot'
 import { createContext, PropsWithChildren, useContext, useEffect } from 'react'
 import { FieldValues, FormProvider, useForm, UseFormReturn } from 'react-hook-form'
 import { useConfirm } from '../../../confirm/useConfirm'
@@ -22,18 +22,6 @@ export const useQuestionsForm = () => {
 
 export type QuestionsFormProviderProps = {}
 
-// Determine vote type from election voteType fields
-const getVoteTypeCategory = (election: Election): 'single' | 'multiple' | 'approval' => {
-  // If maxCount > 1 and uniqueChoices, treat as multiple choice
-  // If uniqueChoices false and maxCount is equal to choices length, treat as approval
-  // Default to single
-  const { maxCount, uniqueChoices } = election.voteType
-  if (maxCount > 1) {
-    return uniqueChoices ? 'multiple' : 'approval'
-  }
-  return 'single'
-}
-
 export const QuestionsFormProvider = ({ children }: PropsWithChildren<QuestionsFormProviderProps>) => {
   const fmethods = useForm()
   const { confirm } = useConfirm()
@@ -49,22 +37,20 @@ export const QuestionsFormProvider = ({ children }: PropsWithChildren<QuestionsF
       return false
     }
 
-    const voteType = getVoteTypeCategory(election)
-    let results: number[] = []
+    // Map each question's form value into the per-question choice-value array that
+    // encodeBallot expects. Single-choice fields hold a single value string; multi-
+    // choice/approval fields hold an array of selected value strings. encodeBallot
+    // then infers the ballot type and produces the correct on-chain vector — a dense
+    // 0/1 vector for approval and abstain-sentinel padding for multichoice, replacing
+    // the old hand-rolled (and, for approval, buggy) index-list encoding.
+    const selections = election.questions.map((_question, index) => {
+      const raw = values[index.toString()]
+      if (Array.isArray(raw)) return raw.map((value) => parseInt(value, 10))
+      if (raw === undefined || raw === '') return []
+      return [parseInt(raw, 10)]
+    })
 
-    switch (voteType) {
-      case 'single':
-        results = election.questions.map((_question, index) => parseInt(values[index.toString()], 10))
-        break
-      case 'multiple':
-      case 'approval':
-        results = ((Object.values(values).pop() || []) as string[]).map((value: string) => parseInt(value, 10))
-        break
-      default:
-        throw new Error('Unknown or invalid election type')
-    }
-
-    return baseVote(results)
+    return baseVote(encodeBallot(election, selections))
   }
 
   useEffect(() => {
