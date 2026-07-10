@@ -52,10 +52,20 @@ function decodeQuestion(
       // Fields are pick-slots; each field row is a histogram over choice values.
       // A choice's tally is the number of (voter, slot) selections of it, i.e. the
       // sum of column `choiceValue` across every field row.
+      const numChoices = question.choices.length
       const counts = question.choices.map((c) =>
         results.reduce((sum, row) => sum + toInt(row[c.value]), 0)
       )
-      return withPercentages(question, counts)
+      // Abstain sentinels are the reserved columns beyond the real choices (value >=
+      // numChoices). A unique-choices abstention spreads across several sentinel columns,
+      // so unify every sentinel column across every field into a single abstain bucket
+      // (mirrors the legacy SDK's calculateMultichoiceAbstains).
+      const abstain = results.reduce(
+        (sum, row) =>
+          sum + row.reduce((s, cell, value) => (value >= numChoices ? s + toInt(cell) : s), 0),
+        0
+      )
+      return withPercentages(question, counts, abstain)
     }
 
     case BallotType.Budget:
@@ -81,12 +91,30 @@ function toInt(cell: string | undefined): number {
   return Number.isNaN(n) ? 0 : n
 }
 
-/** Attach a per-question percentage (share of that question's own total). */
-function withPercentages(question: Question, counts: number[]): DecodedQuestionResults {
-  const total = counts.reduce((acc, n) => acc + n, 0)
-  return question.choices.map((c, i) => ({
+/**
+ * Attach a per-question percentage (share of that question's own total).
+ *
+ * When `abstain` is provided (multichoice), it is included in the denominator and
+ * appended as a single `{ choice: 'abstain' }` bucket so choices + abstain share one
+ * total. Other ballot types omit it entirely.
+ */
+function withPercentages(
+  question: Question,
+  counts: number[],
+  abstain?: number
+): DecodedQuestionResults {
+  const total = counts.reduce((acc, n) => acc + n, 0) + (abstain ?? 0)
+  const pct = (n: number) => (total > 0 ? (n / total) * 100 : null)
+
+  const results: DecodedQuestionResults = question.choices.map((c, i) => ({
     choice: c.value,
     votes: counts[i],
-    percentage: total > 0 ? (counts[i] / total) * 100 : null,
+    percentage: pct(counts[i]),
   }))
+
+  if (abstain !== undefined) {
+    results.push({ choice: 'abstain', votes: abstain, percentage: pct(abstain) })
+  }
+
+  return results
 }

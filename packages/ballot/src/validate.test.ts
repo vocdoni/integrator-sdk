@@ -37,14 +37,14 @@ describe('validateSelections', () => {
       expect(() => validateSelections(election, [[0], [2], [4]])).not.toThrow()
     })
 
-    it('accepts an empty (abstain) selection', () => {
+    it('rejects an empty selection (single-choice has no abstain concept)', () => {
       const election = createElection({ maxCount: 1, maxValue: 2 }, 2)
-      expect(() => validateSelections(election, [[], [1]])).not.toThrow()
+      expect(() => validateSelections(election, [[], [1]])).toThrow(/exactly 1 selection/i)
     })
 
     it('throws when more than one choice is selected', () => {
       const election = createElection({ maxCount: 1, maxValue: 2 })
-      expect(() => validateSelections(election, [[0, 1]])).toThrow(/at most 1 selection/i)
+      expect(() => validateSelections(election, [[0, 1]])).toThrow(/exactly 1 selection/i)
     })
 
     it('throws when the selected choice is out of range', () => {

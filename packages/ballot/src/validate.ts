@@ -51,28 +51,28 @@ export function validateSelections(
 }
 
 /**
- * Validate single-choice selections: at most one choice per question, and that
+ * Validate single-choice selections: exactly one choice per question, and that
  * choice must be a valid value of that question.
+ *
+ * Single-choice has no abstain concept — if abstaining is offered it is an explicit
+ * choice placed by the process creator — so an empty selection is invalid input.
  */
 function validateSingleChoice(questions: Question[], selections: number[][]): void {
   for (let q = 0; q < selections.length; q++) {
     const questionSelections = selections[q]
 
-    // Allow empty selection (abstain) or exactly one choice
-    if (questionSelections.length > 1) {
+    if (questionSelections.length !== 1) {
       throw new Error(
-        `Question ${q}: single-choice allows at most 1 selection, got ${questionSelections.length}`
+        `Question ${q}: single-choice requires exactly 1 selection, got ${questionSelections.length}`
       )
     }
 
-    if (questionSelections.length === 1) {
-      const validValues = new Set(questions[q].choices.map((c) => c.value))
-      const value = questionSelections[0]
-      if (!validValues.has(value)) {
-        throw new Error(
-          `Question ${q}: invalid choice ${value}; must be one of [${Array.from(validValues).join(', ')}]`
-        )
-      }
+    const validValues = new Set(questions[q].choices.map((c) => c.value))
+    const value = questionSelections[0]
+    if (!validValues.has(value)) {
+      throw new Error(
+        `Question ${q}: invalid choice ${value}; must be one of [${Array.from(validValues).join(', ')}]`
+      )
     }
   }
 }

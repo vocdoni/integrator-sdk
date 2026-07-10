@@ -72,8 +72,9 @@ describe('decodeResults', () => {
   })
 
   describe('multichoice', () => {
-    it('tally is the column sum across pick-slot fields', () => {
-      // 3 pick-slots (fields), each a histogram over the 5 choice values.
+    it('tally is the column sum across pick-slot fields, plus a zero abstain bucket', () => {
+      // 3 pick-slots (fields), each a histogram over the 5 choice values. No sentinel
+      // columns present → the trailing abstain bucket is 0.
       const decoded = decodeResults({
         voteType: vt({ maxCount: 3, maxValue: 4 }),
         questions: questions(1, 5),
@@ -83,7 +84,46 @@ describe('decodeResults', () => {
           ['0', '0', '2', '0', '1'], // slot 2: choice 2 x2, choice 4 x1
         ],
       })
-      expect(decoded[0].map((c) => c.votes)).toEqual([3, 2, 2, 1, 1])
+      expect(decoded[0].map((c) => c.votes)).toEqual([3, 2, 2, 1, 1, 0])
+      expect(decoded[0].at(-1)).toMatchObject({ choice: 'abstain', votes: 0 })
+    })
+
+    it('unifies repeated abstain sentinel columns into a single bucket (uniqueChoices false)', () => {
+      // numChoices = 3, so columns >= 3 are abstain sentinels (single column 3 here).
+      const decoded = decodeResults({
+        voteType: vt({ maxCount: 3, maxValue: 3, uniqueChoices: false }),
+        questions: questions(1, 3),
+        results: [
+          ['1', '0', '0', '2'], // slot 0: choice 0 x1, abstain x2
+          ['0', '1', '0', '2'], // slot 1: choice 1 x1, abstain x2
+          ['0', '0', '1', '2'], // slot 2: choice 2 x1, abstain x2
+        ],
+      })
+      expect(decoded[0]).toEqual([
+        { choice: 0, votes: 1, percentage: (1 / 9) * 100 },
+        { choice: 1, votes: 1, percentage: (1 / 9) * 100 },
+        { choice: 2, votes: 1, percentage: (1 / 9) * 100 },
+        { choice: 'abstain', votes: 6, percentage: (6 / 9) * 100 },
+      ])
+    })
+
+    it('unifies ascending abstain sentinel columns into one bucket (uniqueChoices true)', () => {
+      // numChoices = 3; unique sentinels spread across columns 3, 4, 5.
+      const decoded = decodeResults({
+        voteType: vt({ maxCount: 3, maxValue: 5, uniqueChoices: true }),
+        questions: questions(1, 3),
+        results: [
+          ['2', '0', '0', '1', '0', '0'], // slot 0: choice 0 x2, sentinel 3 x1
+          ['0', '2', '0', '0', '1', '0'], // slot 1: choice 1 x2, sentinel 4 x1
+          ['0', '0', '2', '0', '0', '1'], // slot 2: choice 2 x2, sentinel 5 x1
+        ],
+      })
+      expect(decoded[0].map((c) => [c.choice, c.votes])).toEqual([
+        [0, 2],
+        [1, 2],
+        [2, 2],
+        ['abstain', 3],
+      ])
     })
   })
 
@@ -120,15 +160,17 @@ describe('decodeResults', () => {
 
   describe('empty / missing results', () => {
     it('returns a uniform zero-filled shape (never throws, no bare [])', () => {
-      for (const voteType of [
-        vt({ maxCount: 1, maxValue: 2 }), // single-choice
-        vt({ maxCount: 3, maxValue: 1, uniqueChoices: false }), // approval
-        vt({ maxCount: 3, maxValue: 2 }), // multichoice
-        vt({ maxCount: 3, maxValue: 0, costExponent: 1 }), // budget
-      ]) {
+      // multichoice always carries a trailing abstain bucket, so its shape is choices + 1.
+      const cases: Array<[Election['voteType'], number]> = [
+        [vt({ maxCount: 1, maxValue: 2 }), 3], // single-choice
+        [vt({ maxCount: 3, maxValue: 1, uniqueChoices: false }), 3], // approval
+        [vt({ maxCount: 3, maxValue: 2 }), 4], // multichoice (3 choices + abstain)
+        [vt({ maxCount: 3, maxValue: 0, costExponent: 1 }), 3], // budget
+      ]
+      for (const [voteType, expectedLength] of cases) {
         const decoded = decodeResults({ voteType, questions: questions(1, 3), results: [] })
         expect(decoded).toHaveLength(1)
-        expect(decoded[0]).toHaveLength(3)
+        expect(decoded[0]).toHaveLength(expectedLength)
         expect(decoded[0].every((c) => c.votes === 0 && c.percentage === null)).toBe(true)
       }
     })

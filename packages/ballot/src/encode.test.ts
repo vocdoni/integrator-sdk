@@ -40,11 +40,10 @@ describe('encodeBallot', () => {
       expect(ballot).toEqual([0, 2, 4])
     })
 
-    it('refuses to encode an abstention (empty selection) instead of silently voting for choice 0', () => {
+    it('throws when a single-choice question has no selection (no abstain concept)', () => {
       const election = createElection({ maxCount: 1, maxValue: 2 }, 2)
-      const selections = [[], [1]] // First question abstain, second selects choice 1
-      // value 0 is a real choice, so an abstain is not representable — must throw
-      expect(() => encodeBallot(election, selections)).toThrow(/abstention/i)
+      const selections = [[], [1]] // First question empty — invalid, not an abstention
+      expect(() => encodeBallot(election, selections)).toThrow(/exactly one choice/i)
     })
 
     it('picks first selection when multiple are provided (should not happen in practice)', () => {
@@ -113,8 +112,16 @@ describe('encodeBallot', () => {
 
     it('throws when a partial selection cannot be padded (no abstain room)', () => {
       const election = createElection({ maxCount: 3, maxValue: 4 }) // maxValue === choices-1
-      expect(() => encodeBallot(election, [[1, 3]])).toThrow(/does not allow abstaining/i)
-      expect(() => encodeBallot(election, [[]])).toThrow(/does not allow abstaining/i)
+      expect(() => encodeBallot(election, [[1, 3]])).toThrow(/does not reserve enough abstain/i)
+      expect(() => encodeBallot(election, [[]])).toThrow(/does not reserve enough abstain/i)
+    })
+
+    it('throws for uniqueChoices when maxValue under-reserves the ascending sentinels', () => {
+      // uniqueChoices needs maxValue >= numChoices - 1 + maxCount = 5 - 1 + 3 = 7.
+      // maxValue 5 (>= numChoices) passed the old guard but would emit out-of-range
+      // sentinels [_, 6, 7]; the tightened guard now rejects it.
+      const election = createElection({ maxCount: 3, maxValue: 5, uniqueChoices: true })
+      expect(() => encodeBallot(election, [[1]])).toThrow(/does not reserve enough abstain/i)
     })
 
     it('throws when there are more selections than maxCount', () => {

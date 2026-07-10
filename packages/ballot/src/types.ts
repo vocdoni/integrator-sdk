@@ -40,7 +40,8 @@ export interface DecodedChoiceResult {
 }
 
 /**
- * A decoded result entry for abstentions in a question.
+ * A decoded result entry for abstentions in a question. Produced only for multichoice
+ * questions, where the reserved abstain sentinel columns are unified into one bucket.
  */
 export interface DecodedAbstainResult {
   /** Always 'abstain' as the identifier */
@@ -52,7 +53,8 @@ export interface DecodedAbstainResult {
 }
 
 /**
- * Decoded results for a single question. Contains per-choice tallies and optional abstain count.
+ * Decoded results for a single question: one entry per choice, plus a trailing
+ * `DecodedAbstainResult` bucket for multichoice questions (only).
  */
 export type DecodedQuestionResults = Array<DecodedChoiceResult | DecodedAbstainResult>
 

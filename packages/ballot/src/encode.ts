@@ -47,21 +47,17 @@ export function encodeBallot(
 /**
  * Encode single-choice ballot: one choice value per question.
  *
- * Each question is a field whose value is the chosen choice. Value 0 is a real
- * choice, so there is no reserved sentinel for "no selection". Rather than silently
- * encode an abstention as a vote for the first choice, refuse it: the single-choice
- * model can't represent an abstain the scrutinizer would count as such.
+ * Each question is a field whose value is the chosen choice. Single-choice has no
+ * abstain concept: if abstaining is offered, the process creator adds an explicit
+ * "Abstain" option as a normal choice, so the voter always picks exactly one value.
+ * An empty selection is therefore invalid input, not an abstention.
  */
 function encodeSingleChoice(questions: Question[], selections: number[][]): number[] {
   return selections.map((choices, q) => {
     if (choices.length === 0) {
-      throw new Error(
-        `Question ${q}: cannot encode an abstention for a single-choice question — ` +
-          `value 0 is a real choice, so there is no representable abstain value. ` +
-          `Provide exactly one choice.`
-      )
+      throw new Error(`Question ${q}: single-choice requires exactly one choice`)
     }
-    // Pick the first selected value (should be exactly one for single-choice)
+    // Pick the single selected value (validateSelections enforces exactly one)
     return choices[0]
   })
 }
@@ -89,8 +85,10 @@ function encodeApproval(question: Question, selections: number[]): number[] {
  *   `choices.length, choices.length + 1, …`, one per empty slot, so no value repeats.
  *
  * Throws when there are more selections than `maxCount`, or fewer than `maxCount` in an
- * election that does not reserve abstain values (`maxValue < choices.length`) — in that
- * case the voter must pick exactly `maxCount` choices.
+ * election that does not reserve enough abstain values — in that case the voter must
+ * pick exactly `maxCount` choices. "Enough" follows the legacy reservation formula
+ * `maxValue = choices.length - 1 + (uniqueChoices ? maxCount : 1)`, which guarantees the
+ * ascending unique sentinels never exceed `maxValue`.
  */
 function encodeMultiChoice(voteType: VoteType, question: Question, selections: number[]): number[] {
   const numChoices = question.choices.length
@@ -105,12 +103,15 @@ function encodeMultiChoice(voteType: VoteType, question: Question, selections: n
   if (ballot.length === maxCount) return ballot
 
   // Fewer picks than slots: pad with abstain sentinels if the config reserves them.
-  const abstainAllowed = voteType.maxValue >= numChoices
+  // Repeatable ballots reuse a single sentinel (+1); unique ballots need one distinct
+  // ascending sentinel per slot (+maxCount) — matching the legacy maxValue reservation.
+  const neededMaxValue = numChoices - 1 + (voteType.uniqueChoices ? maxCount : 1)
+  const abstainAllowed = voteType.maxValue >= neededMaxValue
   if (!abstainAllowed) {
     throw new Error(
       `multichoice: got ${ballot.length} selection(s) for a ${maxCount}-slot ballot, but this ` +
-        `election does not allow abstaining (maxValue ${voteType.maxValue} < choices ${numChoices}); ` +
-        `select exactly ${maxCount} choices`
+        `election does not reserve enough abstain values (maxValue ${voteType.maxValue} < ` +
+        `${neededMaxValue}); select exactly ${maxCount} choices`
     )
   }
 

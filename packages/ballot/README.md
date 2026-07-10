@@ -71,14 +71,17 @@ ballot the scrutinizer expects:
 
 **Abstaining:**
 
-- **single-choice** has no reserved abstain value (value `0` is a real choice), so an empty
-  selection **throws** rather than silently counting as a vote for the first choice.
+- **single-choice** has **no abstain concept**. If abstaining is offered, the process creator
+  adds an explicit "Abstain" option as a normal choice (e.g. `Yes=0, No=1, Abstain=2`), so the
+  voter always picks exactly one value. An empty selection is invalid input and **throws** — in
+  both `encodeBallot` and `validateSelections`.
 - **multichoice** pads short selections up to `maxCount` with abstain sentinels — a single
   repeated value `choices.length` when `uniqueChoices` is `false`, or distinct ascending
-  values `choices.length, choices.length + 1, …` when `uniqueChoices` is `true`. This
-  requires the election to reserve them (`maxValue >= choices.length`); otherwise a partial
-  selection throws and the voter must pick exactly `maxCount` choices. `decodeResults` drops
-  the sentinel columns.
+  values `choices.length, choices.length + 1, …` when `uniqueChoices` is `true`. This requires
+  the election to reserve enough room (`maxValue >= choices.length - 1 + (uniqueChoices ?
+  maxCount : 1)`); otherwise a partial selection throws and the voter must pick exactly
+  `maxCount` choices. On the way back, `decodeResults` **unifies** all sentinel columns into a
+  single trailing `{ choice: 'abstain', … }` bucket per multichoice question.
 
 ## Installation
 

@@ -65,12 +65,23 @@ describe('encode ↔ decode round-trip', () => {
     expect(votesOf(election, ballot)).toEqual([[1, 0, 1, 0, 1]])
   })
 
-  it('multichoice with abstain padding drops the sentinels on decode', () => {
+  it('multichoice (uniqueChoices false) surfaces a unified abstain bucket on decode', () => {
     const election = createElection({ maxCount: 3, maxValue: 5, uniqueChoices: false })
     const ballot = encodeBallot(election, [[1, 3]])
     expect(ballot).toEqual([1, 3, 5]) // 5 is the abstain sentinel
-    // Only the real picks (1 and 3) survive decode; the abstain column is ignored.
-    expect(votesOf(election, ballot)).toEqual([[0, 1, 0, 1, 0]])
+    // Real picks (1 and 3) tally as choices; the sentinel column becomes the abstain bucket.
+    expect(votesOf(election, ballot)).toEqual([[0, 1, 0, 1, 0, 1]])
+  })
+
+  it('multichoice (uniqueChoices true) unifies distinct ascending sentinels back into one bucket', () => {
+    // maxValue must reserve one distinct sentinel per empty slot: 5 - 1 + maxCount(3) = 7.
+    const election = createElection({ maxCount: 3, maxValue: 7, uniqueChoices: true })
+    // One pick (3) leaves two empty slots, padded with distinct ascending sentinels 5 and 6.
+    const ballot = encodeBallot(election, [[3]])
+    expect(ballot).toEqual([3, 5, 6])
+    // Decode recovers the single real pick and unifies both sentinel columns (5 and 6)
+    // into one abstain bucket of maxCount - picks = 2.
+    expect(votesOf(election, ballot)).toEqual([[0, 0, 0, 1, 0, 2]])
   })
 
   it('budget', () => {
