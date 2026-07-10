@@ -1,9 +1,14 @@
 import type { Election, Question, VoteType } from '@vocdoni/api-types'
-import { BallotType } from './types.js'
+import { BallotType, type BallotSelections } from './types.js'
 import { inferBallotType } from './infer.js'
+import { normalizeSelections } from './selections.js'
 
 /**
  * Encode high-level voter selections into the on-chain ballot array format.
+ *
+ * `selections` accepts a flat `number[]` (the ergonomic default) or a nested
+ * `number[][]` (one array per question); both normalize to the same output — see
+ * {@link BallotSelections}.
  *
  * Encoding rules (must match vochain scrutinizer):
  * - single-choice (multi-question): one chosen choice value per question: [v0, v1, …]
@@ -18,26 +23,27 @@ import { inferBallotType } from './infer.js'
  */
 export function encodeBallot(
   input: Pick<Election, 'questions' | 'voteType'>,
-  selections: number[][]
+  selections: BallotSelections
 ): number[] {
   const { questions, voteType } = input
   const ballotType = inferBallotType(input)
+  const perQuestion = normalizeSelections(input, selections)
 
   switch (ballotType) {
     case BallotType.SingleChoice:
-      return encodeSingleChoice(questions, selections)
+      return encodeSingleChoice(questions, perQuestion)
 
     case BallotType.Approval:
       // approval: dense 0/1 vector, confirmed correct vs vochain scrutinizer
       // (NOT the legacy Form.tsx index list, which is buggy for >2 options)
-      return encodeApproval(questions[0], selections[0] ?? [])
+      return encodeApproval(questions[0], perQuestion[0] ?? [])
 
     case BallotType.MultiChoice:
-      return encodeMultiChoice(voteType, questions[0], selections[0] ?? [])
+      return encodeMultiChoice(voteType, questions[0], perQuestion[0] ?? [])
 
     case BallotType.Budget:
     case BallotType.Quadratic:
-      return encodeBudgetOrQuadratic(selections[0] ?? [])
+      return encodeBudgetOrQuadratic(perQuestion[0] ?? [])
 
     default:
       throw new Error(`Unknown ballot type: ${ballotType}`)

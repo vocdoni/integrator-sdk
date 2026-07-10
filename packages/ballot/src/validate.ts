@@ -1,48 +1,53 @@
 import type { Election, Question, VoteType } from '@vocdoni/api-types'
-import { BallotType } from './types.js'
+import { BallotType, type BallotSelections } from './types.js'
 import { inferBallotType } from './infer.js'
+import { normalizeSelections } from './selections.js'
 
 /**
  * Validate voter selections against election constraints.
- * 
+ *
+ * `selections` accepts a flat `number[]` or a nested `number[][]`; both normalize to
+ * the same per-question form — see {@link BallotSelections}.
+ *
  * This function performs basic validation that can be done with ballot config alone.
  * It does NOT validate on-chain-only constraints (like minNumberOfChoices) which would
  * require additional metadata.
- * 
+ *
  * @param input - Election config with questions and voteType
  * @param selections - The selections to validate
  * @throws Error if selections are invalid
  */
 export function validateSelections(
   input: Pick<Election, 'questions' | 'voteType'>,
-  selections: number[][]
+  selections: BallotSelections
 ): void {
   const { questions, voteType } = input
   const ballotType = inferBallotType(input)
+  const perQuestion = normalizeSelections(input, selections)
 
   // Validate we have the right number of question arrays
-  if (selections.length !== questions.length) {
+  if (perQuestion.length !== questions.length) {
     throw new Error(
-      `Selections count (${selections.length}) does not match questions count (${questions.length})`
+      `Selections count (${perQuestion.length}) does not match questions count (${questions.length})`
     )
   }
 
   switch (ballotType) {
     case BallotType.SingleChoice:
-      validateSingleChoice(questions, selections)
+      validateSingleChoice(questions, perQuestion)
       break
 
     case BallotType.Approval:
-      validateApproval(questions[0], selections[0] ?? [])
+      validateApproval(questions[0], perQuestion[0] ?? [])
       break
 
     case BallotType.MultiChoice:
-      validateMultiChoice(voteType, questions[0], selections[0] ?? [])
+      validateMultiChoice(voteType, questions[0], perQuestion[0] ?? [])
       break
 
     case BallotType.Budget:
     case BallotType.Quadratic:
-      validateBudgetOrQuadratic(questions[0], selections[0] ?? [])
+      validateBudgetOrQuadratic(questions[0], perQuestion[0] ?? [])
       break
 
     default:

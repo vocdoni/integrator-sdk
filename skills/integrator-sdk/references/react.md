@@ -269,7 +269,7 @@ function VotingForm() {
       {election.questions[0].choices.map((c) => (
         <button
           key={c.value}
-          onClick={() => vote(encodeBallot(election, [[c.value]]))}
+          onClick={() => vote(encodeBallot(election, [c.value]))}
           disabled={!isAbleToVote}
         >
           {text(c.title)}

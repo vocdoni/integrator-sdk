@@ -18,14 +18,26 @@ export const BallotType = {
 export type BallotType = (typeof BallotType)[keyof typeof BallotType]
 
 /**
- * High-level selections for a ballot, organized per question. Each question's selections
- * are represented as an array of choice indices that the voter has selected.
- * 
- * For single-choice: exactly one index per question (e.g., [2] means choice at index 2)
- * For multi-choice/approval: zero or more indices per question
- * For budget/quadratic: represents amounts allocated to each option (different encoding)
+ * High-level selections for a ballot. Accepts two interchangeable shapes:
+ *
+ * - **Flat `number[]`** (the ergonomic default): the selected choice *values* for the
+ *   election. For single-choice it is one value per question, positionally
+ *   (`[1, 0, 2]` = value 1 for Q0, 0 for Q1, 2 for Q2); for the single-question types
+ *   (approval/multichoice/budget/quadratic) it is that question's values/amounts
+ *   (`[0, 2]`, `[3, 0, 5]`, …).
+ * - **Nested `number[][]`**: one array per question. Clearer for multi-question
+ *   single-choice (`[[1], [0], [2]]`); required if you want to be explicit.
+ *
+ * Both forms normalize to the same on-chain vector — only single-choice is ever
+ * multi-question (one pick each), and every other type is single-question, so the
+ * flat form is unambiguous once the ballot type is known.
+ *
+ * Per-question, the values are:
+ * - single-choice: exactly one choice value per question
+ * - multichoice/approval: zero or more selected choice values
+ * - budget/quadratic: the amount allocated to each option, in choice order
  */
-export type BallotSelections = number[][]
+export type BallotSelections = number[] | number[][]
 
 /**
  * A decoded result entry for a single choice within a question.

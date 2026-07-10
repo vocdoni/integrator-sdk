@@ -110,4 +110,27 @@ describe('validateSelections', () => {
       expect(() => validateSelections(budget, [[10, 1.5, 0, 0, 0]])).toThrow(/non-negative integers/i)
     })
   })
+
+  describe('flat selections', () => {
+    // A flat number[] normalizes to the same per-question form as its nested equivalent.
+    it('accepts a flat single-choice, multi-question selection ([0,2,4])', () => {
+      const election = createElection({ maxCount: 1, maxValue: 4 }, 3)
+      expect(() => validateSelections(election, [0, 2, 4])).not.toThrow()
+    })
+
+    it('rejects a flat single-choice selection with the wrong question count', () => {
+      const election = createElection({ maxCount: 1, maxValue: 4 }, 3)
+      expect(() => validateSelections(election, [0, 2])).toThrow(/does not match questions count/i)
+    })
+
+    it('accepts a flat approval selection ([0,2])', () => {
+      const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: false })
+      expect(() => validateSelections(election, [0, 2])).not.toThrow()
+    })
+
+    it('rejects an invalid choice in a flat approval selection', () => {
+      const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: false })
+      expect(() => validateSelections(election, [0, 9])).toThrow(/invalid choice/i)
+    })
+  })
 })

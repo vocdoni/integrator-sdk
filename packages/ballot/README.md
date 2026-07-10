@@ -50,8 +50,10 @@ import { inferBallotType, encodeBallot, decodeResults } from '@vocdoni/ballot'
 // Infer the type from an election object
 const type = inferBallotType({ questions, voteType })
 
-// Encode voter selections into a ballot array
-const ballot = encodeBallot({ questions, voteType }, selections)
+// Encode voter selections into a ballot array. `selections` is the chosen choice
+// values — a flat number[] (or nested number[][], one array per question):
+const ballot = encodeBallot({ questions, voteType }, [2])       // single-choice → [2]
+const approval = encodeBallot({ questions, voteType }, [0, 2])  // approval → [1,0,1,…]
 
 // Decode results from the API response
 const decoded = decodeResults({ questions, voteType, results })
@@ -59,12 +61,14 @@ const decoded = decodeResults({ questions, voteType, results })
 
 ## Encoding semantics
 
-`encodeBallot` takes `selections` as one array per question and produces the on-chain
-ballot the scrutinizer expects:
+`encodeBallot` takes `selections` — the chosen choice values — and produces the on-chain
+ballot the scrutinizer expects. `selections` accepts a flat `number[]` (the ergonomic
+default) or a nested `number[][]` (one array per question); both normalize identically.
+Only single-choice is ever multi-question, so a flat array is unambiguous:
 
-| Type | `selections[q]` | Ballot |
+| Type | `selections` (flat) | Ballot |
 |---|---|---|
-| single-choice | the chosen choice value (one entry) | one value per question `[v0, v1, …]` |
+| single-choice | one chosen value per question `[v0, v1, …]` | one value per question `[v0, v1, …]` |
 | approval | the approved choice values | dense `0/1` vector over every option |
 | multichoice | the picked choice values | exactly `maxCount` values; unfilled slots padded with abstain sentinels |
 | budget / quadratic | the per-option amounts, in choice order | the amount array unchanged |

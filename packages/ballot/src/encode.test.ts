@@ -200,4 +200,45 @@ describe('encodeBallot', () => {
       expect(ballot).toEqual([1, 0, 1, 0, 0]) // Dense 0/1 vector
     })
   })
+
+  describe('Flat vs nested selections', () => {
+    // A flat number[] and its nested number[][] equivalent must encode identically.
+    it('single-choice, single question: [2] === [[2]]', () => {
+      const election = createElection({ maxCount: 1, maxValue: 2 })
+      expect(encodeBallot(election, [2])).toEqual([2])
+      expect(encodeBallot(election, [2])).toEqual(encodeBallot(election, [[2]]))
+    })
+
+    it('single-choice, multi-question: [0,2,4] === [[0],[2],[4]]', () => {
+      const election = createElection({ maxCount: 1, maxValue: 2 }, 3)
+      expect(encodeBallot(election, [0, 2, 4])).toEqual([0, 2, 4])
+      expect(encodeBallot(election, [0, 2, 4])).toEqual(encodeBallot(election, [[0], [2], [4]]))
+    })
+
+    it('approval: [0,2] === [[0,2]]', () => {
+      const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: false })
+      expect(encodeBallot(election, [0, 2])).toEqual([1, 0, 1, 0, 0])
+      expect(encodeBallot(election, [0, 2])).toEqual(encodeBallot(election, [[0, 2]]))
+    })
+
+    it('multichoice: [1,3] === [[1,3]]', () => {
+      const election = createElection({ maxCount: 3, maxValue: 5, uniqueChoices: false })
+      expect(encodeBallot(election, [1, 3])).toEqual([1, 3, 5])
+      expect(encodeBallot(election, [1, 3])).toEqual(encodeBallot(election, [[1, 3]]))
+    })
+
+    it('budget: [10,20,30,40,50] === [[10,20,30,40,50]]', () => {
+      const election = createElection({ maxValue: 0, costExponent: 1 })
+      expect(encodeBallot(election, [10, 20, 30, 40, 50])).toEqual([10, 20, 30, 40, 50])
+      expect(encodeBallot(election, [10, 20, 30, 40, 50])).toEqual(
+        encodeBallot(election, [[10, 20, 30, 40, 50]])
+      )
+    })
+
+    it('an empty flat array is treated as no selection (approval → all zeros)', () => {
+      const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: false })
+      expect(encodeBallot(election, [])).toEqual([0, 0, 0, 0, 0])
+      expect(encodeBallot(election, [])).toEqual(encodeBallot(election, [[]]))
+    })
+  })
 })

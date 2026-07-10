@@ -5,9 +5,10 @@
  *   voteType.maxCount = 1, voteType.maxValue = numOptions - 1
  *
  * The on-chain `choices` vector is built by encodeBallot (@vocdoni/ballot): you
- * pass high-level selections — the chosen choice *value* per question — and it
- * returns the array to relay. For single-choice it is 1:1:
- *   encodeBallot(election, [[value]]) → [value]
+ * pass high-level selections — the chosen choice *values* — and it returns the
+ * array to relay. selections is a flat number[] (nested number[][], one array per
+ * question, is also accepted). For single-choice it is 1:1:
+ *   encodeBallot(election, [value]) → [value]
  *
  * This is the most common election format and the one used by the integration tests.
  *
@@ -94,16 +95,16 @@ if (!signature) throw new Error('CSP did not return a signature')
 
 // ─── 6. Cast the vote ────────────────────────────────────────────────────────
 // encodeBallot builds the on-chain `choices` vector from high-level selections.
-// For single-choice, selections is [[chosenValue]] — one array holding the
-// `value` of the choice the voter picked. Read it from the election's choices
-// rather than assuming value === display position.
+// For single-choice, selections is [chosenValue] — the `value` of the choice the
+// voter picked. Read it from the election's choices rather than assuming
+// value === display position.
 
 const CHOSEN_VALUE = election.questions[0].choices[0].value // ← the choice the voter picked
 
 const jobId = await voting.vote({
   processId,
   chainId: bundle.chainId,
-  choices: encodeBallot(election, [[CHOSEN_VALUE]]),
+  choices: encodeBallot(election, [CHOSEN_VALUE]),
   signer,
   cspSignature: signature,
   cspWeight: weight,

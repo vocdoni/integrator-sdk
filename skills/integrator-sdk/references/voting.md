@@ -94,25 +94,26 @@ const election = await client.elections.get(electionMongoId)
 inferBallotType(election) // 'single-choice' | 'multichoice' | 'approval' | 'budget' | 'quadratic'
 
 // Encode high-level selections → the on-chain `choices` vector. `selections` is
-// number[][]: one array of chosen choice *values* per question.
-const choices = encodeBallot(election, [[2]]) // single-choice: pick the choice whose value is 2
+// the chosen choice *values*: a flat number[] (`[2]` here). Nested number[][] (one
+// array per question) is also accepted — handy for multi-question single-choice.
+const choices = encodeBallot(election, [2]) // single-choice: pick the choice whose value is 2
 
 await voting.vote({ processId: election.address!, chainId, choices, signer, cspSignature, cspWeight })
 ```
 
-`selections` uses choice **values** (each choice's `value` field), not array positions — they usually coincide, but encode/decode are value-based throughout.
+`selections` uses choice **values** (each choice's `value` field), not array positions — they usually coincide, but encode/decode are value-based throughout. A flat `number[]` is the ergonomic default; only single-choice is ever multi-question (one pick each), so nested `number[][]` is optional and mostly useful there.
 
 ### What encodeBallot produces (wire-format reference)
 
 You rarely need this — it's what `encodeBallot` emits per type, and what the vochain scrutinizer expects (all four verified live in `integration/full-flow.itest.ts`):
 
-| Ballot type | voteType | `selections` example | `choices` output |
+| Ballot type | voteType | `selections` (flat) | `choices` output |
 |---|---|---|---|
-| single-choice | `maxCount 1` | `[[2]]` | `[2]` |
-| single-choice, N questions | `maxCount 1`, N questions | `[[1],[0],[2]]` | `[1, 0, 2]` |
-| approval | `maxCount = #choices`, `maxValue 1` | `[[0, 2]]` (approve values 0 & 2 of 3) | `[1, 0, 1]` (dense 0/1) |
-| multichoice | `maxCount N`, `maxValue ≥ #choices` | `[[1]]` (1 pick of a 3-slot ballot) | `[1, s, s]` (empty slots = abstain sentinel) |
-| budget / quadratic | `maxValue 0` | `[[3, 0, 5]]` (amount per option) | `[3, 0, 5]` |
+| single-choice | `maxCount 1` | `[2]` | `[2]` |
+| single-choice, N questions | `maxCount 1`, N questions | `[1, 0, 2]` | `[1, 0, 2]` |
+| approval | `maxCount = #choices`, `maxValue 1` | `[0, 2]` (approve values 0 & 2 of 3) | `[1, 0, 1]` (dense 0/1) |
+| multichoice | `maxCount N`, `maxValue ≥ #choices` | `[1]` (1 pick of a 3-slot ballot) | `[1, s, s]` (empty slots = abstain sentinel) |
+| budget / quadratic | `maxValue 0` | `[3, 0, 5]` (amount per option) | `[3, 0, 5]` |
 
 Abstain is a **multichoice-only** concept: when a voter picks fewer than `maxCount` options, the empty slots are filled with sentinel values (`≥ #choices`) that the election reserves via `maxValue`. Single-choice has no abstain — an "Abstain" there is just another choice the creator added.
 

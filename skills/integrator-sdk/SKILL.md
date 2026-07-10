@@ -86,10 +86,10 @@ const { signature, weight } = await client.bundle.sign(bundleId, {
 })
 
 // 5–6. Build tx, relay, poll for nullifier. encodeBallot turns high-level
-// selections (per-question chosen choice values) into the on-chain `choices`
-// vector — here, "pick the choice with value 0" in a single-question election.
+// selections (chosen choice values) into the on-chain `choices` vector — here,
+// "pick the choice with value 0" in a single-question election.
 const jobId = await voting.vote({
-  processId, chainId: bundle.chainId!, choices: encodeBallot(election, [[0]]),
+  processId, chainId: bundle.chainId!, choices: encodeBallot(election, [0]),
   signer, cspSignature: signature, cspWeight: weight,
 })
 const job = await client.jobs.waitFor(jobId)

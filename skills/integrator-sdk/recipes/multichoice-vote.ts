@@ -7,11 +7,12 @@
  *   - inferBallotType(election) classifies the election, and
  *   - encodeBallot(election, selections) produces the exact on-chain vector.
  *
- * `selections` is number[][]: one array of chosen choice *values* per question.
- *   approval:      [[0, 2]]         approve the choices with values 0 and 2 → [1,0,1]
- *   multichoice:   [[1]]            pick value 1; empty slots → abstain sentinels
- *   budget/quad:   [[3, 0, 5]]      amount per option, in choice order
- *   single-choice: [[1],[0],[2]]    one value per question (N questions)
+ * `selections` is the chosen choice *values* — a flat number[] (nested number[][],
+ * one array per question, is also accepted):
+ *   approval:      [0, 2]           approve the choices with values 0 and 2 → [1,0,1]
+ *   multichoice:   [1]              pick value 1; empty slots → abstain sentinels
+ *   budget/quad:   [3, 0, 5]        amount per option, in choice order
+ *   single-choice: [1, 0, 2]        one value per question (N questions)
  *
  * Prerequisites:
  *   pnpm add @vocdoni/api-client @vocdoni/api-voting @vocdoni/ballot
@@ -74,31 +75,31 @@ console.log('ballot type:', ballotType)
 
 // Choose the `selections` that match how the voter answered. Substitute the real
 // picked values; the examples assume a single question except single-choice.
-let selections: number[][]
+let selections: number[]
 switch (ballotType) {
   case 'approval':
     // Approve some options by value → encodeBallot emits a dense 0/1 vector.
     // e.g. 3 choices (values 0,1,2); approve 0 and 2 → [1, 0, 1]
-    selections = [[0, 2]]
+    selections = [0, 2]
     break
 
   case 'multichoice':
     // Pick up to voteType.maxCount options by value. When the election reserves
     // abstain room (maxValue ≥ #choices), picking fewer pads the empty slots with
     // abstain sentinels. e.g. maxCount 3 over 4 choices, pick value 1 → [1, 4, 4]
-    selections = [[1]]
+    selections = [1]
     break
 
   case 'budget':
   case 'quadratic':
     // One amount per option, in choice order.
-    selections = [[3, 0, 5]]
+    selections = [3, 0, 5]
     break
 
   case 'single-choice':
   default:
     // One chosen value per question (works for N-question elections too).
-    selections = election.questions.map(() => [/* chosen value for this question */ 0])
+    selections = election.questions.map(() => /* chosen value for this question */ 0)
     break
 }
 
