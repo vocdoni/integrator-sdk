@@ -37,6 +37,9 @@ importers:
       '@vocdoni/api-voting':
         specifier: workspace:*
         version: link:packages/api-voting
+      '@vocdoni/ballot':
+        specifier: workspace:*
+        version: link:packages/ballot
       jsdom:
         specifier: ^26.0.0
         version: 26.1.0
