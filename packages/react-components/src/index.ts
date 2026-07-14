@@ -19,6 +19,7 @@ export { useComponents } from './components/context/useComponents'
 
 // ─── Pagination ───────────────────────────────────────────────────────────────
 export { Pagination, type PaginationProps } from './components/Pagination/Pagination'
+export { RoutedPagination } from './components/Pagination/RoutedPagination'
 export { HR } from './components/shared/HR'
 export {
   PaginationProvider,
