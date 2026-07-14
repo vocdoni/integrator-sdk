@@ -394,17 +394,69 @@ export interface ElectionResults {
 }
 
 export interface ElectionListParams {
-  organizationId?: string
+  orgAddress: string
+  status?: string
   page?: number
-  pageSize?: number
-  status?: ElectionStatus
+  limit?: number
 }
 
-export interface PaginatedElections {
-  elections: Election[]
-  total: number
-  page: number
-  pageSize: number
+export interface BallotProtocol {
+  costExponent: number
+  costFromWeight: boolean
+  maxCount: number
+  maxTotalCost: number
+  maxValue: number
+  maxVoteOverwrites: number
+  uniqueValues: boolean
+}
+
+export interface QuestionTypeSetup {
+  maxChoices: number
+  minChoices: number
+  uniqueChoices: boolean
+}
+
+export interface VotingProcessQuestion {
+  id: string
+  parentProcessId: string
+  upstreamId?: string
+  title: MultiLangString
+  description?: MultiLangString
+  choices: Choice[]
+  eligibleMemberIds?: string[]
+  ballotProtocol: BallotProtocol
+  type: string
+  typeSetup?: QuestionTypeSetup
+  secretUntilTheEnd: boolean
+  status: string
+  metadata?: Record<string, unknown>
+}
+
+export interface CensusSpec {
+  authFields?: OrgMemberAuthField[]
+  groupId?: string
+  memberIds?: string[]
+  twoFaFields?: OrgMemberTwoFaField[]
+  weighted?: boolean
+}
+
+export interface VotingProcessResponse {
+  id: string
+  orgAddress: number[]
+  title: MultiLangString
+  description?: MultiLangString
+  header?: string
+  streamUri?: string
+  startDate: string
+  endDate: string
+  published: boolean
+  census: CensusSpec
+  questions: VotingProcessQuestion[]
+}
+
+export interface VotingProcessListResponse {
+  processes: VotingProcessResponse[]
+  pagination: Pagination
 }
 
 // ─── Vote relay ───────────────────────────────────────────────────────────────

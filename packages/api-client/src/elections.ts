@@ -8,9 +8,9 @@ import type {
   ElectionParams,
   ElectionResults,
   EnqueuedResponse,
+  VotingProcessListResponse,
   LocalizedInput,
   MultiLangString,
-  PaginatedElections,
   PublishProcessResponse,
   RelayVoteRequest,
   RelayVoteResponse,
@@ -84,8 +84,8 @@ export class ElectionsClient {
     return this.fetch<ElectionMetadata>(`/process/${id}/metadata`).catch(handleError)
   }
 
-  async list(params?: ElectionListParams): Promise<PaginatedElections> {
-    return this.fetch<PaginatedElections>('/process', { params }).catch(handleError)
+  async list({ orgAddress, ...params }: ElectionListParams): Promise<VotingProcessListResponse> {
+    return this.fetch<VotingProcessListResponse>('/processes', { params: { orgAddress, ...params } }).catch(handleError)
   }
 
   /**
