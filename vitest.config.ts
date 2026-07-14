@@ -30,7 +30,8 @@ export default defineConfig({
     exclude: ['**/dist/**', '**/node_modules/**'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      reporter: ['text', 'json-summary', 'json'],
+      reportOnFailure: true,
       include: ['packages/*/src/**/*.{ts,tsx}'],
       exclude: ['**/*.test.{ts,tsx}', '**/dist/**'],
     },

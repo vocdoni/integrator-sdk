@@ -52,7 +52,7 @@ await client.elections.vote({ txPayload })
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `processId` | `string` | yes | On-chain (Vochain) hex id — `election.address`, not `election.id` |
-| `choices` | `number[]` | yes | Raw on-chain ballot vector — build with `encodeBallot` from `@vocdoni/ballot`, see "Choices format" below |
+| `choices` | `number[]` | yes | Ballot values — see "Choices format" below |
 | `chainId` | `string` | yes | From `bundle.chainId` or `election.chainId` |
 | `signer` | `EphemeralSigner` | yes | Fresh per-vote ephemeral keypair |
 | `cspSignature` | `string` | yes | Hex signature from `bundle.sign()` |
@@ -81,57 +81,58 @@ Never reuse a signer across votes. One `new EphemeralSigner()` per vote call.
 
 ## Choices format
 
-`choices` is the raw on-chain ballot vector — it maps directly to the `votes` field of the vote package JSON. Its length must equal `election.voteType.maxCount` and each value must be in `[0, election.voteType.maxValue]`.
+`choices` maps directly to the `votes` field in the on-chain vote package JSON. The array length must equal `election.voteType.maxCount`; each value must be in `[0, election.voteType.maxValue]`.
 
-**Don't hand-build it — use `@vocdoni/ballot`.** The encoding differs per ballot type (approval is a dense 0/1 vector, multichoice pads unfilled slots with abstain sentinels), and `encodeBallot` derives the right vector from high-level selections:
+The encoding pattern depends on how the election was created:
+
+### Single question, pick one option (index format)
+
+`maxCount = 1`, `maxValue = numOptions - 1`
+
+The array has one element: the **0-based index** of the chosen option.
 
 ```ts
-import { inferBallotType, encodeBallot, decodeResults } from '@vocdoni/ballot'
-
-const election = await client.elections.get(electionMongoId)
-
-// What kind of ballot is this? Replaces the old-SDK `instanceof PublishedElection`.
-inferBallotType(election) // 'single-choice' | 'multichoice' | 'approval' | 'budget' | 'quadratic'
-
-// Encode high-level selections → the on-chain `choices` vector. `selections` is
-// the chosen choice *values*: a flat number[] (`[2]` here). Nested number[][] (one
-// array per question) is also accepted — handy for multi-question single-choice.
-const choices = encodeBallot(election, [2]) // single-choice: pick the choice whose value is 2
-
-await voting.vote({ processId: election.address!, chainId, choices, signer, cspSignature, cspWeight })
+// 3 options: "Yes" (0), "No" (1), "Abstain" (2)
+choices: [0]   // voted "Yes"
+choices: [1]   // voted "No"
+choices: [2]   // voted "Abstain"
 ```
 
-`selections` uses choice **values** (each choice's `value` field), not array positions — they usually coincide, but encode/decode are value-based throughout. A flat `number[]` is the ergonomic default; only single-choice is ever multi-question (one pick each), so nested `number[][]` is optional and mostly useful there.
+This is the most common format and the one used by the integration tests.
 
-### What encodeBallot produces (wire-format reference)
+### Single question, approve multiple options (binary format)
 
-You rarely need this — it's what `encodeBallot` emits per type, and what the vochain scrutinizer expects (all four verified live in `integration/full-flow.itest.ts`):
+`maxCount = numOptions`, `maxValue = 1`
 
-| Ballot type | voteType | `selections` (flat) | `choices` output |
-|---|---|---|---|
-| single-choice | `maxCount 1` | `[2]` | `[2]` |
-| single-choice, N questions | `maxCount 1`, N questions | `[1, 0, 2]` | `[1, 0, 2]` |
-| approval | `maxCount = #choices`, `maxValue 1` | `[0, 2]` (approve values 0 & 2 of 3) | `[1, 0, 1]` (dense 0/1) |
-| multichoice | `maxCount N`, `maxValue ≥ #choices` | `[1]` (1 pick of a 3-slot ballot) | `[1, s, s]` (empty slots = abstain sentinel) |
-| budget / quadratic | `maxValue 0` | `[3, 0, 5]` (amount per option) | `[3, 0, 5]` |
-
-Abstain is a **multichoice-only** concept: when a voter picks fewer than `maxCount` options, the empty slots are filled with sentinel values (`≥ #choices`) that the election reserves via `maxValue`. Single-choice has no abstain — an "Abstain" there is just another choice the creator added.
-
-`multichoiceReservesAbstain(election)` reports whether a multichoice election reserves enough `maxValue` room for that padding (false for every other type). Use it in a UI to decide whether a *partial* selection (fewer than `maxCount` picks) is castable, or whether the voter must pick exactly `maxCount`:
+The array has one element per option: `1` = approved, `0` = not approved.
 
 ```ts
-import { multichoiceReservesAbstain } from '@vocdoni/ballot'
-
-const min = multichoiceReservesAbstain(election) ? 1 : election.voteType.maxCount
-// require between `min` and `maxCount` selections
+// 4 options; voter approves options 0 and 2
+choices: [1, 0, 1, 0]
 ```
 
-### Reading results back
+For approval elections that require exactly N approvals, `maxTotalCost = minTotalCost = N` enforces the count on-chain.
 
-`decodeResults(election)` turns the raw `election.results` histogram (`string[][]`) into per-question, per-choice tallies with percentages — and, for multichoice, a unified abstain bucket — so you never index the matrix positionally:
+### Multiple questions, one choice per question
+
+`maxCount = numQuestions`, `maxValue = maxOptionsPerQuestion - 1`
+
+One element per question; each element is the chosen option index for that question.
 
 ```ts
-const decoded = decodeResults(election) // per question → [{ choice, votes, percentage }, …]
+// 3 questions, each with 4 options; voter picks option 2 on Q1, option 0 on Q2, option 3 on Q3
+choices: [2, 0, 3]
+```
+
+### Ranked / rated (unique values)
+
+`maxCount = numOptions`, `maxValue = maxRank`, `uniqueChoices = true`
+
+Each option is ranked; values must not repeat.
+
+```ts
+// 3 candidates; ranked 1st, 3rd, 2nd (0-indexed)
+choices: [0, 2, 1]
 ```
 
 ---

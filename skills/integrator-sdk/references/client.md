@@ -114,9 +114,7 @@ const { elections, total } = await client.elections.list({ organizationId, page,
 
 // Get results
 const results = await client.elections.getResults(mongoId)
-// results.results    — string[][] raw histogram matrix. Decode it into per-choice
-//                      tallies with decodeResults(election) from @vocdoni/ballot
-//                      rather than indexing positionally (the layout is type-specific).
+// results.results    — string[][] (raw histogram matrix; see ballot protocol)
 // results.voteCount
 // results.status
 
@@ -175,13 +173,6 @@ const { jobId } = await client.organizations.addMembers(org.address, members) //
 await client.organizations.waitForMembersJob(org.address, jobId)
 const { groups } = await client.organizations.listGroups(org.address)         // auto "All members" group
 ```
-
-`organizations.get(address)` returns the full [`Organization`](#organization-apicommonorganizationinfo)
-record (`apicommon.OrganizationInfo`): `name` / `description` / `logo` come back as
-locale maps (`MultilingualText`), plus `subscription`, `counters`, `managedBy`,
-`parent`, and the rest of the org profile. `create` / `update` take a
-`CreateOrganizationRequest` whose `name` / `description` / `logo` accept either a
-plain string or a locale map.
 
 `OrganizationsClient` also covers groups CRUD, meta, api keys, subscription, and
 list-reads (censuses/processes/drafts/jobs). See `packages/api-client/src/{census,organizations}.ts`
@@ -285,48 +276,6 @@ interface CensusInfo {
   twoFaFields?: string[]      // empty/absent → auth-only (no 2FA)
 }
 ```
-
-### Organization (`apicommon.OrganizationInfo`)
-
-The full record `organizations.get()` returns. `name` / `description` / `logo` are
-**locale maps** (`MultilingualText`, shorthands for `meta["name"]` etc.), not plain
-strings — resolve `.default` (or the first value) for display. The swagger marks no
-field required, so everything past `address` is optional.
-
-```ts
-import type { Organization, MultilingualText, SubscriptionUsage, SubscriptionDetails } from '@vocdoni/api-types'
-
-type MultilingualText = Record<string, string>   // e.g. { default: 'Acme', es: 'Acme SA' }
-
-interface Organization {
-  address: string              // hex string (swagger models it as a byte array)
-  name?: MultilingualText      // shorthand for meta["name"]
-  description?: MultilingualText
-  logo?: MultilingualText
-  website?: string
-  color?: string               // brand color, hex
-  size?: string
-  type?: string
-  country?: string
-  timezone?: string
-  subdomain?: string
-  active?: boolean
-  communications?: boolean
-  integrator?: boolean         // subscribed to the (free) integrator plan
-  createdAt?: string           // RFC3339
-  managedBy?: string           // integrator org (hex) managing this org; absent for regular orgs
-  meta?: Record<string, unknown>
-  counters?: SubscriptionUsage
-  subscription?: SubscriptionDetails
-  parent?: Organization        // recursive, for sub-organizations
-}
-
-// `OrganizationInfo` is a type alias of `Organization` (same schema; managed-org flows).
-```
-
-On **write** (`create` / `update` via `CreateOrganizationRequest`), `name` /
-`description` / `logo` accept a plain `string` (stored as `{ default: value }`) or a
-`MultilingualText` map. `create()` also takes `provisionAccount?: boolean`.
 
 ---
 

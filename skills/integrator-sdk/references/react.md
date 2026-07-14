@@ -68,25 +68,12 @@ import { AuthProvider, useAuth } from '@vocdoni/react-providers'
 
 <AuthProvider storageKey="vocdoni-auth">...</AuthProvider>
 
-const { token, expiry, isAuthenticated, login, logout, refresh, setSession } = useAuth()
+const { token, isAuthenticated, login, logout, refresh } = useAuth()
 
-const { expirity } = await login('user@example.com', 'secret')  // email + password → JWT; returns AuthToken
+await login('user@example.com', 'secret')  // email + password → JWT
 logout()
-await refresh()                            // re-issues the JWT using the current token; returns AuthToken
-
-// `expiry` is the stored expiry timestamp of the current token (from
-// `AuthToken.expirity`), or null when there is no session. The provider runs no
-// timers — inspect `expiry` and call `refresh()` on whatever renew policy you own.
-
-// `setSession` injects a token obtained out-of-band (OAuth, or the app's own
-// login mutation) without calling the API. Persists token + expiry like `login`.
-setSession({ token: '<jwt>', expirity: '<iso-timestamp>' })
+await refresh()                            // re-issues the JWT using the current token
 ```
-
-`login`, `refresh`, and `setSession` persist both the token (`${storageKey}.token`)
-and its expiry (`${storageKey}.expiry`) to `localStorage` when `storageKey` is set;
-`logout()` clears both. `login` and `refresh` return the full `AuthToken`
-(`{ token, expirity }`) — awaiting them for side effects only still works.
 
 For authenticated calls to actually carry the JWT, wire the same token into
 `ClientProvider` (e.g. `authToken={() => readTokenFromStorage()}`) so the client
@@ -246,7 +233,6 @@ Key election components (all from `@vocdoni/react-components`):
 
 ```tsx
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { encodeBallot } from '@vocdoni/ballot'
 import {
   ClientProvider,
   BundleProvider,
@@ -277,14 +263,8 @@ function VotingForm() {
   return (
     <div>
       <h2>{text(election.questions[0].title)}</h2>
-      {/* Single-choice: encodeBallot turns the picked choice value into the
-          on-chain vector. vote() then signs + relays it. */}
-      {election.questions[0].choices.map((c) => (
-        <button
-          key={c.value}
-          onClick={() => vote(encodeBallot(election, [c.value]))}
-          disabled={!isAbleToVote}
-        >
+      {election.questions[0].choices.map((c, i) => (
+        <button key={i} onClick={() => vote([i])} disabled={!isAbleToVote}>
           {text(c.title)}
         </button>
       ))}
