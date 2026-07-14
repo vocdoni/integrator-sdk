@@ -4,7 +4,6 @@ import type { PaginationData } from '../components/Pagination/shared'
 
 export type RoutedPaginationContextProps = {
   page: number
-  initialPage?: number
   path: string
   pagination: PaginationData
   getPathForPage: (page: number, queryParams?: string) => string
@@ -24,18 +23,16 @@ export const useRoutedPagination = (): RoutedPaginationContextProps => {
 export type RoutedPaginationProviderProps = {
   path: string
   pagination: PaginationData
-  initialPage?: number
 }
 
 export const RoutedPaginationProvider = ({
   path,
   pagination,
-  initialPage = 0,
   ...rest
 }: PropsWithChildren<RoutedPaginationProviderProps>) => {
   const { search } = useLocation()
   const { page, ...extraParams }: { page?: number } = useParams()
-  const p = page && page > 0 ? Number(page) : 0
+  const p = page && page > 0 ? Number(page) : 1
 
   const navigate = useNavigate()
 
@@ -50,7 +47,7 @@ export const RoutedPaginationProvider = ({
 
   return (
     <RoutedPaginationContext.Provider
-      value={{ page: p, path, getPathForPage, setPage, pagination, initialPage }}
+      value={{ page: p, path, getPathForPage, setPage, pagination }}
       {...rest}
     />
   )

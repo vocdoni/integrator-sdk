@@ -5,22 +5,19 @@ import { PaginationButtons, PaginationProps } from './shared'
 export type { PaginationProps } from './shared'
 
 export const Pagination = ({ maxButtons = 10, buttonProps, inputProps, pagination, ...rest }: PaginationProps) => {
-  const { page, setPage, initialPage = 0 } = usePagination()
+  const { page, setPage } = usePagination()
 
-  const totalPages = initialPage === 0 ? pagination.lastPage + 1 : pagination.lastPage
-  const currentPage = initialPage === 0 ? page - 1 : page
+  const totalPages = pagination.lastPage
+  const currentPage = page - 1
 
   return (
     <PaginationButtons
-      goToPage={(nextPage) => setPage(nextPage)}
-      createPageButton={(i) => {
-        const pageIndex = initialPage === 0 ? i : i + initialPage
-        return (
-          <Button key={i} onClick={() => setPage(pageIndex)} isActive={currentPage === pageIndex} {...buttonProps}>
-            {i + 1}
-          </Button>
-        )
-      }}
+      goToPage={(nextPage) => setPage(nextPage + 1)}
+      createPageButton={(i) => (
+        <Button key={i} onClick={() => setPage(i + 1)} isActive={currentPage === i} {...buttonProps}>
+          {i + 1}
+        </Button>
+      )}
       currentPage={currentPage}
       totalPages={totalPages}
       totalItems={pagination.totalItems}

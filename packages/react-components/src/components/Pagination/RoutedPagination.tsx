@@ -9,22 +9,19 @@ export const RoutedPagination = ({
   pagination,
   ...rest
 }: PaginationProps) => {
-  const { getPathForPage, setPage, page, initialPage = 0 } = useRoutedPagination()
+  const { getPathForPage, setPage, page } = useRoutedPagination()
 
-  const totalPages = initialPage === 0 ? pagination.lastPage + 1 : pagination.lastPage
-  const currentPage = initialPage === 0 ? page - 1 : page
+  const totalPages = pagination.lastPage
+  const currentPage = page - 1
 
   return (
     <PaginationButtons
       goToPage={(nextPage) => setPage(nextPage + 1)}
-      createPageButton={(i) => {
-        const pageIndex = initialPage === 0 ? i : i + initialPage
-        return (
-          <Button key={i} href={getPathForPage(i + 1)} isActive={currentPage === pageIndex} {...buttonProps}>
-            {i + 1}
-          </Button>
-        )
-      }}
+      createPageButton={(i) => (
+        <Button key={i} href={getPathForPage(i + 1)} isActive={currentPage === i} {...buttonProps}>
+          {i + 1}
+        </Button>
+      )}
       currentPage={currentPage}
       totalPages={totalPages}
       totalItems={pagination.totalItems}

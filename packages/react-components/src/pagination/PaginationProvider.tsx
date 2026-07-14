@@ -4,7 +4,6 @@ import type { PaginationData } from '../components/Pagination/shared'
 export type PaginationContextProps = {
   page: number
   setPage: (page: number) => void
-  initialPage?: number
   pagination: PaginationData
 }
 
@@ -20,15 +19,13 @@ export const usePagination = (): PaginationContextProps => {
 
 export type PaginationProviderProps = {
   pagination: PaginationData
-  initialPage?: number
 }
 
 export const PaginationProvider = ({
   pagination,
-  initialPage = 0,
   ...rest
 }: PropsWithChildren<PaginationProviderProps>) => {
-  const [page, setPage] = useState<number>(initialPage)
+  const [page, setPage] = useState<number>(1)
 
-  return <PaginationContext.Provider value={{ page, setPage, pagination, initialPage }} {...rest} />
+  return <PaginationContext.Provider value={{ page, setPage, pagination }} {...rest} />
 }

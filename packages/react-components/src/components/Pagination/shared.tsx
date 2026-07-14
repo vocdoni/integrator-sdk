@@ -4,7 +4,6 @@ import { useReactComponentsLocalize } from '../../i18n/localize'
 import { Button, ButtonProps } from './Button'
 import { EllipsisButton } from './EllipsisButton'
 
-/** Pagination shape compatible with both the old SDK PaginationResponse and new API PaginatedElections */
 export type PaginationData = {
   lastPage: number
   totalItems?: number
@@ -23,7 +22,7 @@ export type PaginationProps = ComponentPropsWithoutRef<'div'> &
 
 const usePaginationPages = (
   currentPage: number,
-  totalPages: number | undefined,
+  totalPages: number,
   maxButtons: number | undefined | false,
   gotoPage: GotoPageType,
   createPageButton: CreatePageButtonType,
@@ -31,8 +30,6 @@ const usePaginationPages = (
   buttonProps?: ButtonProps
 ) =>
   useMemo(() => {
-    if (totalPages === undefined) return []
-
     const pages: ReactElement[] = []
     for (let i = 0; i < totalPages; i++) {
       pages.push(createPageButton(i))
@@ -76,7 +73,7 @@ export const PaginationButtons = ({
   inputProps,
   ...rest
 }: {
-  totalPages: number | undefined
+  totalPages: number
   totalItems: number | undefined
   currentPage: number
   createPageButton: CreatePageButtonType
@@ -93,7 +90,7 @@ export const PaginationButtons = ({
     totalPages,
     maxButtons ? Math.max(5, maxButtons) : false,
     (page) => {
-      if (page >= 0 && totalPages && page < totalPages) {
+      if (page >= 0 && page < totalPages) {
         goToPage(page)
       }
     },
@@ -107,23 +104,7 @@ export const PaginationButtons = ({
       {...rest}
       items={
         <>
-          {totalPages === undefined ? (
-            <>
-              <Button
-                key='previous'
-                onClick={() => goToPage(currentPage - 1)}
-                disabled={currentPage === 0}
-                {...buttonProps}
-              >
-                {t('pagination.previous')}
-              </Button>
-              <Button key='next' onClick={() => goToPage(currentPage + 1)} {...buttonProps}>
-                {t('pagination.next')}
-              </Button>
-            </>
-          ) : (
-            pages
-          )}
+          {pages}
           {Boolean(totalItems) ? (
             <PaginationSummary
               text={t('pagination.total_results', {
