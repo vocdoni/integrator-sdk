@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { mockElection } from '../../../../mocks/handlers'
+import { mockProcess } from '../../../../mocks/handlers'
 import { server } from '../../../../mocks/server'
 import { TestProvider } from '../test-utils'
 import { ActionsProvider, useActions } from './ActionsProvider'
@@ -9,13 +9,13 @@ import { ElectionProvider, useElection } from './ElectionProvider'
 
 const BASE = 'http://localhost'
 
-/** Records the body of every PUT /process/:id/status the provider sends. */
+/** Records the body of every PUT /processes/:id/questions/status the provider sends. */
 function captureStatus(): { last: () => unknown } {
   const seen: unknown[] = []
   server.use(
-    http.put(`${BASE}/process/:id/status`, async ({ request }) => {
+    http.put(`${BASE}/processes/:id/questions/status`, async ({ request }) => {
       seen.push(await request.json())
-      return HttpResponse.json({}, { status: 200 })
+      return HttpResponse.json({ jobId: 'job-status-1' }, { status: 200 })
     }),
   )
   return { last: () => seen.at(-1) }
@@ -24,7 +24,7 @@ function captureStatus(): { last: () => unknown } {
 function wrapper({ children }: { children: React.ReactNode }) {
   return (
     <TestProvider>
-      <ElectionProvider id={mockElection.id}>
+      <ElectionProvider id={mockProcess.id}>
         <ActionsProvider>{children}</ActionsProvider>
       </ElectionProvider>
     </TestProvider>
@@ -48,14 +48,14 @@ describe('ActionsProvider', () => {
       await result.current.actions[method]()
     })
 
-    expect(capture.last()).toEqual({ status })
+    expect(capture.last()).toMatchObject({ status })
     expect(result.current.actions.loading).toBe(false)
   })
 
   it('rejects with "Election not loaded" when the election failed to load', async () => {
     // 404 the process so ElectionProvider never resolves an election.
     server.use(
-      http.get(`${BASE}/process/:id`, () => new HttpResponse(null, { status: 404 })),
+      http.get(`${BASE}/processes/:id`, () => new HttpResponse(null, { status: 404 })),
     )
     const { result } = renderHook(useActor, { wrapper })
     await waitFor(() => expect(result.current.election.loading).toBe(false))

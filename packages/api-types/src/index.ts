@@ -228,6 +228,21 @@ export interface CensusParticipantsResponse {
 export type ElectionStatus = 'READY' | 'PAUSED' | 'ENDED' | 'CANCELED' | 'UPCOMING'
 
 /**
+ * Per-question (on-chain election) status. Each question in a voting process is
+ * a separate Vochain election, so its status follows the Vochain lifecycle.
+ * Use {@link computeProcessStatus} (from `@vocdoni/api-client`) to derive a
+ * combined status for the whole process.
+ */
+export type QuestionStatus =
+  | 'PROCESS_UNKNOWN'
+  | 'UPCOMING'
+  | 'ONGOING'
+  | 'ENDED'
+  | 'CANCELED'
+  | 'PAUSED'
+  | 'RESULTS'
+
+/**
  * Language-keyed election text, e.g. `{ default: 'Hello', es: 'Hola' }`. The SaaS
  * API stores every human-facing string (titles, descriptions, choice labels) this
  * way and rejects a bare string; the `default` key is the fallback locale.
@@ -313,59 +328,6 @@ export interface EncryptionKey {
 
 // ─── Election API ─────────────────────────────────────────────────────────────
 
-/** Vote-type input for {@link ElectionParams}; omitted fields default to 0/false. */
-export interface VoteTypeInput {
-  /** Number of choices a voter selects (>1 for multi-choice). */
-  maxCount: number
-  /** Maximum value a single choice can take. */
-  maxValue: number
-  maxVoteOverwrites?: number
-  costExponent?: number
-  uniqueChoices?: boolean
-  costFromWeight?: boolean
-}
-
-/** Election-type input for {@link ElectionParams}; omitted fields default to false. */
-export interface ElectionTypeInput {
-  autostart?: boolean
-  interruptible?: boolean
-  dynamicCensus?: boolean
-  secretUntilTheEnd?: boolean
-  anonymous?: boolean
-}
-
-/** High-level election definition carried by a process draft (used at publish). */
-export interface ElectionParams {
-  title: LocalizedInput
-  description?: LocalizedInput
-  header?: string
-  streamUri?: string
-  startDate?: string
-  endDate?: string
-  questions: Question[]
-  voteType: VoteTypeInput
-  electionType: ElectionTypeInput
-  maxCensusSize?: number
-}
-
-/** Body of `POST /process` — creates a process draft. Returns the draft id (hex). */
-export interface CreateProcessRequest {
-  orgAddress: string
-  /** On-chain id, only for importing an already-published process. */
-  address?: string
-  /** SaaS census id to attach. */
-  censusId?: string
-  metadata?: Record<string, unknown>
-  electionParams?: ElectionParams
-}
-
-export interface UpdateElectionRequest {
-  title?: LocalizedInput
-  description?: LocalizedInput
-  header?: string
-  endDate?: string
-}
-
 /** Synchronous response of `POST /process/{id}/publish` when already published. */
 export interface PublishProcessResponse {
   /** On-chain (Vochain) process id, hex. */
@@ -382,15 +344,6 @@ export interface ElectionMetadata {
   description?: LocalizedInput
   questions: Question[]
   media?: { header?: string }
-}
-
-export interface ElectionResults {
-  status: string
-  voteCount: number
-  startDate: string
-  endDate: string
-  results: string[][]
-  finalResults: boolean
 }
 
 export interface ElectionListParams {
@@ -428,7 +381,7 @@ export interface VotingProcessQuestion {
   type: string
   typeSetup?: QuestionTypeSetup
   secretUntilTheEnd: boolean
-  status: string
+  status: QuestionStatus
   metadata?: Record<string, unknown>
 }
 
@@ -438,6 +391,12 @@ export interface CensusSpec {
   memberIds?: string[]
   twoFaFields?: OrgMemberTwoFaField[]
   weighted?: boolean
+}
+
+/** Per-question member eligibility restriction (subset of the process census). */
+export interface EligibilitySpec {
+  groupId?: string
+  memberIds?: string[]
 }
 
 export interface VotingProcessResponse {
@@ -457,6 +416,93 @@ export interface VotingProcessResponse {
 export interface VotingProcessListResponse {
   processes: VotingProcessResponse[]
   pagination: Pagination
+}
+
+/** Public read of a single question; returned by `GET /processes/{id}/questions/{qId}`. */
+export interface PublicQuestionResponse {
+  id: string
+  parentProcessId: string
+  upstreamId?: string
+  title: MultiLangString
+  description?: MultiLangString
+  choices: Choice[]
+  ballotProtocol?: BallotProtocol
+  census?: CensusSpec
+  type?: string
+  typeSetup?: QuestionTypeSetup
+  secretUntilTheEnd: boolean
+  status: QuestionStatus
+  metadata?: Record<string, unknown>
+}
+
+/** Per-question entry in `GET /processes/{id}/results`. */
+export interface VotingProcessQuestionResults {
+  questionId: string
+  upstreamId?: string
+  status: QuestionStatus
+  voteCount: number
+  startDate: string
+  endDate: string
+  finalResults: boolean
+  results?: string[][]
+}
+
+/** Response of `GET /processes/{id}/results`. */
+export interface VotingProcessResultsResponse {
+  id: string
+  questions: VotingProcessQuestionResults[]
+}
+
+/** Response of `GET /processes/{id}/check` — publish-readiness dry-run. */
+export interface VotingProcessValidateResponse {
+  valid: boolean
+  errors?: string[]
+}
+
+/** Question input for {@link CreateVotingProcessRequest}. Each question carries its own ballot protocol. */
+export interface VotingProcessQuestionRequest {
+  title: LocalizedInput
+  description?: LocalizedInput
+  choices?: Choice[]
+  /** Raw ballot protocol; overrides `type` + `typeSetup` when both are given. */
+  ballotProtocol?: BallotProtocol
+  /** Per-question member eligibility restriction. */
+  census?: EligibilitySpec
+  /** Named question type (e.g. "singleChoice", "multiChoice", "approval"). */
+  type?: string
+  /** Type-specific configuration (required for "multiChoice"). */
+  typeSetup?: QuestionTypeSetup
+  secretUntilTheEnd?: boolean
+  metadata?: Record<string, unknown>
+}
+
+/** Body of `POST /processes` and `PUT /processes/{id}` — flat process draft with per-question ballot protocols. */
+export interface CreateVotingProcessRequest {
+  orgAddress: string
+  census?: CensusSpec
+  title: LocalizedInput
+  description?: LocalizedInput
+  header?: string
+  streamUri?: string
+  startDate?: string
+  endDate?: string
+  questions: VotingProcessQuestionRequest[]
+}
+
+/** Response of `POST /processes`. */
+export interface CreateVotingProcessResponse {
+  processId: string
+}
+
+/** Body of `PUT /processes/{id}/questions/{qId}/status` — single-question status change. */
+export interface QuestionStatusID {
+  id: string
+}
+
+/** Body of `PUT /processes/{id}/questions/status` — bulk question status change. */
+export interface SetQuestionsStatusRequest {
+  status: string
+  questions: QuestionStatusID[]
 }
 
 // ─── Vote relay ───────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import type { Question } from '@vocdoni/api-types'
+import type { VotingProcessQuestion } from '@vocdoni/api-types'
 import { ComponentPropsWithoutRef } from 'react'
 import { useComponents } from '../../context/useComponents'
 import { useReactComponentsLocalize } from '../../../i18n/localize'
@@ -33,7 +33,7 @@ const QuestionsFormContents = ({ onInvalid }: { onInvalid?: (errors: unknown) =>
   const { QuestionsEmpty, QuestionsError } = useComponents()
   const t = useReactComponentsLocalize()
   const { fmethods, vote } = useQuestionsForm()
-  const questions: Question[] | undefined = election?.questions
+  const questions: VotingProcessQuestion[] | undefined = election?.questions
 
   if (hasVoted && !isAbleToVote) {
     return <Voted />

@@ -1,27 +1,34 @@
-import { BallotType, inferBallotType } from '@vocdoni/ballot'
+import type { VotingProcessQuestion } from '@vocdoni/api-types'
+import { BallotType, inferQuestionBallotType } from '@vocdoni/ballot'
 import { ComponentPropsWithoutRef } from 'react'
 import { useComponents } from '../../context/useComponents'
 import { useReactComponentsLocalize } from '../../../i18n/localize'
 import { useElection } from '@vocdoni/react-providers'
 
-export const QuestionsTypeBadge = (props: ComponentPropsWithoutRef<'div'> & Record<string, unknown>) => {
+export type QuestionsTypeBadgeProps = ComponentPropsWithoutRef<'div'> &
+  Record<string, unknown> & {
+    /** The question to infer the ballot type from. Defaults to the first question. */
+    question?: VotingProcessQuestion
+  }
+
+export const QuestionsTypeBadge = ({ question: questionProp, ...props }: QuestionsTypeBadgeProps) => {
   const { election } = useElection()
   const { QuestionsTypeBadge: Slot } = useComponents()
   const t = useReactComponentsLocalize()
 
-  if (!election) {
+  const question = questionProp ?? election?.questions[0]
+
+  if (!question) {
     return null
   }
 
-  const { maxCount } = election.voteType
-  // Determine if weighted: census size vs weight (not available in simple API)
+  const maxCount = question.ballotProtocol?.maxCount ?? 1
   const weighted = ''
 
   let title = ''
   let tooltip = ''
 
-  // Label from the inferred ballot type, the same inference the encoder/decoder use.
-  switch (inferBallotType(election)) {
+  switch (inferQuestionBallotType(question)) {
     case BallotType.SingleChoice:
       title = t('question_types.singlechoice_title', { weighted })
       break

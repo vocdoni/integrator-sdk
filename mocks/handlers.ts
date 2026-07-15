@@ -36,6 +36,38 @@ export const mockElection = {
   },
 }
 
+export const mockProcess = {
+  id: 'abc123',
+  orgAddress: [],
+  title: { default: 'Test Process' },
+  description: { default: 'A test process' },
+  startDate: '2024-01-01T00:00:00Z',
+  endDate: '2024-12-31T23:59:59Z',
+  published: true,
+  census: {},
+  questions: [
+    {
+      id: 'q-0',
+      parentProcessId: 'abc123',
+      upstreamId: MOCK_PROCESS_ADDRESS,
+      title: { default: 'Test Question' },
+      choices: [],
+      ballotProtocol: {
+        maxCount: 1,
+        maxValue: 1,
+        maxVoteOverwrites: 0,
+        maxTotalCost: 0,
+        costExponent: 1,
+        uniqueValues: false,
+        costFromWeight: false,
+      },
+      type: 'singleChoice',
+      secretUntilTheEnd: false,
+      status: 'ONGOING',
+    },
+  ],
+}
+
 // name/description are locale maps on read (shorthands for meta["name"] etc.).
 export const mockOrganization = {
   address: '0xdeadbeef',
@@ -49,8 +81,29 @@ export const mockAuthToken = {
 }
 
 export const handlers = [
-  // Process info, addressed by Mongo id. Returns the merged shape: vochain id as
-  // `address`, `chainId`, and the election definition nested under electionParams.
+  // New multi-question process endpoint (`GET /processes/:id`).
+  http.get(`${BASE}/processes/:id`, ({ params }) =>
+    HttpResponse.json({ ...mockProcess, id: params.id as string }),
+  ),
+
+  // Per-process results endpoint.
+  http.get(`${BASE}/processes/:id/results`, ({ params }) =>
+    HttpResponse.json({
+      processId: params.id as string,
+      questions: mockProcess.questions.map((q) => ({
+        questionId: q.id,
+        upstreamId: q.upstreamId,
+        status: q.status,
+        voteCount: 0,
+        startDate: mockProcess.startDate,
+        endDate: mockProcess.endDate,
+        finalResults: false,
+        results: null,
+      })),
+    }),
+  ),
+
+  // Legacy single-process endpoint — kept for tests that still exercise old paths.
   http.get(`${BASE}/process/:id`, ({ params }) =>
     HttpResponse.json({
       id: params.id as string,

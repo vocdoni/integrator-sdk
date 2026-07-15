@@ -6,7 +6,7 @@ import { useElection } from '@vocdoni/react-providers'
 
 export const VoteButton = (props: ComponentPropsWithoutRef<'button'> & Record<string, unknown>) => {
   const externalDisabled = Boolean(props.disabled)
-  const { election, isAbleToVote, hasVoted } = useElection()
+  const { election, status, isAbleToVote, hasVoted } = useElection()
   const { VoteButton: Slot } = useComponents()
   const t = useReactComponentsLocalize()
 
@@ -14,7 +14,7 @@ export const VoteButton = (props: ComponentPropsWithoutRef<'button'> & Record<st
     return null
   }
 
-  const isDisabled = !isAbleToVote || election.status !== 'READY' || externalDisabled
+  const isDisabled = !isAbleToVote || status !== 'ONGOING' || externalDisabled
 
   const button: VoteButtonSlotProps = {
     type: 'submit' as const,

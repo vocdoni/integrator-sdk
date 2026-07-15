@@ -1,6 +1,6 @@
-import type { Election, Question } from '@vocdoni/api-types'
+import type { BallotProtocol, Choice, Election, Question } from '@vocdoni/api-types'
 import { BallotType, type DecodedResults, type DecodedQuestionResults } from './types.js'
-import { inferBallotType } from './infer.js'
+import { inferBallotType, inferQuestionBallotType } from './infer.js'
 
 /**
  * Decode a raw Vocdoni results matrix into per-question / per-choice tallies.
@@ -87,6 +87,18 @@ function decodeQuestion(
     default:
       throw new Error(`Unknown ballot type: ${ballotType}`)
   }
+}
+
+/**
+ * Decode results for a single question using its own {@link BallotProtocol}.
+ */
+export function decodeQuestionResults(
+  question: { ballotProtocol?: BallotProtocol; choices: Choice[] },
+  results: string[][]
+): DecodedQuestionResults {
+  const ballotType = inferQuestionBallotType(question)
+  const fakeQuestion: Question = { title: { default: '' }, choices: question.choices }
+  return decodeQuestion(ballotType, fakeQuestion, 0, results)
 }
 
 /** Parse a results cell to a non-negative integer, treating missing / NaN as 0. */

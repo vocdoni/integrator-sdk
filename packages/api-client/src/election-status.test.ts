@@ -1,107 +1,131 @@
 import { describe, expect, it } from 'vitest'
-import type { Election } from '@vocdoni/api-types'
-import { hasResults, isLive, isUpcoming } from './election-status'
+import type { VotingProcessQuestion, VotingProcessResponse } from '@vocdoni/api-types'
+import { computeProcessStatus, hasResults, isLive, isUpcoming } from './election-status'
 
-const base: Election = {
-  id: 'election-1',
-  address: '0xabc',
-  title: { default: 'Test election' },
-  status: 'READY',
+const q = (status: VotingProcessQuestion['status']): VotingProcessQuestion =>
+  ({ status } as VotingProcessQuestion)
+
+const base: VotingProcessResponse = {
+  id: 'proc-1',
+  orgAddress: [],
+  title: { default: 'Test process' },
   startDate: '2024-01-01T00:00:00Z',
   endDate: '2024-12-31T23:59:59Z',
-  organizationId: '0xorg',
-  voteCount: 0,
-  finalResults: false,
+  published: true,
+  census: {},
   questions: [],
-  voteType: { maxCount: 1, maxValue: 1, maxVoteOverwrites: 0, costExponent: 1, uniqueChoices: false, costFromWeight: false },
-  electionType: { interruptible: true, secretUntilTheEnd: false, anonymous: false },
 }
 
-const past = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString()
-const future = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString()
-
 describe('isLive', () => {
-  it('is true when status is READY and now is between start and end', () => {
-    const e: Election = { ...base, startDate: past(1), endDate: future(1) }
-    expect(isLive(e)).toBe(true)
+  it('is true when the process status is ONGOING', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('ONGOING')] }
+    expect(isLive(p)).toBe(true)
   })
 
-  it('is false when status is READY but not yet started', () => {
-    const e: Election = { ...base, startDate: future(1), endDate: future(2) }
-    expect(isLive(e)).toBe(false)
+  it('is false when the process status is UPCOMING', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('UPCOMING')] }
+    expect(isLive(p)).toBe(false)
   })
 
-  it('is false when status is READY but already ended', () => {
-    const e: Election = { ...base, startDate: past(2), endDate: past(1) }
-    expect(isLive(e)).toBe(false)
+  it('is false when the process status is PAUSED', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('PAUSED')] }
+    expect(isLive(p)).toBe(false)
   })
 
-  it('is false when status is PAUSED', () => {
-    const e: Election = { ...base, status: 'PAUSED', startDate: past(1), endDate: future(1) }
-    expect(isLive(e)).toBe(false)
+  it('is false when the process status is ENDED', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('ENDED')] }
+    expect(isLive(p)).toBe(false)
   })
 
-  it('is false when status is ENDED', () => {
-    const e: Election = { ...base, status: 'ENDED', startDate: past(2), endDate: past(1) }
-    expect(isLive(e)).toBe(false)
+  it('is false when the process status is CANCELED', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('CANCELED')] }
+    expect(isLive(p)).toBe(false)
   })
 
-  it('is false when status is CANCELED', () => {
-    const e: Election = { ...base, status: 'CANCELED', startDate: past(1), endDate: future(1) }
-    expect(isLive(e)).toBe(false)
+  it('is true when any question is ONGOING (mixed)', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('ENDED'), q('ONGOING')] }
+    expect(isLive(p)).toBe(true)
+  })
+
+  it('is false when no questions', () => {
+    expect(isLive(base)).toBe(false)
   })
 })
 
 describe('isUpcoming', () => {
-  it('is true when status is READY and now is before startDate', () => {
-    const e: Election = { ...base, startDate: future(1), endDate: future(2) }
-    expect(isUpcoming(e)).toBe(true)
+  it('is true when the process status is UPCOMING', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('UPCOMING')] }
+    expect(isUpcoming(p)).toBe(true)
   })
 
-  it('is false when status is READY and election has already started', () => {
-    const e: Election = { ...base, startDate: past(1), endDate: future(1) }
-    expect(isUpcoming(e)).toBe(false)
-  })
-
-  it('is false when status is UPCOMING (the API status, not a predicate)', () => {
-    const e: Election = { ...base, status: 'UPCOMING', startDate: future(1), endDate: future(2) }
-    expect(isUpcoming(e)).toBe(false)
+  it('is false when status is ONGOING', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('ONGOING')] }
+    expect(isUpcoming(p)).toBe(false)
   })
 
   it('is false when status is PAUSED', () => {
-    const e: Election = { ...base, status: 'PAUSED', startDate: future(1), endDate: future(2) }
-    expect(isUpcoming(e)).toBe(false)
+    const p: VotingProcessResponse = { ...base, questions: [q('PAUSED')] }
+    expect(isUpcoming(p)).toBe(false)
   })
 
   it('is false when status is CANCELED', () => {
-    const e: Election = { ...base, status: 'CANCELED', startDate: future(1), endDate: future(2) }
-    expect(isUpcoming(e)).toBe(false)
+    const p: VotingProcessResponse = { ...base, questions: [q('CANCELED')] }
+    expect(isUpcoming(p)).toBe(false)
   })
 })
 
 describe('hasResults', () => {
-  it('is true when status is ENDED and finalResults is true', () => {
-    const e: Election = { ...base, status: 'ENDED', finalResults: true }
-    expect(hasResults(e)).toBe(true)
+  it('is true when all questions are RESULTS', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('RESULTS'), q('RESULTS')] }
+    expect(hasResults(p)).toBe(true)
   })
 
-  it('is false when status is ENDED but finalResults is false', () => {
-    const e: Election = { ...base, status: 'ENDED', finalResults: false }
-    expect(hasResults(e)).toBe(false)
+  it('is false when status is ENDED (results still computing)', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('ENDED')] }
+    expect(hasResults(p)).toBe(false)
   })
 
-  it('is false when status is READY even with finalResults true', () => {
-    const e: Election = { ...base, status: 'READY', finalResults: true }
-    expect(hasResults(e)).toBe(false)
+  it('is false when mixed ENDED+RESULTS (ENDED status)', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('ENDED'), q('RESULTS')] }
+    expect(hasResults(p)).toBe(false)
   })
 
-  it('is false when status is PAUSED', () => {
-    const e: Election = { ...base, status: 'PAUSED', finalResults: true }
-    expect(hasResults(e)).toBe(false)
+  it('is false when status is ONGOING', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q('ONGOING')] }
+    expect(hasResults(p)).toBe(false)
+  })
+})
+
+describe('computeProcessStatus', () => {
+  it('returns PROCESS_UNKNOWN for an empty question list', () => {
+    expect(computeProcessStatus([])).toBe('PROCESS_UNKNOWN')
   })
 
-  it('is false when status is CANCELED', () => {
-    const e: Election = { ...base, status: 'CANCELED', finalResults: true }
-    expect(hasResults(e)).toBe(false)
+  it('returns ONGOING when any question is ONGOING', () => {
+    expect(computeProcessStatus([q('ONGOING'), q('ENDED')])).toBe('ONGOING')
+    expect(computeProcessStatus([q('RESULTS'), q('ONGOING'), q('PAUSED')])).toBe('ONGOING')
+  })
+
+  it('returns ENDED when all questions are ENDED or RESULTS (results still computing)', () => {
+    expect(computeProcessStatus([q('ENDED'), q('RESULTS')])).toBe('ENDED')
+    expect(computeProcessStatus([q('RESULTS'), q('ENDED'), q('ENDED')])).toBe('ENDED')
+  })
+
+  it('returns RESULTS when all questions are RESULTS', () => {
+    expect(computeProcessStatus([q('RESULTS'), q('RESULTS')])).toBe('RESULTS')
+  })
+
+  it('returns the shared status when all questions agree', () => {
+    expect(computeProcessStatus([q('PAUSED'), q('PAUSED')])).toBe('PAUSED')
+    expect(computeProcessStatus([q('CANCELED'), q('CANCELED')])).toBe('CANCELED')
+    expect(computeProcessStatus([q('UPCOMING'), q('UPCOMING')])).toBe('UPCOMING')
+    expect(computeProcessStatus([q('ENDED'), q('ENDED')])).toBe('ENDED')
+    expect(computeProcessStatus([q('ONGOING')])).toBe('ONGOING')
+  })
+
+  it('returns PROCESS_UNKNOWN for an unresolvable mixed state', () => {
+    expect(computeProcessStatus([q('PAUSED'), q('ENDED')])).toBe('PROCESS_UNKNOWN')
+    expect(computeProcessStatus([q('CANCELED'), q('PAUSED')])).toBe('PROCESS_UNKNOWN')
+    expect(computeProcessStatus([q('UPCOMING'), q('PAUSED')])).toBe('PROCESS_UNKNOWN')
   })
 })

@@ -1,6 +1,6 @@
-import type { Election, ElectionStatus } from '@vocdoni/api-types'
+import type { QuestionStatus, VotingProcessResponse } from '@vocdoni/api-types'
 
-export type ElectionLike = Election | Record<string, any>
+export type ElectionLike = VotingProcessResponse | Record<string, any>
 
 const isObject = (value: unknown): value is Record<string, any> => typeof value === 'object' && value !== null
 
@@ -14,7 +14,7 @@ export const getElectionField = (election: ElectionLike | null | undefined, path
 
 export const getElectionTitle = (election: ElectionLike | null | undefined): string => {
   if (!election) return ''
-  const title = (election as Election).title
+  const title = (election as VotingProcessResponse).title
   if (!title) return (election as any).id ?? ''
   if (typeof title === 'string') return title
   return title.default ?? Object.values(title)[0] ?? (election as any).id ?? ''
@@ -22,15 +22,20 @@ export const getElectionTitle = (election: ElectionLike | null | undefined): str
 
 export const getElectionDescription = (election: ElectionLike | null | undefined): string | undefined => {
   if (!election) return undefined
-  const desc = (election as Election).description
+  const desc = (election as VotingProcessResponse).description
   if (!desc) return undefined
   if (typeof desc === 'string') return desc
   return desc.default ?? Object.values(desc)[0]
 }
 
-export const getElectionStatus = (election: ElectionLike | null | undefined): ElectionStatus | undefined => {
+/**
+ * Returns the derived process status. For a {@link VotingProcessResponse} this is
+ * `undefined` because status is computed from questions (use the `status` field from
+ * `useElection()` instead). Kept for backward-compat with `ElectionLike` usage.
+ */
+export const getElectionStatus = (election: ElectionLike | null | undefined): QuestionStatus | undefined => {
   if (!election) return undefined
-  return (election as Election).status
+  return (election as any).status as QuestionStatus | undefined
 }
 
 export const getElectionDate = (

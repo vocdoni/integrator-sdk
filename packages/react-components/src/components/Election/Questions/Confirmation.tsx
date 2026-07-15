@@ -1,5 +1,5 @@
-import type { Election } from '@vocdoni/api-types'
-import { BallotType, inferBallotType } from '@vocdoni/ballot'
+import type { VotingProcessResponse } from '@vocdoni/api-types'
+import { BallotType, inferQuestionBallotType } from '@vocdoni/ballot'
 import { FieldValues } from 'react-hook-form'
 import { useComponents } from '../../context/useComponents'
 import { useConfirm } from '../../../confirm/useConfirm'
@@ -8,7 +8,7 @@ import { resolveTitle } from '../../../election/normalized'
 
 export type QuestionsConfirmationProps = {
   answers: FieldValues
-  election: Election
+  election: VotingProcessResponse
 }
 
 export const QuestionsConfirmation = ({ answers, election }: QuestionsConfirmationProps) => {
@@ -16,15 +16,11 @@ export const QuestionsConfirmation = ({ answers, election }: QuestionsConfirmati
   const { proceed, cancel } = useConfirm()
   const t = useReactComponentsLocalize()
 
-  // Single-choice fields (including every question of a multi-question election) hold
-  // one value string; approval/multichoice hold an array of value strings.
-  const isSingleChoice = inferBallotType(election) === BallotType.SingleChoice
-
   const answersView = election.questions.map((question, index) => {
     const raw = answers[index.toString()]
+    const isSingleChoice = inferQuestionBallotType(question) === BallotType.SingleChoice
 
-    // Resolve each selected choice VALUE to its title (value-based, never positional).
-    // A value with no matching choice is an abstain sentinel (multichoice only).
+    // Resolve each selected choice VALUE to its title.
     const titleForValue = (value: number) => {
       const choice = question.choices.find((c) => c.value === value)
       return choice ? resolveTitle(choice.title) : t('vote.abstain')

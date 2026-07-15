@@ -1,4 +1,4 @@
-import type { Election } from '@vocdoni/api-types'
+import type { BallotProtocol, Election } from '@vocdoni/api-types'
 import { BallotType } from './types.js'
 
 /**
@@ -47,5 +47,20 @@ export function inferBallotType(input: Pick<Election, 'questions' | 'voteType'>)
   }
 
   // Rule 3c: Otherwise → multichoice
+  return BallotType.MultiChoice
+}
+
+/**
+ * Infer the ballot type for a single question from its `ballotProtocol`.
+ * Mirrors the {@link inferBallotType} decision tree for the per-question model.
+ */
+export function inferQuestionBallotType(question: { ballotProtocol?: BallotProtocol }): BallotType {
+  const bp = question.ballotProtocol
+  if (!bp) return BallotType.SingleChoice
+  if (bp.maxValue === 0) {
+    return bp.costExponent === 2 ? BallotType.Quadratic : BallotType.Budget
+  }
+  if (bp.maxCount === 1) return BallotType.SingleChoice
+  if (bp.maxValue === 1 && !bp.uniqueValues) return BallotType.Approval
   return BallotType.MultiChoice
 }

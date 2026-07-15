@@ -1,5 +1,4 @@
-import type { Election, Question } from '@vocdoni/api-types'
-import { decodeResults } from '@vocdoni/ballot'
+import { decodeQuestionResults } from '@vocdoni/ballot'
 import { format } from 'date-fns'
 import { ComponentPropsWithoutRef } from 'react'
 import { useComponents } from '../context/useComponents'
@@ -15,14 +14,20 @@ export type ElectionResultsProps = ComponentPropsWithoutRef<'div'> & {
 }
 
 export const ElectionResults = ({ forceRender, ...rest }: ElectionResultsProps) => {
-  const { election } = useElection()
+  const { election, status, results } = useElection()
   const localize = useReactComponentsLocalize()
   const { ElectionResults: Slot } = useComponents()
 
-  if (!election || election.status === 'CANCELED') return null
+  if (!election || status === 'CANCELED') return null
 
-  // Secret until the end: show placeholder text unless forceRender or results are final
-  if (election.electionType.secretUntilTheEnd && !election.finalResults && !forceRender) {
+  // Secret-until-the-end: show placeholder if any question is still secret
+  // and its results are not yet final.
+  const anySecretNotFinal = election.questions.some((q, i) => {
+    const qResults = results?.questions[i]
+    return q.secretUntilTheEnd && !qResults?.finalResults && !forceRender
+  })
+
+  if (anySecretNotFinal) {
     const endDate = election.endDate ? new Date(election.endDate) : null
     return (
       <Slot
@@ -34,19 +39,14 @@ export const ElectionResults = ({ forceRender, ...rest }: ElectionResultsProps) 
     )
   }
 
-  // Decode the raw string[][] histogram into per-choice tallies. `decodeResults` is
-  // type-aware (single-choice / approval / multichoice / budget / quadratic) and, for
-  // multichoice, appends a unified abstain bucket — so we render every ballot type
-  // through one shape instead of the old positional read.
-  const decoded = decodeResults(election)
-
-  const questions = election.questions.map((question: Question, qIdx: number) => {
-    const rows = decoded[qIdx] ?? []
+  const questions = election.questions.map((question, qIdx: number) => {
+    const rawResults = results?.questions[qIdx]?.results ?? []
+    const decoded = decodeQuestionResults(question, rawResults)
     const choiceByValue = new Map(question.choices.map((choice) => [choice.value, choice]))
 
     return {
       title: localize('results.title', { title: resolveTitle(question.title) }),
-      choices: rows.map((row) => {
+      choices: decoded.map((row) => {
         if (row.choice === 'abstain') {
           return {
             title: localize('vote.abstain'),

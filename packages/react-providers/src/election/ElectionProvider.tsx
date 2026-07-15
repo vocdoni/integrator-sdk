@@ -1,4 +1,4 @@
-import type { Election } from '@vocdoni/api-types'
+import type { QuestionStatus, VotingProcessResponse, VotingProcessResultsResponse } from '@vocdoni/api-types'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -10,11 +10,16 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { computeProcessStatus } from '@vocdoni/api-client'
 import { useBundleOptional } from '../bundle/BundleProvider'
 import { useClient } from '../client/ClientProvider'
 
 export interface ElectionContextValue {
-  election: Election | null
+  election: VotingProcessResponse | null
+  /** Derived process status from all question statuses. */
+  status: QuestionStatus | null
+  /** Per-question results from `GET /processes/{id}/results`. */
+  results: VotingProcessResultsResponse | null
   loading: boolean
   error: Error | null
 
@@ -26,7 +31,11 @@ export interface ElectionContextValue {
   isInCensus: boolean
   hasVoted: boolean
 
-  vote(choices: number[]): Promise<string>
+  /**
+   * Cast votes for all questions in the process. Accepts per-question encoded
+   * ballots (`number[][]`, one entry per question). Returns the first vote id.
+   */
+  vote(encodedBallots: number[][]): Promise<string>
   voteId: string | null
   isAbleToVote: boolean
   /** Clears the voter session (delegates to the bundle when present). */
@@ -49,30 +58,41 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
     data: election = null,
     isLoading: loading,
     error,
-  } = useQuery<Election, Error>({
+  } = useQuery<VotingProcessResponse, Error>({
     queryKey: ['election', id],
     queryFn: () => client.elections.get(id),
     enabled: !!id,
   })
 
-  // The process now carries its own chainId; fall back to the bundle for
-  // back-compat (and for processes fetched before the merge).
-  const chainId = election?.chainId ?? bundle?.chainId ?? null
+  const { data: results = null } = useQuery<VotingProcessResultsResponse, Error>({
+    queryKey: ['election-results', id],
+    queryFn: () => client.elections.getResults(id),
+    enabled: !!id && !!election,
+  })
+
+  const chainId = bundle?.chainId ?? null
+
+  const status: QuestionStatus | null = election
+    ? computeProcessStatus(election.questions)
+    : null
 
   const [voteId, setVoteId] = useState<string | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
   const [isInCensus, setIsInCensus] = useState(false)
 
   // Resolve census membership for this election once the bundle is connected.
+  // CSP endpoints are keyed by the vochain id (question.upstreamId).
   useEffect(() => {
     if (!bundle?.connected || !election) {
       setIsInCensus(false)
       return
     }
+    const upstreamId = election.questions[0]?.upstreamId
+    if (!upstreamId) return
+
     let cancelled = false
-    // CSP endpoints are keyed by the vochain id (`address`).
     bundle
-      .check(election.address)
+      .check(upstreamId)
       .then((res) => {
         if (cancelled) return
         setIsInCensus(res.belongs)
@@ -84,40 +104,43 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
     return () => {
       cancelled = true
     }
-    // bundle.check identity changes with the auth token; connected + election id are the real triggers
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bundle?.connected, election?.id])
 
   const vote = useCallback(
-    async (choices: number[]): Promise<string> => {
+    async (encodedBallots: number[][]): Promise<string> => {
       if (!election) throw new Error('Election not loaded')
       if (!bundle?.connected) throw new Error('Voter is not authenticated for this bundle')
       if (!chainId) {
         throw new Error('Missing chainId — the bundle info did not provide one; cannot cast a vote')
       }
 
-      // CSP + vote envelope use the vochain id (`address`), not the Mongo id.
-      const processId = election.address
+      let firstVoteId: string | null = null
 
-      // Per-vote ephemeral identity; the CSP signs its address.
-      const signer = new EphemeralSigner()
-      const { signature, weight } = await bundle.sign(processId, signer.address)
+      for (const [i, question] of election.questions.entries()) {
+        const processId = question.upstreamId
+        if (!processId) throw new Error(`Question ${i} has no upstreamId; process may not be published yet`)
 
-      const votingClient = new VotingClient({ client })
-      const jobId = await votingClient.vote({
-        processId,
-        choices,
-        chainId,
-        signer,
-        cspSignature: signature,
-        cspWeight: weight,
-        encryptionKeys: election.encryptionPublicKeys,
-      })
+        const signer = new EphemeralSigner()
+        const { signature, weight } = await bundle.sign(processId, signer.address)
 
-      // The relay is async — poll the job for the resulting nullifier.
-      const job = await client.jobs.waitFor(jobId)
-      const resultVoteId = job.result?.voteID ?? jobId
+        const votingClient = new VotingClient({ client })
+        const jobId = await votingClient.vote({
+          processId,
+          choices: encodedBallots[i] ?? [],
+          chainId,
+          signer,
+          cspSignature: signature,
+          cspWeight: weight,
+          encryptionKeys: undefined,
+        })
 
+        const job = await client.jobs.waitFor(jobId)
+        const resultVoteId = job.result?.voteID ?? jobId
+        if (firstVoteId === null) firstVoteId = resultVoteId
+      }
+
+      const resultVoteId = firstVoteId ?? ''
       setVoteId(resultVoteId)
       setHasVoted(true)
       return resultVoteId
@@ -138,6 +161,8 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
   const value = useMemo<ElectionContextValue>(
     () => ({
       election,
+      status,
+      results,
       loading,
       error: error ?? null,
       connected,
@@ -149,7 +174,7 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
       isAbleToVote: connected && isInCensus && !hasVoted,
       clearVoter,
     }),
-    [election, loading, error, connected, weight, isInCensus, hasVoted, vote, voteId, clearVoter],
+    [election, status, results, loading, error, connected, weight, isInCensus, hasVoted, vote, voteId, clearVoter],
   )
 
   return <ElectionContext.Provider value={value}>{children}</ElectionContext.Provider>

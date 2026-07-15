@@ -1,9 +1,11 @@
+import type { QuestionStatus } from '@vocdoni/api-types'
 import { screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { makeElection, renderWithComponents } from '../../test-utils'
+import { makeProcess, renderWithComponents } from '../../test-utils'
 
 const state = vi.hoisted(() => ({
-  election: null as ReturnType<typeof makeElection> | null,
+  election: null as ReturnType<typeof makeProcess> | null,
+  status: 'ONGOING' as QuestionStatus | null,
   isAbleToVote: false,
   hasVoted: false,
 }))
@@ -19,11 +21,11 @@ const Slot = ({ disabled, label }: any) => (
 const slots = { components: { VoteButton: Slot } }
 
 function setVoter(over: Partial<typeof state>) {
-  Object.assign(state, { election: makeElection(), isAbleToVote: false, hasVoted: false }, over)
+  Object.assign(state, { election: makeProcess(), status: 'ONGOING', isAbleToVote: false, hasVoted: false }, over)
 }
 
 describe('VoteButton', () => {
-  it('is enabled and labelled "Vote" when the voter can vote on a READY election', () => {
+  it('is enabled and labelled "Vote" when the voter can vote on an ONGOING election', () => {
     setVoter({ isAbleToVote: true })
     renderWithComponents(<VoteButton />, slots)
     const btn = screen.getByTestId('vote')
@@ -43,8 +45,8 @@ describe('VoteButton', () => {
     expect(screen.getByTestId('vote')).toBeDisabled()
   })
 
-  it('is disabled when the election is not READY', () => {
-    setVoter({ election: makeElection({ status: 'PAUSED' }), isAbleToVote: true })
+  it('is disabled when the election is not ONGOING', () => {
+    setVoter({ status: 'PAUSED', isAbleToVote: true })
     renderWithComponents(<VoteButton />, slots)
     expect(screen.getByTestId('vote')).toBeDisabled()
   })

@@ -25,8 +25,11 @@ export function ActionsProvider({ children }: ActionsProviderProps) {
   const mutation = useMutation<void, Error, 'ready' | 'paused' | 'ended' | 'canceled'>({
     mutationFn: async (status) => {
       if (!election) throw new Error('Election not loaded')
-      // Status changes are async SaaS jobs; wait for the on-chain tx to complete.
-      await client.elections.setStatusAndWait(election.id, { status })
+      const { jobId } = await client.elections.bulkSetQuestionStatus(election.id, {
+        status,
+        questions: election.questions.map((q) => ({ id: q.id })),
+      })
+      await client.jobs.waitFor(jobId)
     },
   })
 

@@ -1,4 +1,11 @@
-import type { Election } from '@vocdoni/api-types'
+import type {
+  BallotProtocol,
+  Election,
+  QuestionStatus,
+  VotingProcessQuestion,
+  VotingProcessResponse,
+  VotingProcessResultsResponse,
+} from '@vocdoni/api-types'
 import { render, type RenderOptions } from '@testing-library/react'
 import i18next from 'i18next'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
@@ -46,6 +53,108 @@ export function renderWithComponents(
     </I18nextProvider>
   )
   return render(ui, { wrapper: Wrapper, ...options })
+}
+
+const DEFAULT_BALLOT_PROTOCOL: BallotProtocol = {
+  maxCount: 1,
+  maxValue: 1,
+  maxVoteOverwrites: 0,
+  maxTotalCost: 0,
+  costExponent: 1,
+  uniqueValues: false,
+  costFromWeight: false,
+}
+
+type MakeProcessQuestionInput = {
+  title?: string
+  choices?: Array<{ title: string; value: number }>
+  ballotProtocol?: Partial<BallotProtocol>
+  status?: QuestionStatus
+  secretUntilTheEnd?: boolean
+  upstreamId?: string
+}
+
+type MakeProcessOptions = {
+  id?: string
+  title?: string
+  startDate?: string
+  endDate?: string
+  published?: boolean
+  census?: Record<string, unknown>
+  questions?: MakeProcessQuestionInput[]
+  /** Shortcut: apply the same ballotProtocol to every question (maps old voteType field names). */
+  voteType?: {
+    maxCount?: number
+    maxValue?: number
+    maxVoteOverwrites?: number
+    maxTotalCost?: number
+    costExponent?: number
+    uniqueChoices?: boolean
+    costFromWeight?: boolean
+  }
+  /** Status assigned to every question (default: 'ONGOING'). */
+  status?: QuestionStatus
+  /** Maps secretUntilTheEnd to every question. */
+  electionType?: { secretUntilTheEnd?: boolean }
+}
+
+/** Builds a {@link VotingProcessResponse} with per-question ballotProtocol. */
+export function makeProcess(opts: MakeProcessOptions = {}): VotingProcessResponse {
+  const { voteType, status = 'ONGOING', electionType, questions: qInputs, ...rest } = opts
+
+  const bpOverrides: Partial<BallotProtocol> = voteType
+    ? {
+        maxCount: voteType.maxCount ?? 1,
+        maxValue: voteType.maxValue ?? 1,
+        maxVoteOverwrites: voteType.maxVoteOverwrites ?? 0,
+        maxTotalCost: voteType.maxTotalCost ?? 0,
+        costExponent: voteType.costExponent ?? 1,
+        uniqueValues: voteType.uniqueChoices ?? false,
+        costFromWeight: voteType.costFromWeight ?? false,
+      }
+    : {}
+
+  const questions: VotingProcessQuestion[] = (qInputs ?? []).map((q, i) => ({
+    id: `q-${i}`,
+    parentProcessId: opts.id ?? 'proc-1',
+    upstreamId: q.upstreamId ?? `upstream-${i}`,
+    title: { default: q.title ?? `Question ${i + 1}` },
+    choices: (q.choices ?? []).map((c) => ({ title: { default: c.title }, value: c.value })),
+    ballotProtocol: { ...DEFAULT_BALLOT_PROTOCOL, ...bpOverrides, ...(q.ballotProtocol ?? {}) },
+    type: 'singleChoice',
+    secretUntilTheEnd: q.secretUntilTheEnd ?? electionType?.secretUntilTheEnd ?? false,
+    status: q.status ?? status,
+  }))
+
+  return {
+    id: rest.id ?? 'proc-1',
+    orgAddress: [],
+    title: { default: rest.title ?? 'Test Process' },
+    startDate: rest.startDate ?? '2024-01-01T00:00:00Z',
+    endDate: rest.endDate ?? '2024-12-31T23:59:59Z',
+    published: rest.published ?? true,
+    census: rest.census ?? {},
+    questions,
+  }
+}
+
+/** Builds a {@link VotingProcessResultsResponse} for use in Results tests. */
+export function makeResults(
+  questionResults: Array<{ results?: string[][]; finalResults?: boolean }> = [],
+): VotingProcessResultsResponse {
+  return {
+    id: 'proc-1',
+    questions: questionResults.map((qr, i) => ({
+      questionId: `q-${i}`,
+      upstreamId: `upstream-${i}`,
+      status: 'RESULTS' as QuestionStatus,
+      voteCount: 0,
+      startDate: '2024-01-01T00:00:00Z',
+      endDate: '2024-12-31T23:59:59Z',
+      finalResults: qr.finalResults ?? true,
+      results: qr.results ?? [],
+    })),
+  }
 }
 
 /** Builds a flat {@link Election} with sane defaults; override any field per test. */

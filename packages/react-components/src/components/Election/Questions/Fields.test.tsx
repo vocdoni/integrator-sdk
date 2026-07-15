@@ -1,31 +1,24 @@
+import { questionSelectionRange } from '@vocdoni/ballot'
 import type { ReactNode } from 'react'
 import { FormProvider, useForm } from 'react-hook-form'
 import { describe, expect, it, vi } from 'vitest'
-import { makeElection, renderWithComponents } from '../../../test-utils'
+import { makeProcess, renderWithComponents } from '../../../test-utils'
 
-// FieldSwitcher / ElectionQuestion read the election from the providers; give them
-// a controllable one and a voter who is able to vote.
-const state = vi.hoisted(() => ({ election: null as ReturnType<typeof makeElection> | null }))
+const state = vi.hoisted(() => ({
+  election: null as ReturnType<typeof makeProcess> | null,
+  status: 'ONGOING' as string,
+  isAbleToVote: true,
+}))
 vi.mock('@vocdoni/react-providers', () => ({
-  useElection: () => ({ election: state.election, isAbleToVote: true }),
+  useElection: () => ({ election: state.election, status: state.status, isAbleToVote: state.isAbleToVote }),
 }))
 
-import { ElectionQuestion, multiChoiceSelectionRange } from './Fields'
+import { ElectionQuestion } from './Fields'
 
 const FormHost = ({ children }: { children: ReactNode }) => {
   const methods = useForm()
   return <FormProvider {...methods}>{children}</FormProvider>
 }
-
-const voteType = (overrides: Record<string, unknown>) => ({
-  maxCount: 1,
-  maxValue: 1,
-  maxVoteOverwrites: 0,
-  costExponent: 1,
-  uniqueChoices: false,
-  costFromWeight: false,
-  ...overrides,
-})
 
 const threeChoices = {
   title: 'Q1',
@@ -36,10 +29,7 @@ const threeChoices = {
   ],
 }
 
-// Render one question and capture (a) the selectionMode the ElectionQuestion slot
-// receives and (b) the control type each choice renders with. The switcher picks
-// radios for single-choice and checkboxes for approval/multichoice.
-function renderQuestion(election: ReturnType<typeof makeElection>) {
+function renderQuestion(election: ReturnType<typeof makeProcess>) {
   state.election = election
   const captured: { selectionMode?: string; controls: string[] } = { controls: [] }
   renderWithComponents(
@@ -66,16 +56,16 @@ function renderQuestion(election: ReturnType<typeof makeElection>) {
 // on the distinct control type rather than the exact array length.
 const onlyControl = (controls: string[]) => [...new Set(controls)]
 
-describe('ElectionQuestion field switching (via inferBallotType)', () => {
+describe('ElectionQuestion field switching (via inferQuestionBallotType)', () => {
   it('single-choice: radios, single selection mode', () => {
-    const captured = renderQuestion(makeElection({ questions: [threeChoices] }))
+    const captured = renderQuestion(makeProcess({ questions: [threeChoices] }))
     expect(captured.selectionMode).toBe('single')
     expect(onlyControl(captured.controls)).toEqual(['radio'])
   })
 
   it('approval (maxValue 1, repeatable): checkboxes, multiple selection mode', () => {
     const captured = renderQuestion(
-      makeElection({ questions: [threeChoices], voteType: voteType({ maxCount: 3, maxValue: 1 }) }),
+      makeProcess({ questions: [threeChoices], voteType: { maxCount: 3, maxValue: 1 } }),
     )
     expect(captured.selectionMode).toBe('multiple')
     expect(onlyControl(captured.controls)).toEqual(['checkbox'])
@@ -83,10 +73,7 @@ describe('ElectionQuestion field switching (via inferBallotType)', () => {
 
   it('multichoice (maxValue > 1, unique): checkboxes, multiple selection mode', () => {
     const captured = renderQuestion(
-      makeElection({
-        questions: [threeChoices],
-        voteType: voteType({ maxCount: 3, maxValue: 2, uniqueChoices: true }),
-      }),
+      makeProcess({ questions: [threeChoices], voteType: { maxCount: 3, maxValue: 2, uniqueChoices: true } }),
     )
     expect(captured.selectionMode).toBe('multiple')
     expect(onlyControl(captured.controls)).toEqual(['checkbox'])
@@ -96,32 +83,29 @@ describe('ElectionQuestion field switching (via inferBallotType)', () => {
     // maxValue 0 → budget/quadratic; they fall through to the SingleChoice widget
     // (radios), so selectionMode must stay 'single' to match what is rendered.
     const captured = renderQuestion(
-      makeElection({
-        questions: [threeChoices],
-        voteType: voteType({ maxCount: 3, maxValue: 0, costExponent: 1 }),
-      }),
+      makeProcess({ questions: [threeChoices], voteType: { maxCount: 3, maxValue: 0, costExponent: 1 } }),
     )
     expect(captured.selectionMode).toBe('single')
     expect(onlyControl(captured.controls)).toEqual(['radio'])
   })
 })
 
-describe('multiChoiceSelectionRange', () => {
+describe('questionSelectionRange', () => {
   it('requires exactly maxCount when abstain is not reserved', () => {
-    // uniqueChoices needs maxValue >= 5 here (3 - 1 + 3); maxValue 2 does not reserve.
-    const election = makeElection({
+    // uniqueChoices needs maxValue >= (numChoices); maxValue 2 does not reserve for 3 choices.
+    const question = makeProcess({
       questions: [threeChoices],
-      voteType: voteType({ maxCount: 3, maxValue: 2, uniqueChoices: true }),
-    })
-    expect(multiChoiceSelectionRange(election)).toEqual({ min: 3, max: 3 })
+      voteType: { maxCount: 3, maxValue: 2, uniqueChoices: true },
+    }).questions[0]
+    expect(questionSelectionRange(question)).toEqual({ min: 3, max: 3 })
   })
 
   it('allows 1..maxCount when abstain is reserved (partial selection castable)', () => {
     // repeatable multichoice, numChoices 3 → needed maxValue 3; maxValue 3 reserves.
-    const election = makeElection({
+    const question = makeProcess({
       questions: [threeChoices],
-      voteType: voteType({ maxCount: 3, maxValue: 3, uniqueChoices: false }),
-    })
-    expect(multiChoiceSelectionRange(election)).toEqual({ min: 1, max: 3 })
+      voteType: { maxCount: 3, maxValue: 3, uniqueChoices: false },
+    }).questions[0]
+    expect(questionSelectionRange(question)).toEqual({ min: 1, max: 3 })
   })
 })

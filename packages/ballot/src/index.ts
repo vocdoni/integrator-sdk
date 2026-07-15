@@ -10,8 +10,8 @@ export type {
 export { BallotType } from './types.js'
 
 // Re-export functions
-export { inferBallotType } from './infer.js'
-export { encodeBallot } from './encode.js'
-export { decodeResults } from './decode.js'
+export { inferBallotType, inferQuestionBallotType } from './infer.js'
+export { encodeBallot, encodeQuestionBallot } from './encode.js'
+export { decodeResults, decodeQuestionResults } from './decode.js'
 export { validateSelections } from './validate.js'
-export { multichoiceReservesAbstain } from './abstain.js'
+export { multichoiceReservesAbstain, questionReservesAbstain, questionSelectionRange } from './abstain.js'

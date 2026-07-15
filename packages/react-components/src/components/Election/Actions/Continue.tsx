@@ -5,7 +5,7 @@ import { useActions, useElection } from '@vocdoni/react-providers'
 
 export const ActionContinue = (props: ComponentPropsWithoutRef<'button'>) => {
   const localize = useReactComponentsLocalize()
-  const { election } = useElection()
+  const { election, status } = useElection()
   const { ActionContinue: Slot } = useComponents()
   const { resume, loading } = useActions()
 
@@ -18,7 +18,7 @@ export const ActionContinue = (props: ComponentPropsWithoutRef<'button'>) => {
       {...props}
       loading={loading}
       onClick={resume}
-      disabled={loading || election.status !== 'PAUSED'}
+      disabled={loading || status !== 'PAUSED'}
       label={localize('actions.continue')}
     />
   )

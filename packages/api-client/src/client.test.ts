@@ -4,7 +4,7 @@ import {
   mockAuthToken,
   mockElection,
   mockOrganization,
-  MOCK_PROCESS_ADDRESS,
+  mockProcess,
 } from '../../../mocks/handlers'
 import { VocdoniApiClient } from './client'
 
@@ -18,14 +18,12 @@ describe('VocdoniApiClient', () => {
   })
 
   describe('elections.get', () => {
-    it('returns election data for the given id', async () => {
-      const election = await client.elections.get('abc123')
-      expect(election.id).toBe('abc123')
-      expect(election.title).toBe(mockElection.title)
-      expect(election.status).toBe('READY')
-      // The merged process info surfaces the vochain id + chain id.
-      expect(election.address).toBe(MOCK_PROCESS_ADDRESS)
-      expect(election.chainId).toBe('test')
+    it('returns process data for the given id', async () => {
+      const process = await client.elections.get('abc123')
+      expect(process.id).toBe('abc123')
+      expect(process.title).toEqual(mockProcess.title)
+      expect(process.published).toBe(true)
+      expect(process.questions).toHaveLength(mockProcess.questions.length)
     })
   })
 
@@ -50,9 +48,9 @@ describe('VocdoniApiClient', () => {
       let capturedAuth: string | null = null
 
       server.use(
-        http.get(`${BASE_URL}/process/:id`, ({ request }) => {
+        http.get(`${BASE_URL}/processes/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
-          return HttpResponse.json({ ...mockElection, id: 'abc123', address: MOCK_PROCESS_ADDRESS })
+          return HttpResponse.json({ ...mockProcess, id: 'abc123' })
         }),
       )
 
@@ -69,9 +67,9 @@ describe('VocdoniApiClient', () => {
       let capturedAuth: string | null = null
 
       server.use(
-        http.get(`${BASE_URL}/process/:id`, ({ request }) => {
+        http.get(`${BASE_URL}/processes/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
-          return HttpResponse.json({ ...mockElection, id: 'abc123', address: MOCK_PROCESS_ADDRESS })
+          return HttpResponse.json({ ...mockProcess, id: 'abc123' })
         }),
       )
 
@@ -88,9 +86,9 @@ describe('VocdoniApiClient', () => {
       let capturedAuth: string | null = null
 
       server.use(
-        http.get(`${BASE_URL}/process/:id`, ({ request }) => {
+        http.get(`${BASE_URL}/processes/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
-          return HttpResponse.json({ ...mockElection, id: 'abc123', address: MOCK_PROCESS_ADDRESS })
+          return HttpResponse.json({ ...mockProcess, id: 'abc123' })
         }),
       )
 
@@ -107,9 +105,9 @@ describe('VocdoniApiClient', () => {
       let capturedAuth: string | null = null
 
       server.use(
-        http.get(`${BASE_URL}/process/:id`, ({ request }) => {
+        http.get(`${BASE_URL}/processes/:id`, ({ request }) => {
           capturedAuth = request.headers.get('Authorization')
-          return HttpResponse.json({ ...mockElection, id: 'abc123', address: MOCK_PROCESS_ADDRESS })
+          return HttpResponse.json({ ...mockProcess, id: 'abc123' })
         }),
       )
 

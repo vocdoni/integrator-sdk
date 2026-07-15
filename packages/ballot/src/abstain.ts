@@ -1,6 +1,6 @@
-import type { Election, VoteType } from '@vocdoni/api-types'
+import type { BallotProtocol, Choice, Election, VoteType } from '@vocdoni/api-types'
 import { BallotType } from './types.js'
-import { inferBallotType } from './infer.js'
+import { inferBallotType, inferQuestionBallotType } from './infer.js'
 
 /**
  * Lowest `maxValue` a multichoice election must reserve so that a partial selection
@@ -30,4 +30,26 @@ export function multichoiceReservesAbstain(input: Pick<Election, 'questions' | '
   if (inferBallotType(input) !== BallotType.MultiChoice) return false
   const numChoices = input.questions[0]?.choices.length ?? 0
   return input.voteType.maxValue >= requiredAbstainMaxValue(numChoices, input.voteType)
+}
+
+/** True when a per-question multichoice ballot reserves abstain sentinels. */
+export function questionReservesAbstain(question: { ballotProtocol?: BallotProtocol; choices: Choice[] }): boolean {
+  if (inferQuestionBallotType(question) !== BallotType.MultiChoice) return false
+  const bp = question.ballotProtocol
+  if (!bp) return false
+  const neededMaxValue = requiredAbstainMaxValue(question.choices.length, {
+    maxCount: bp.maxCount,
+    uniqueChoices: bp.uniqueValues,
+  })
+  return bp.maxValue >= neededMaxValue
+}
+
+/** Selection range for a per-question multichoice ballot. */
+export function questionSelectionRange(question: {
+  ballotProtocol?: BallotProtocol
+  choices: Choice[]
+}): { min: number; max: number } {
+  const max = question.ballotProtocol?.maxCount ?? 1
+  const min = questionReservesAbstain(question) ? 1 : max
+  return { min, max }
 }

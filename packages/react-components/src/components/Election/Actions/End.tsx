@@ -9,7 +9,7 @@ import { getElectionTitle } from '../../../election/normalized'
 export const ActionEnd = (props: ComponentPropsWithoutRef<'button'>) => {
   const localize = useReactComponentsLocalize()
   const { confirm } = useConfirm()
-  const { election } = useElection()
+  const { election, status } = useElection()
   const { ActionEnd: Slot } = useComponents()
   const { end, loading } = useActions()
 
@@ -39,7 +39,9 @@ export const ActionEnd = (props: ComponentPropsWithoutRef<'button'>) => {
       onClick={handle}
       disabled={
         loading ||
-        (['ENDED', 'CANCELED', 'UPCOMING'] as (typeof election.status)[]).includes(election.status)
+        status === 'ENDED' ||
+        status === 'CANCELED' ||
+        status === 'UPCOMING'
       }
       label={localize('actions.end')}
     />

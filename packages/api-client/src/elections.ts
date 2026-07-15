@@ -1,26 +1,28 @@
 import type {
   ConsumedAddressRequest,
   ConsumedAddressResponse,
-  CreateProcessRequest,
-  Election,
+  CreateVotingProcessRequest,
+  CreateVotingProcessResponse,
   ElectionListParams,
   ElectionMetadata,
-  ElectionParams,
-  ElectionResults,
   EnqueuedResponse,
-  VotingProcessListResponse,
   LocalizedInput,
   MultiLangString,
+  PublicQuestionResponse,
   PublishProcessResponse,
+  QuestionStatusID,
   RelayVoteRequest,
   RelayVoteResponse,
   SetElectionStatusRequest,
-  UpdateElectionRequest,
+  SetQuestionsStatusRequest,
+  VotingProcessListResponse,
+  VotingProcessResponse,
+  VotingProcessResultsResponse,
+  VotingProcessValidateResponse,
 } from '@vocdoni/api-types'
 import type { UpFetch } from 'up-fetch'
 import { handleError } from './errors'
 import { JobsClient, type WaitForJobOptions } from './jobs'
-import { mapProcessToElection, type ProcessResponse } from './process-mapper'
 
 /** True when a publish response is the async enqueued form (vs. already published). */
 function isEnqueued(res: PublishProcessResponse | EnqueuedResponse): res is EnqueuedResponse {
@@ -37,13 +39,13 @@ function toMultiLang(value: LocalizedInput | undefined): MultiLangString | undef
   return typeof value === 'string' ? { default: value } : value
 }
 
-/** Normalize every human-facing string in an election draft to a language map. */
-function normalizeElectionParams(params: ElectionParams): ElectionParams {
+/** Normalize every human-facing string in a voting process draft to a language map. */
+function normalizeVotingProcessRequest(req: CreateVotingProcessRequest): CreateVotingProcessRequest {
   return {
-    ...params,
-    title: toMultiLang(params.title)!,
-    description: toMultiLang(params.description),
-    questions: params.questions?.map((q) => ({
+    ...req,
+    title: toMultiLang(req.title)!,
+    description: toMultiLang(req.description),
+    questions: req.questions?.map((q) => ({
       ...q,
       title: toMultiLang(q.title)!,
       description: toMultiLang(q.description),
@@ -66,18 +68,17 @@ export class ElectionsClient {
   }
 
   /**
-   * Fetch a process by its Mongo ObjectID. `GET /process/{id}` returns the merged
-   * info (vochain `address`, `chainId`, census, nested `electionParams`); we map
-   * it onto the flat {@link Election}. The vochain id lives on `election.address`.
+   * Fetch a voting process by its Mongo ObjectID from `GET /processes/{id}`.
+   * Returns the flat multi-question shape ({@link VotingProcessResponse}) with
+   * per-question ballot protocols. The vochain id per question lives on
+   * `questions[i].upstreamId`.
    */
-  async get(id: string): Promise<Election> {
-    return this.fetch<ProcessResponse>(`/process/${id}`)
-      .then(mapProcessToElection)
-      .catch(handleError)
+  async get(id: string): Promise<VotingProcessResponse> {
+    return this.fetch<VotingProcessResponse>(`/processes/${id}`).catch(handleError)
   }
 
-  async getResults(id: string): Promise<ElectionResults> {
-    return this.fetch<ElectionResults>(`/process/${id}/results`).catch(handleError)
+  async getResults(id: string): Promise<VotingProcessResultsResponse> {
+    return this.fetch<VotingProcessResultsResponse>(`/processes/${id}/results`).catch(handleError)
   }
 
   async getMetadata(id: string): Promise<ElectionMetadata> {
@@ -89,27 +90,28 @@ export class ElectionsClient {
   }
 
   /**
-   * Create a process draft. Returns the draft id (Mongo ObjectID hex). Election
-   * text (title/description, question and choice titles) may be a plain string or
-   * a {@link MultiLangString}; plain strings are normalized to `{ default }`.
+   * Create a process draft via `POST /processes`. Returns the draft id (Mongo
+   * ObjectID hex). Each question carries its own `ballotProtocol`; title,
+   * description, and choice titles may be plain strings (normalized to
+   * `{ default }`) or explicit {@link MultiLangString} maps.
    */
-  async create(draft: CreateProcessRequest): Promise<string> {
-    const body = draft.electionParams
-      ? { ...draft, electionParams: normalizeElectionParams(draft.electionParams) }
-      : draft
-    return this.fetch<string>('/process', {
+  async create(draft: CreateVotingProcessRequest): Promise<string> {
+    const body = normalizeVotingProcessRequest(draft)
+    return this.fetch<CreateVotingProcessResponse>('/processes', {
       method: 'POST',
       body,
-    }).catch(handleError)
+    })
+      .then((res) => res.processId)
+      .catch(handleError)
   }
 
-  async update(draftId: string, data: UpdateElectionRequest): Promise<Election> {
-    const body: UpdateElectionRequest = {
-      ...data,
-      title: toMultiLang(data.title),
-      description: toMultiLang(data.description),
-    }
-    return this.fetch<Election>(`/process/${draftId}`, {
+  /**
+   * Update a draft process via `PUT /processes/{id}`. Takes the same flat
+   * {@link CreateVotingProcessRequest} shape as `create`. Returns the process id.
+   */
+  async update(draftId: string, data: CreateVotingProcessRequest): Promise<string> {
+    const body = normalizeVotingProcessRequest(data)
+    return this.fetch<string>(`/processes/${draftId}`, {
       method: 'PUT',
       body,
     }).catch(handleError)
@@ -120,12 +122,20 @@ export class ElectionsClient {
   }
 
   /**
+   * Publish-readiness dry-run via `GET /processes/{id}/check`. Returns
+   * `{ valid, errors }` without touching the process.
+   */
+  async validate(id: string): Promise<VotingProcessValidateResponse> {
+    return this.fetch<VotingProcessValidateResponse>(`/processes/${id}/check`).catch(handleError)
+  }
+
+  /**
    * Publish a draft on-chain. Returns the enqueued job (`{ jobId }`) to poll, or
    * the already-published `{ address, status }` if it was published before.
    * Prefer {@link publishAndWait} unless you want to manage polling yourself.
    */
   async publish(draftId: string): Promise<PublishProcessResponse | EnqueuedResponse> {
-    return this.fetch<PublishProcessResponse | EnqueuedResponse>(`/process/${draftId}/publish`, {
+    return this.fetch<PublishProcessResponse | EnqueuedResponse>(`/processes/${draftId}/publish`, {
       method: 'POST',
     }).catch(handleError)
   }
@@ -158,6 +168,36 @@ export class ElectionsClient {
     const { jobId } = await this.setStatus(id, status)
     const job = await this.jobs.waitFor(jobId, opts)
     return { address: job.result?.address ?? '', status: job.result?.status ?? '' }
+  }
+
+  /**
+   * Change the status of a single question in a process.
+   * `PUT /processes/{processId}/questions/{questionId}/status`.
+   */
+  async setQuestionStatus(processId: string, questionId: string, status: string): Promise<EnqueuedResponse> {
+    return this.fetch<EnqueuedResponse>(`/processes/${processId}/questions/${questionId}/status`, {
+      method: 'PUT',
+      body: { status },
+    }).catch(handleError)
+  }
+
+  /**
+   * Bulk-change the status of multiple questions in a process.
+   * `PUT /processes/{processId}/questions/status`.
+   */
+  async bulkSetQuestionStatus(processId: string, req: SetQuestionsStatusRequest): Promise<EnqueuedResponse> {
+    return this.fetch<EnqueuedResponse>(`/processes/${processId}/questions/status`, {
+      method: 'PUT',
+      body: req,
+    }).catch(handleError)
+  }
+
+  /**
+   * Public read of a single question including its synced status and eligibility.
+   * `GET /processes/{processId}/questions/{questionId}`.
+   */
+  async getQuestion(processId: string, questionId: string): Promise<PublicQuestionResponse> {
+    return this.fetch<PublicQuestionResponse>(`/processes/${processId}/questions/${questionId}`).catch(handleError)
   }
 
   /** Consumed-address / sign-info: report the nullifier consumed for a process. */

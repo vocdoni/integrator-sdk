@@ -1,10 +1,10 @@
-import type { ElectionStatus } from '@vocdoni/api-types'
+import type { QuestionStatus } from '@vocdoni/api-types'
 import { format as dformat, formatDistance } from 'date-fns'
 import { ComponentPropsWithoutRef, useSyncExternalStore } from 'react'
 import { useComponents } from '../context/useComponents'
 import { useReactComponentsLocalize } from '../../i18n/localize'
 import { useElection } from '@vocdoni/react-providers'
-import { getElectionDate, getElectionStatus } from '../../election/normalized'
+import { getElectionDate } from '../../election/normalized'
 
 export type ElectionScheduleProps = ComponentPropsWithoutRef<'p'> &
   Record<string, unknown> & {
@@ -28,19 +28,18 @@ export const ElectionSchedule = ({
   showCreatedAt = false,
   ...rest
 }: ElectionScheduleProps) => {
-  const { election } = useElection()
+  const { election, status } = useElection()
   const t = useReactComponentsLocalize()
   const { ElectionSchedule: Slot } = useComponents()
   const isHydrationRender = useIsHydrationRender()
   const startDate = getElectionDate(election, 'startDate')
   const endDate = getElectionDate(election, 'endDate')
-  const status = getElectionStatus(election)
 
   if (!election || !startDate || !endDate || !status) return null
 
   const getRemaining = (now: Date): string => {
-    switch (status as ElectionStatus) {
-      case 'READY':
+    switch (status as QuestionStatus) {
+      case 'ONGOING':
         if (endDate < now) {
           return t('schedule.ended', {
             distance: formatDistance(endDate, now, { addSuffix: true }),
@@ -48,6 +47,7 @@ export const ElectionSchedule = ({
         }
         return formatDistance(endDate, now, { addSuffix: true })
       case 'ENDED':
+      case 'RESULTS':
         return t('schedule.ended', {
           distance: formatDistance(endDate, now, { addSuffix: true }),
         })

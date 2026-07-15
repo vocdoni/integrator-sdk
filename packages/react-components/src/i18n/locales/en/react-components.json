@@ -60,8 +60,10 @@
   "statuses": {
     "canceled": "Canceled",
     "ended": "Ended",
-    "ready": "Ongoing",
+    "ongoing": "Ongoing",
     "paused": "Paused",
+    "process_unknown": "Unknown",
+    "ready": "Ongoing",
     "results": "Results",
     "upcoming": "Upcoming",
     "invalid": "Invalid"

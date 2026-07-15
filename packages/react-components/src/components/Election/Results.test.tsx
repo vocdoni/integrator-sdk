@@ -1,7 +1,12 @@
+import type { QuestionStatus, VotingProcessResultsResponse } from '@vocdoni/api-types'
 import { describe, expect, it, vi } from 'vitest'
-import { makeElection, renderWithComponents } from '../../test-utils'
+import { makeProcess, makeResults, renderWithComponents } from '../../test-utils'
 
-const state = vi.hoisted(() => ({ election: null as ReturnType<typeof makeElection> | null }))
+const state = vi.hoisted(() => ({
+  election: null as ReturnType<typeof makeProcess> | null,
+  status: null as QuestionStatus | null,
+  results: null as VotingProcessResultsResponse | null,
+}))
 vi.mock('@vocdoni/react-providers', () => ({ useElection: () => state }))
 
 import { ElectionResults } from './Results'
@@ -24,7 +29,9 @@ const question = {
 
 describe('ElectionResults', () => {
   it('defaults a missing choice result to zero votes', () => {
-    state.election = makeElection({ questions: [question], results: [['5']] })
+    state.election = makeProcess({ questions: [question] })
+    state.status = 'RESULTS'
+    state.results = makeResults([{ results: [['5']] }])
     renderWithComponents(<ElectionResults />, slots)
 
     const choices = captured.questions[0].choices
@@ -43,23 +50,19 @@ describe('ElectionResults', () => {
         { title: 'C', value: 2 },
       ],
     }
-    state.election = makeElection({
-      voteType: {
-        maxCount: 3,
-        maxValue: 3,
-        maxVoteOverwrites: 0,
-        costExponent: 1,
-        uniqueChoices: false,
-        costFromWeight: false,
-      },
+    state.election = makeProcess({
       questions: [multichoice],
-      // 3 pick-slots; each real choice picked once, the rest abstained (column 3).
+      voteType: { maxCount: 3, maxValue: 3, uniqueChoices: false },
+    })
+    state.status = 'RESULTS'
+    // 3 pick-slots; each real choice picked once, the rest abstained (column 3).
+    state.results = makeResults([{
       results: [
         ['1', '0', '0', '2'],
         ['0', '1', '0', '2'],
         ['0', '0', '1', '2'],
       ],
-    })
+    }])
     renderWithComponents(<ElectionResults />, slots)
 
     const choices = captured.questions[0].choices
@@ -71,18 +74,21 @@ describe('ElectionResults', () => {
   })
 
   it('renders nothing for a canceled election', () => {
-    state.election = makeElection({ status: 'CANCELED' })
+    state.election = makeProcess({ questions: [question] })
+    state.status = 'CANCELED'
+    state.results = null
     const { container } = renderWithComponents(<ElectionResults />, slots)
     expect(container).toBeEmptyDOMElement()
   })
 
   it('shows the secret-until-the-end placeholder before final results', () => {
     captured = undefined
-    state.election = makeElection({
-      electionType: { interruptible: true, secretUntilTheEnd: true, anonymous: false },
-      finalResults: false,
+    state.election = makeProcess({
+      electionType: { secretUntilTheEnd: true },
       questions: [question],
     })
+    state.status = 'ONGOING'
+    state.results = makeResults([{ finalResults: false }])
     renderWithComponents(<ElectionResults />, slots)
 
     expect(captured.secretText).toContain('Secret until the end')
@@ -90,12 +96,12 @@ describe('ElectionResults', () => {
   })
 
   it('forceRender overrides the secret placeholder', () => {
-    state.election = makeElection({
-      electionType: { interruptible: true, secretUntilTheEnd: true, anonymous: false },
-      finalResults: false,
+    state.election = makeProcess({
+      electionType: { secretUntilTheEnd: true },
       questions: [question],
-      results: [['1', '2']],
     })
+    state.status = 'ONGOING'
+    state.results = makeResults([{ finalResults: false, results: [['1', '2']] }])
     renderWithComponents(<ElectionResults forceRender />, slots)
     expect(captured.questions[0].choices).toHaveLength(2)
   })

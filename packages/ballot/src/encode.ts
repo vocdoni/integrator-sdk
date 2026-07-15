@@ -1,6 +1,6 @@
-import type { Election, Question, VoteType } from '@vocdoni/api-types'
+import type { BallotProtocol, Choice, Election, Question, VoteType } from '@vocdoni/api-types'
 import { BallotType, type BallotSelections } from './types.js'
-import { inferBallotType } from './infer.js'
+import { inferBallotType, inferQuestionBallotType } from './infer.js'
 import { normalizeSelections } from './selections.js'
 import { requiredAbstainMaxValue } from './abstain.js'
 
@@ -140,4 +140,48 @@ function encodeBudgetOrQuadratic(selections: number[]): number[] {
   // For budget/quadratic, selections are the amounts allocated to each option; the
   // caller supplies them already in choice order, so pass them through unchanged.
   return [...selections]
+}
+
+function ballotProtocolToVoteType(bp: BallotProtocol): VoteType {
+  return {
+    maxCount: bp.maxCount,
+    maxValue: bp.maxValue,
+    maxVoteOverwrites: bp.maxVoteOverwrites,
+    costExponent: bp.costExponent,
+    uniqueChoices: bp.uniqueValues,
+    costFromWeight: bp.costFromWeight,
+  }
+}
+
+/**
+ * Encode a single question's ballot using its own {@link BallotProtocol}.
+ *
+ * @param question - The question with `ballotProtocol` and `choices`
+ * @param selections - The voter's raw selections for this question
+ */
+export function encodeQuestionBallot(
+  question: { ballotProtocol?: BallotProtocol; choices: Choice[] },
+  selections: number[]
+): number[] {
+  const ballotType = inferQuestionBallotType(question)
+  const fakeQuestion: Question = { title: { default: '' }, choices: question.choices }
+
+  switch (ballotType) {
+    case BallotType.SingleChoice:
+      if (selections.length === 0) throw new Error('single-choice requires exactly one choice')
+      return [selections[0]]
+
+    case BallotType.Approval:
+      return encodeApproval(fakeQuestion, selections)
+
+    case BallotType.MultiChoice:
+      return encodeMultiChoice(ballotProtocolToVoteType(question.ballotProtocol!), fakeQuestion, selections)
+
+    case BallotType.Budget:
+    case BallotType.Quadratic:
+      return encodeBudgetOrQuadratic(selections)
+
+    default:
+      throw new Error(`Unknown ballot type: ${ballotType}`)
+  }
 }

@@ -127,40 +127,48 @@ await auth1('123456')
 
 ## ElectionProvider / useElection
 
-Fetches election data and exposes the full vote flow. Automatically uses the enclosing `BundleProvider` for auth when present.
+Fetches process data and exposes the full vote flow. Automatically uses the enclosing `BundleProvider` for auth when present.
 
 ```tsx
 import { ElectionProvider, useElection } from '@vocdoni/react-providers'
 
-<ElectionProvider id="<electionMongoId>">...</ElectionProvider>
+<ElectionProvider id="<processId>">...</ElectionProvider>
 
 const {
-  election,      // Election | null
+  election,      // VotingProcessResponse | null — full process with questions[]
+  status,        // QuestionStatus | null — derived from all question statuses
+  results,       // VotingProcessResultsResponse | null — per-question results
   loading,       // boolean
   error,         // Error | null
   connected,     // boolean — delegates to bundle.connected
   weight,        // number | null — voter census weight
-  isInCensus,    // boolean — true if voter belongs to this election's census
+  isInCensus,    // boolean — true if voter belongs to this process's census
   hasVoted,      // boolean
   isAbleToVote,  // boolean — connected && isInCensus && !hasVoted
-  vote,          // (choices: number[]) => Promise<string>  — returns vote nullifier
+  vote,          // (encodedBallots: number[][]) => Promise<string> — per-question ballots
   voteId,        // string | null — nullifier after a successful vote
   clearVoter,    // () => void — clears vote state and bundle session
 } = useElection()
 ```
 
-`vote(choices)` does the complete sequence: creates an ephemeral signer → CSP-signs it → builds and relays the tx → polls the job → returns the nullifier. It throws on any step failure.
+`vote(encodedBallots)` takes one pre-encoded `number[]` per question, casts a separate Vochain vote for each, and returns the first nullifier. It does the complete sequence for every question: creates an ephemeral signer → CSP-signs it → builds and relays the tx → polls the job. Throws on any step failure.
+
+Use `@vocdoni/ballot` to encode ballots before calling `vote()`:
 
 ```tsx
-const handleSubmit = async (choices: number[]) => {
-  try {
-    const nullifier = await vote(choices)
-    console.log('vote cast:', nullifier)
-  } catch (err) {
-    console.error('vote failed:', err)
-  }
-}
+import { encodeQuestionBallot } from '@vocdoni/ballot'
+
+const encodedBallots = election.questions.map((q, i) =>
+  encodeQuestionBallot(q, answers[i])
+)
+const nullifier = await vote(encodedBallots)
 ```
+
+`status` is computed by `computeProcessStatus(election.questions)` from `@vocdoni/api-client`:
+- Any question `ONGOING` → `ONGOING`
+- All same status → that status
+- All `ENDED` or `RESULTS` → `ENDED`
+- Otherwise → `PROCESS_UNKNOWN`
 
 ---
 
@@ -214,7 +222,7 @@ Key election components (all from `@vocdoni/react-components`):
 | `<ElectionDescription />` | `election.description` |
 | `<ElectionHeader />` | Header image / media |
 | `<ElectionSchedule />` | Start/end dates |
-| `<ElectionStatusBadge />` | Status chip (READY, PAUSED, ENDED…) |
+| `<ElectionStatusBadge />` | Status chip (ONGOING, PAUSED, ENDED…) |
 | `<ElectionQuestions />` | Full question + choices form (calls `vote()` on submit) |
 | `<VoteButton />` | Submit button; auto-disabled when `!isAbleToVote` |
 | `<VoteWeight />` | Voter's census weight |
@@ -254,17 +262,19 @@ function VoterAuth() {
 }
 
 function VotingForm() {
-  const { election, isAbleToVote, vote, hasVoted, voteId } = useElection()
+  const { election, status, isAbleToVote, vote, hasVoted, voteId } = useElection()
   if (!election) return <p>Loading…</p>
   if (hasVoted) return <p>Your vote: {voteId}</p>
+  if (status !== 'ONGOING') return <p>Voting is not open</p>
 
-  // Election text is a language map ({ default, … }); resolve it for display.
+  // Process text is a language map ({ default, … }); resolve it for display.
   const text = (t: string | Record<string, string>) => (typeof t === 'string' ? t : t.default)
+  const q = election.questions[0]
   return (
     <div>
-      <h2>{text(election.questions[0].title)}</h2>
-      {election.questions[0].choices.map((c, i) => (
-        <button key={i} onClick={() => vote([i])} disabled={!isAbleToVote}>
+      <h2>{text(q.title)}</h2>
+      {q.choices.map((c) => (
+        <button key={c.value} onClick={() => vote([[c.value]])} disabled={!isAbleToVote}>
           {text(c.title)}
         </button>
       ))}

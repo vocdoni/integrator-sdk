@@ -1,11 +1,11 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { makeElection } from '../../../test-utils'
+import { makeProcess } from '../../../test-utils'
 
 // Election + a spy vote() come from the (mocked) providers; confirm() is forced true.
 const state = vi.hoisted(() => ({
-  election: null as ReturnType<typeof makeElection> | null,
+  election: null as ReturnType<typeof makeProcess> | null,
   vote: vi.fn(),
   confirmResult: true,
 }))
@@ -22,7 +22,7 @@ const wrapper = ({ children }: { children: ReactNode }) => (
   <QuestionsFormProvider>{children}</QuestionsFormProvider>
 )
 
-function setup(election: ReturnType<typeof makeElection> | null, confirmResult = true) {
+function setup(election: ReturnType<typeof makeProcess> | null, confirmResult = true) {
   state.election = election
   state.vote = vi.fn().mockResolvedValue('vote-id')
   state.confirmResult = confirmResult
@@ -50,54 +50,44 @@ const fourChoices = [
   },
 ]
 
-const voteType = (overrides: Record<string, unknown>) => ({
-  maxCount: 1,
-  maxValue: 1,
-  maxVoteOverwrites: 0,
-  costExponent: 1,
-  uniqueChoices: false,
-  costFromWeight: false,
-  ...overrides,
-})
-
-// The payloads below go through @vocdoni/ballot's encodeBallot, so the expected
-// vectors are the real on-chain encodings (all four are live-verified in the
-// full-flow integration test), not the raw field values.
+// The payloads below go through @vocdoni/ballot's encodeQuestionBallot, so the expected
+// vectors are the real on-chain encodings. vote() now receives number[][] — one encoded
+// ballot array per question.
 describe('QuestionsFormProvider vote payload', () => {
   it('single choice: one chosen value per question', async () => {
-    const { result } = setup(makeElection({ questions: twoQuestions }))
+    const { result } = setup(makeProcess({ questions: twoQuestions }))
     await result.current.vote({ '0': '1', '1': '0' })
-    expect(state.vote).toHaveBeenCalledWith([1, 0])
+    expect(state.vote).toHaveBeenCalledWith([[1], [0]])
   })
 
   it('approval: dense 0/1 vector over all choices (not an index list)', async () => {
     const { result } = setup(
-      makeElection({ questions: threeChoices, voteType: voteType({ maxCount: 3, maxValue: 1 }) }),
+      makeProcess({ questions: threeChoices, voteType: { maxCount: 3, maxValue: 1 } }),
     )
     // Approve A and C → [1,0,1]. The old code wrongly emitted the index list [0,2].
     await result.current.vote({ '0': ['0', '2'] })
-    expect(state.vote).toHaveBeenCalledWith([1, 0, 1])
+    expect(state.vote).toHaveBeenCalledWith([[1, 0, 1]])
   })
 
   it('multichoice (fully filled): the picked values, in pick order', async () => {
     const { result } = setup(
-      makeElection({ questions: threeChoices, voteType: voteType({ maxCount: 3, maxValue: 2, uniqueChoices: true }) }),
+      makeProcess({ questions: threeChoices, voteType: { maxCount: 3, maxValue: 2, uniqueChoices: true } }),
     )
     await result.current.vote({ '0': ['2', '0', '1'] })
-    expect(state.vote).toHaveBeenCalledWith([2, 0, 1])
+    expect(state.vote).toHaveBeenCalledWith([[2, 0, 1]])
   })
 
   it('multichoice (abstain): unfilled slots padded with the abstain sentinel', async () => {
     const { result } = setup(
-      makeElection({ questions: fourChoices, voteType: voteType({ maxCount: 3, maxValue: 4 }) }),
+      makeProcess({ questions: fourChoices, voteType: { maxCount: 3, maxValue: 4 } }),
     )
     // One real pick for a 3-slot ballot → [1,4,4] (value 4 is the abstain sentinel).
     await result.current.vote({ '0': ['1'] })
-    expect(state.vote).toHaveBeenCalledWith([1, 4, 4])
+    expect(state.vote).toHaveBeenCalledWith([[1, 4, 4]])
   })
 
   it('does not vote when the confirmation is declined', async () => {
-    const { result } = setup(makeElection({ questions: twoQuestions }), false)
+    const { result } = setup(makeProcess({ questions: twoQuestions }), false)
     const out = await result.current.vote({ '0': '1', '1': '0' })
     expect(out).toBe(false)
     expect(state.vote).not.toHaveBeenCalled()

@@ -1,5 +1,5 @@
-import type { Choice, Election, Question } from '@vocdoni/api-types'
-import { BallotType, inferBallotType, multichoiceReservesAbstain } from '@vocdoni/ballot'
+import type { Choice, VotingProcessQuestion } from '@vocdoni/api-types'
+import { BallotType, inferQuestionBallotType, questionSelectionRange } from '@vocdoni/ballot'
 import { Controller, useFormContext } from 'react-hook-form'
 import { QuestionChoicePresentation, QuestionLayout, QuestionSelectionMode } from '../../context/types'
 import { useComponents } from '../../context/useComponents'
@@ -10,35 +10,19 @@ import { QuestionTip } from './Tip'
 import { resolveTitle } from '../../../election/normalized'
 
 export type QuestionProps = {
-  question: Question
+  question: VotingProcessQuestion
   index: string
 }
 
 // Approval and multichoice present as checkboxes ('multiple'); everything else presents
-// as radios ('single'). Budget/quadratic have no dedicated amount-input widget yet, so
-// they fall back to the SingleChoice (radio) widget — keep their selectionMode 'single'
-// so the prop matches the rendered control (see FieldSwitcher's default branch).
+// as radios ('single').
 const selectionModeForType = (ballotType: BallotType): QuestionSelectionMode =>
   ballotType === BallotType.MultiChoice || ballotType === BallotType.Approval ? 'multiple' : 'single'
 
-/**
- * How many options a multichoice question requires. When the election reserves abstain
- * values, a voter may pick *fewer* than maxCount (encodeBallot pads the empty pick-slots
- * with sentinels), so any count in `[1, maxCount]` is castable; otherwise exactly
- * maxCount is required.
- */
-export const multiChoiceSelectionRange = (
-  election: Pick<Election, 'questions' | 'voteType'>
-): { min: number; max: number } => {
-  const max = election.voteType.maxCount
-  const min = multichoiceReservesAbstain(election) ? 1 : max
-  return { min, max }
-}
-
-const getQuestionPresentation = (question: Question): QuestionChoicePresentation =>
+const getQuestionPresentation = (question: VotingProcessQuestion): QuestionChoicePresentation =>
   question.choices.some(hasExtendedChoiceMeta) ? 'extended' : 'basic'
 
-const getQuestionLayout = (question: Question): QuestionLayout =>
+const getQuestionLayout = (question: VotingProcessQuestion): QuestionLayout =>
   question.choices.some((choice) => Boolean((choice as any).meta?.image?.default)) ? 'grid' : 'list'
 
 export const ElectionQuestion = ({ question, index }: QuestionProps) => {
@@ -49,7 +33,7 @@ export const ElectionQuestion = ({ question, index }: QuestionProps) => {
   } = useFormContext()
   const layout = getQuestionLayout(question)
   const hasExtendedChoices = question.choices.some(hasExtendedChoiceMeta)
-  const selectionMode = selectionModeForType(election ? inferBallotType(election) : BallotType.SingleChoice)
+  const selectionMode = selectionModeForType(inferQuestionBallotType(question))
   const invalid = Boolean((errors as Record<string, unknown>)[index])
   const description = resolveTitle((question as any).description)
 
@@ -71,7 +55,7 @@ export const ElectionQuestion = ({ question, index }: QuestionProps) => {
           presentation={getQuestionPresentation(question)}
         />
       }
-      tip={<QuestionTip />}
+      tip={<QuestionTip question={question} />}
     />
   )
 }
@@ -80,18 +64,12 @@ const FieldSwitcher = (props: QuestionProps & { layout: QuestionLayout; presenta
   const { election } = useElection()
   if (!election) return null
 
-  // Pick the input widget from the inferred ballot type, the same inference the
-  // encoder uses. Note this diverges from the old maxCount/uniqueChoices check for
-  // repeatable multichoice that reserves abstain values (maxValue > 1, not unique):
-  // that is a multichoice election, so it now gets the multichoice widget rather
-  // than the approval one.
-  switch (inferBallotType(election)) {
+  switch (inferQuestionBallotType(props.question)) {
     case BallotType.MultiChoice:
       return <MultiChoice {...props} />
     case BallotType.Approval:
       return <ApprovalChoice {...props} />
     default:
-      // single-choice, and budget/quadratic (no dedicated widget yet)
       return <SingleChoice {...props} />
   }
 }
@@ -102,15 +80,13 @@ const MultiChoice = ({
   layout,
   presentation,
 }: QuestionProps & { layout: QuestionLayout; presentation: QuestionChoicePresentation }) => {
-  const { election, isAbleToVote } = useElection()
+  const { status, isAbleToVote } = useElection()
   const t = useReactComponentsLocalize()
   const { control, trigger } = useFormContext()
   const { QuestionsError } = useComponents()
 
-  if (!election) return null
-
-  const maxCount = election.voteType.maxCount
-  const disabled = election.status !== 'READY' || !isAbleToVote
+  const maxCount = question.ballotProtocol?.maxCount ?? 1
+  const disabled = status !== 'ONGOING' || !isAbleToVote
 
   return (
     <Controller
@@ -120,9 +96,8 @@ const MultiChoice = ({
       rules={{
         validate: (value: string[]) => {
           const count = Array.isArray(value) ? value.length : 0
-          const { min, max } = multiChoiceSelectionRange(election)
+          const { min, max } = questionSelectionRange(question)
           if (count >= min && count <= max) return true
-          // Exactly-N when abstain isn't reserved; a range when it is (partial castable).
           return min === max
             ? t('validation.choices_count', { count: max })
             : t('validation.choices_range', {
@@ -188,14 +163,12 @@ const ApprovalChoice = ({
   layout,
   presentation,
 }: QuestionProps & { layout: QuestionLayout; presentation: QuestionChoicePresentation }) => {
-  const { election, isAbleToVote } = useElection()
+  const { status, isAbleToVote } = useElection()
   const { control } = useFormContext()
   const { QuestionsError } = useComponents()
   const t = useReactComponentsLocalize()
 
-  if (!election) return null
-
-  const disabled = election.status !== 'READY' || !isAbleToVote
+  const disabled = status !== 'ONGOING' || !isAbleToVote
 
   return (
     <Controller
@@ -256,14 +229,12 @@ const SingleChoice = ({
   layout,
   presentation,
 }: QuestionProps & { layout: QuestionLayout; presentation: QuestionChoicePresentation }) => {
-  const { election, isAbleToVote } = useElection()
+  const { status, isAbleToVote } = useElection()
   const { control } = useFormContext()
   const { QuestionsError } = useComponents()
   const t = useReactComponentsLocalize()
 
-  if (!election) return null
-
-  const disabled = election.status !== 'READY' || !isAbleToVote
+  const disabled = status !== 'ONGOING' || !isAbleToVote
 
   return (
     <Controller

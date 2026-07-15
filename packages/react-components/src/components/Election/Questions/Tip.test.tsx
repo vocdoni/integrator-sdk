@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { makeElection, renderWithComponents } from '../../../test-utils'
+import { makeProcess, renderWithComponents } from '../../../test-utils'
 
-const state = vi.hoisted(() => ({ election: null as ReturnType<typeof makeElection> | null }))
+const state = vi.hoisted(() => ({ election: null as ReturnType<typeof makeProcess> | null }))
 vi.mock('@vocdoni/react-providers', () => ({
   useElection: () => ({ election: state.election, vote: vi.fn() }),
 }))
@@ -22,47 +22,37 @@ const slots = {
   },
 }
 
-const voteType = (overrides: Record<string, unknown>) => ({
-  maxCount: 1,
-  maxValue: 1,
-  maxVoteOverwrites: 0,
-  costExponent: 1,
-  uniqueChoices: false,
-  costFromWeight: false,
-  ...overrides,
-})
-
 const oneQuestion = [
   { title: 'Q', choices: [{ title: 'A', value: 0 }, { title: 'B', value: 1 }, { title: 'C', value: 2 }] },
 ]
 
-function renderTip(election: ReturnType<typeof makeElection>) {
+function renderTip(election: ReturnType<typeof makeProcess>) {
   state.election = election
   captured = undefined
   renderWithComponents(
     <QuestionsFormProvider>
-      <QuestionTip />
+      <QuestionTip question={election.questions[0]} />
     </QuestionsFormProvider>,
     slots,
   )
   return captured
 }
 
-describe('QuestionTip (via inferBallotType)', () => {
+describe('QuestionTip (via inferQuestionBallotType)', () => {
   it('renders the pick-count tip for multichoice', () => {
     const tip = renderTip(
-      makeElection({ questions: oneQuestion, voteType: voteType({ maxCount: 3, maxValue: 2, uniqueChoices: true }) }),
+      makeProcess({ questions: oneQuestion, voteType: { maxCount: 3, maxValue: 2, uniqueChoices: true } }),
     )
     expect(tip?.text).toContain('3')
   })
 
   it('renders nothing for single-choice', () => {
-    expect(renderTip(makeElection({ questions: oneQuestion }))).toBeUndefined()
+    expect(renderTip(makeProcess({ questions: oneQuestion }))).toBeUndefined()
   })
 
   it('renders nothing for approval', () => {
     expect(
-      renderTip(makeElection({ questions: oneQuestion, voteType: voteType({ maxCount: 3, maxValue: 1 }) })),
+      renderTip(makeProcess({ questions: oneQuestion, voteType: { maxCount: 3, maxValue: 1 } })),
     ).toBeUndefined()
   })
 })

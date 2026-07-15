@@ -8,13 +8,10 @@ import { ActionEnd } from './End'
 import { ActionPause } from './Pause'
 
 export const ElectionActions = (props: ComponentPropsWithoutRef<'div'>) => {
-  const { election } = useElection()
+  const { election, status } = useElection()
   const { ElectionActions: Slot } = useComponents()
 
-  if (
-    !election ||
-    (['CANCELED', 'ENDED'] as (typeof election.status)[]).includes(election.status)
-  ) {
+  if (!election || status === 'CANCELED' || status === 'ENDED') {
     return null
   }
 

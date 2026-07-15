@@ -103,71 +103,68 @@ describe('admin / integrator client methods', () => {
   })
 
   describe('elections.create', () => {
-    it('POSTs a CreateProcessRequest and returns the draft id string', async () => {
+    it('POSTs a CreateVotingProcessRequest to /processes and returns the draft id string', async () => {
       let body: unknown
       server.use(
-        http.post(`${BASE_URL}/process`, async ({ request }) => {
+        http.post(`${BASE_URL}/processes`, async ({ request }) => {
           body = await request.json()
-          return HttpResponse.json('draft-123')
+          return HttpResponse.json({ processId: 'draft-123' })
         }),
       )
 
       const draftId = await client.elections.create({
         orgAddress: ORG,
-        electionParams: {
-          title: 'Q',
-          questions: [],
-          voteType: { maxCount: 1, maxValue: 1 },
-          electionType: { autostart: true, interruptible: true },
-          maxCensusSize: 100,
-        },
+        title: 'Q',
+        questions: [
+          {
+            title: 'Question?',
+            choices: [{ title: 'Yes', value: 1 }],
+            ballotProtocol: { maxCount: 1, maxValue: 1, maxVoteOverwrites: 0, costExponent: 1, maxTotalCost: 0, uniqueValues: false, costFromWeight: false },
+          },
+        ],
       })
       expect(draftId).toBe('draft-123')
       expect((body as { orgAddress: string }).orgAddress).toBe(ORG)
     })
 
-    it('normalizes plain-string election text to { default } language maps', async () => {
+    it('normalizes plain-string text to { default } language maps', async () => {
       let body: any
       server.use(
-        http.post(`${BASE_URL}/process`, async ({ request }) => {
+        http.post(`${BASE_URL}/processes`, async ({ request }) => {
           body = await request.json()
-          return HttpResponse.json('draft-ml')
+          return HttpResponse.json({ processId: 'draft-ml' })
         }),
       )
 
       await client.elections.create({
         orgAddress: ORG,
-        electionParams: {
-          title: 'Plain title',
-          description: 'Plain description',
-          questions: [
-            {
-              title: 'Question?',
-              choices: [
-                { title: 'No', value: 0 },
-                { title: { default: 'Yes', es: 'Sí' }, value: 1 },
-              ],
-            },
-          ],
-          voteType: { maxCount: 1, maxValue: 1 },
-          electionType: { autostart: true, interruptible: true },
-          maxCensusSize: 100,
-        },
+        title: 'Plain title',
+        description: 'Plain description',
+        questions: [
+          {
+            title: 'Question?',
+            choices: [
+              { title: 'No', value: 0 },
+              { title: { default: 'Yes', es: 'Sí' }, value: 1 },
+            ],
+            ballotProtocol: { maxCount: 1, maxValue: 1, maxVoteOverwrites: 0, costExponent: 1, maxTotalCost: 0, uniqueValues: false, costFromWeight: false },
+          },
+        ],
       })
 
       // Plain strings become { default }, existing maps pass through untouched.
-      expect(body.electionParams.title).toEqual({ default: 'Plain title' })
-      expect(body.electionParams.description).toEqual({ default: 'Plain description' })
-      expect(body.electionParams.questions[0].title).toEqual({ default: 'Question?' })
-      expect(body.electionParams.questions[0].choices[0].title).toEqual({ default: 'No' })
-      expect(body.electionParams.questions[0].choices[1].title).toEqual({ default: 'Yes', es: 'Sí' })
+      expect(body.title).toEqual({ default: 'Plain title' })
+      expect(body.description).toEqual({ default: 'Plain description' })
+      expect(body.questions[0].title).toEqual({ default: 'Question?' })
+      expect(body.questions[0].choices[0].title).toEqual({ default: 'No' })
+      expect(body.questions[0].choices[1].title).toEqual({ default: 'Yes', es: 'Sí' })
     })
   })
 
   describe('elections.publishAndWait', () => {
     it('enqueues a publish job and resolves the on-chain address', async () => {
       server.use(
-        http.post(`${BASE_URL}/process/draft-1/publish`, () =>
+        http.post(`${BASE_URL}/processes/draft-1/publish`, () =>
           HttpResponse.json({ jobId: 'pjob-1' }),
         ),
         http.get(`${BASE_URL}/jobs/pjob-1`, () =>
@@ -187,7 +184,7 @@ describe('admin / integrator client methods', () => {
 
     it('returns directly when the process is already published', async () => {
       server.use(
-        http.post(`${BASE_URL}/process/draft-2/publish`, () =>
+        http.post(`${BASE_URL}/processes/draft-2/publish`, () =>
           HttpResponse.json({ address: '0xalready', status: 'READY' }),
         ),
       )

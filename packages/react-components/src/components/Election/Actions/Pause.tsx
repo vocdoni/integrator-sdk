@@ -5,7 +5,7 @@ import { useActions, useElection } from '@vocdoni/react-providers'
 
 export const ActionPause = (props: ComponentPropsWithoutRef<'button'>) => {
   const localize = useReactComponentsLocalize()
-  const { election } = useElection()
+  const { election, status } = useElection()
   const { ActionPause: Slot } = useComponents()
   const { pause, loading } = useActions()
 
@@ -18,7 +18,7 @@ export const ActionPause = (props: ComponentPropsWithoutRef<'button'>) => {
       {...props}
       loading={loading}
       onClick={pause}
-      disabled={loading || election.status !== 'READY'}
+      disabled={loading || status !== 'ONGOING'}
       label={localize('actions.pause')}
     />
   )

@@ -1,4 +1,4 @@
-import { encodeBallot } from '@vocdoni/ballot'
+import { encodeQuestionBallot } from '@vocdoni/ballot'
 import { createContext, PropsWithChildren, useContext, useEffect } from 'react'
 import { FieldValues, FormProvider, useForm, UseFormReturn } from 'react-hook-form'
 import { useConfirm } from '../../../confirm/useConfirm'
@@ -37,20 +37,20 @@ export const QuestionsFormProvider = ({ children }: PropsWithChildren<QuestionsF
       return false
     }
 
-    // Map each question's form value into the per-question choice-value array that
-    // encodeBallot expects. Single-choice fields hold a single value string; multi-
-    // choice/approval fields hold an array of selected value strings. encodeBallot
-    // then infers the ballot type and produces the correct on-chain vector — a dense
-    // 0/1 vector for approval and abstain-sentinel padding for multichoice, replacing
-    // the old hand-rolled (and, for approval, buggy) index-list encoding.
-    const selections = election.questions.map((_question, index) => {
+    // Build per-question raw selections from the form values.
+    const selections = election.questions.map((_q, index) => {
       const raw = values[index.toString()]
       if (Array.isArray(raw)) return raw.map((value) => parseInt(value, 10))
       if (raw === undefined || raw === '') return []
       return [parseInt(raw, 10)]
     })
 
-    return baseVote(encodeBallot(election, selections))
+    // Encode each question's ballot using its own ballot protocol.
+    const encodedBallots = election.questions.map((q, i) =>
+      encodeQuestionBallot(q, selections[i] ?? [])
+    )
+
+    return baseVote(encodedBallots)
   }
 
   useEffect(() => {
