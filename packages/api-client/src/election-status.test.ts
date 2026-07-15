@@ -1,13 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import type { VotingProcessQuestion, VotingProcessResponse } from '@vocdoni/api-types'
-import { computeProcessStatus, hasResults, isLive, isUpcoming } from './election-status'
+import type {
+  VotingProcessQuestion,
+  VotingProcessResponse,
+  VotingProcessResultsResponse,
+} from '@vocdoni/api-types'
+import {
+  computeProcessStatus,
+  hasResults,
+  isLive,
+  isSecretUntilTheEnd,
+  isUpcoming,
+  processVoteCount,
+} from './election-status'
 
 const q = (status: VotingProcessQuestion['status']): VotingProcessQuestion =>
   ({ status } as VotingProcessQuestion)
 
 const base: VotingProcessResponse = {
   id: 'proc-1',
-  orgAddress: [],
+  orgAddress: '0x0000000000000000000000000000000000000001',
   title: { default: 'Test process' },
   startDate: '2024-01-01T00:00:00Z',
   endDate: '2024-12-31T23:59:59Z',
@@ -127,5 +138,43 @@ describe('computeProcessStatus', () => {
     expect(computeProcessStatus([q('PAUSED'), q('ENDED')])).toBe('PROCESS_UNKNOWN')
     expect(computeProcessStatus([q('CANCELED'), q('PAUSED')])).toBe('PROCESS_UNKNOWN')
     expect(computeProcessStatus([q('UPCOMING'), q('PAUSED')])).toBe('PROCESS_UNKNOWN')
+  })
+})
+
+describe('isSecretUntilTheEnd', () => {
+  const secretQ = (secret: boolean): VotingProcessQuestion =>
+    ({ status: 'ONGOING', secretUntilTheEnd: secret } as VotingProcessQuestion)
+
+  it('is true when any question hides tallies until the end', () => {
+    expect(isSecretUntilTheEnd({ ...base, questions: [secretQ(false), secretQ(true)] })).toBe(true)
+  })
+
+  it('is false when no question is secret', () => {
+    expect(isSecretUntilTheEnd({ ...base, questions: [secretQ(false)] })).toBe(false)
+    expect(isSecretUntilTheEnd(base)).toBe(false)
+  })
+})
+
+describe('processVoteCount', () => {
+  const results = (...voteCounts: number[]): VotingProcessResultsResponse => ({
+    id: base.id,
+    questions: voteCounts.map((voteCount, i) => ({
+      questionId: `q-${i}`,
+      status: 'RESULTS',
+      voteCount,
+      startDate: base.startDate,
+      endDate: base.endDate,
+      finalResults: true,
+    })),
+  })
+
+  it('returns the highest per-question count (unique ballots, not a sum)', () => {
+    expect(processVoteCount(results(10, 8, 10))).toBe(10)
+  })
+
+  it('returns 0 for missing results or an empty question list', () => {
+    expect(processVoteCount(undefined)).toBe(0)
+    expect(processVoteCount(null)).toBe(0)
+    expect(processVoteCount(results())).toBe(0)
   })
 })

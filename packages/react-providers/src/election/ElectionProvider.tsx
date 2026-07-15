@@ -50,6 +50,15 @@ export interface ElectionProviderProps {
 
 const ElectionContext = createContext<ElectionContextValue | undefined>(undefined)
 
+/**
+ * Query keys the ElectionProvider reads through. Exported so consumers can pre-seed
+ * (`setQueryData`) or invalidate these queries without hardcoding the key shape.
+ */
+export const electionQueryKeys = {
+  election: (id: string) => ['election', id] as const,
+  results: (id: string) => ['election-results', id] as const,
+}
+
 export function ElectionProvider({ children, id }: ElectionProviderProps) {
   const { client } = useClient()
   const bundle = useBundleOptional()
@@ -59,13 +68,13 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
     isLoading: loading,
     error,
   } = useQuery<VotingProcessResponse, Error>({
-    queryKey: ['election', id],
+    queryKey: electionQueryKeys.election(id),
     queryFn: () => client.elections.get(id),
     enabled: !!id,
   })
 
   const { data: results = null } = useQuery<VotingProcessResultsResponse, Error>({
-    queryKey: ['election-results', id],
+    queryKey: electionQueryKeys.results(id),
     queryFn: () => client.elections.getResults(id),
     enabled: !!id && !!election,
   })

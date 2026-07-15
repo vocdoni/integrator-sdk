@@ -1,5 +1,12 @@
 export { AuthClient } from './auth'
-export { isLive, isUpcoming, hasResults, computeProcessStatus } from './election-status'
+export {
+  isLive,
+  isUpcoming,
+  hasResults,
+  isSecretUntilTheEnd,
+  processVoteCount,
+  computeProcessStatus,
+} from './election-status'
 export { BundleClient, type CreatedBundle } from './bundle'
 export { CensusClient } from './census'
 export { VocdoniApiClient } from './client'

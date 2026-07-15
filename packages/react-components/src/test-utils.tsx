@@ -128,7 +128,7 @@ export function makeProcess(opts: MakeProcessOptions = {}): VotingProcessRespons
 
   return {
     id: rest.id ?? 'proc-1',
-    orgAddress: [],
+    orgAddress: '0x0000000000000000000000000000000000000001',
     title: { default: rest.title ?? 'Test Process' },
     startDate: rest.startDate ?? '2024-01-01T00:00:00Z',
     endDate: rest.endDate ?? '2024-12-31T23:59:59Z',

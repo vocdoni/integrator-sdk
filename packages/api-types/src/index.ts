@@ -401,7 +401,8 @@ export interface EligibilitySpec {
 
 export interface VotingProcessResponse {
   id: string
-  orgAddress: number[]
+  /** Owner organization address, lowercase `0x…` hex. */
+  orgAddress: string
   title: MultiLangString
   description?: MultiLangString
   header?: string
@@ -502,7 +503,8 @@ export interface QuestionStatusID {
 /** Body of `PUT /processes/{id}/questions/status` — bulk question status change. */
 export interface SetQuestionsStatusRequest {
   status: string
-  questions: QuestionStatusID[]
+  /** Questions to transition; omitted/empty targets every published question. */
+  questions?: QuestionStatusID[]
 }
 
 // ─── Vote relay ───────────────────────────────────────────────────────────────

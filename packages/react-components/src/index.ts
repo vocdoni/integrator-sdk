@@ -81,6 +81,7 @@ export {
 
 export {
   ElectionProvider,
+  electionQueryKeys,
   useElection,
   type ElectionContextValue,
   type ElectionProviderProps,

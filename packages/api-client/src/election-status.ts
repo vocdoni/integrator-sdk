@@ -1,4 +1,9 @@
-import type { QuestionStatus, VotingProcessQuestion, VotingProcessResponse } from '@vocdoni/api-types'
+import type {
+  QuestionStatus,
+  VotingProcessQuestion,
+  VotingProcessResponse,
+  VotingProcessResultsResponse,
+} from '@vocdoni/api-types'
 
 /**
  * Derive a single {@link QuestionStatus} for a process from its questions' statuses.
@@ -35,3 +40,15 @@ export const isUpcoming = (process: VotingProcessResponse): boolean =>
 /** True when all question results are final (`RESULTS`). */
 export const hasResults = (process: VotingProcessResponse): boolean =>
   computeProcessStatus(process.questions) === 'RESULTS'
+
+/** True when any question hides its tallies until the vote ends. */
+export const isSecretUntilTheEnd = (process: VotingProcessResponse): boolean =>
+  process.questions.some((q) => q.secretUntilTheEnd)
+
+/**
+ * Ballots cast for the process: the highest per-question vote count. Every voter
+ * votes each question of the process, so the max approximates unique ballots better
+ * than a sum (which would count one voter N times for N questions).
+ */
+export const processVoteCount = (results: VotingProcessResultsResponse | null | undefined): number =>
+  results?.questions.reduce((max, q) => Math.max(max, q.voteCount ?? 0), 0) ?? 0

@@ -35,6 +35,7 @@ export {
 // ─── Election ─────────────────────────────────────────────────────────────────
 export {
   ElectionProvider,
+  electionQueryKeys,
   useElection,
   type ElectionContextValue,
   type ElectionProviderProps,
