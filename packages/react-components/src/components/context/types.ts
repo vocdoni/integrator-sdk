@@ -1,4 +1,4 @@
-import type { Choice, Election, Question } from '@vocdoni/api-types'
+import type { Choice, Question, VotingProcessResponse } from '@vocdoni/api-types'
 import { ComponentPropsWithoutRef, ComponentType, FormEvent, HTMLAttributes, ReactNode } from 'react'
 import { FieldValues, UseFormRegisterReturn } from 'react-hook-form'
 
@@ -175,7 +175,7 @@ export type QuestionsConfirmationAnswerItem = {
 }
 
 export type QuestionsConfirmationSlotProps = BaseProps<HTMLDivElement> & {
-  election: Election
+  election: VotingProcessResponse
   answers: FieldValues
   answersView: QuestionsConfirmationAnswerItem[]
   onConfirm: () => void
