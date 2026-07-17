@@ -29,18 +29,21 @@ The command builds the workspace packages first, then runs vitest with
   the vote signature depends on), against a dev fixture.
 - **login** — auth-only `authStep0` + membership `check` (no OTP), non-consuming, against
   a dev fixture.
-- **process-info** — proves `/process/{mongoId}` maps onto a flat election (vochain
-  `address`, `chainId`, census fields). Non-consuming.
-- **vote-encrypted** — non-consuming proof that a `secretUntilTheEnd` process surfaces
-  `encryptionPublicKeys`. The full seal-and-cast flow is now covered by **full-flow**.
+- **process-info** — proves `GET /processes/{mongoId}` returns the per-question model
+  (every `questions[i].upstreamId` is a vochain hex id, per-question `status`,
+  `computeProcessStatus`, census fields). Non-consuming.
+- **vote-encrypted** — currently `it.skip`: the new-model process read does not expose
+  encryption keys yet (backend change pending; see the `TODO(encrypted)` markers).
+  Re-enable when `GET /processes/{id}` surfaces the questions' encryption keys.
 - **full-flow** — the entire organizer→voter lifecycle driven only by an integrator
   API key: creates a managed org, loads 100 members, reads the auto group, builds and
-  publishes a group census, creates and publishes 3 processes (single-choice,
-  multi-choice, and a `secretUntilTheEnd` single-choice) sharing that census, bundles
-  them, and has 3 members vote on each — asserting 9 distinct nullifiers. Runs only when
-  `INTEGRATION_API_KEY` is set. The key's org must be an **integrator** with scopes
-  `managed:write` + `members:write` + `voting:write`, and quota for ≥3 processes /
-  ≥300 census size. Creates real on-chain elections and votes.
+  publishes a group census, creates and publishes 2 processes (single-choice and
+  multi-choice; a third `secretUntilTheEnd` one is TODO-gated on the backend exposing
+  encryption keys) sharing that census, bundles their questions' `upstreamId`s, and has
+  3 members vote per question — asserting one distinct nullifier per voter×question.
+  Runs only when `INTEGRATION_API_KEY` is set. The key's org must be an **integrator**
+  with scopes `managed:write` + `members:write` + `voting:write`, and quota for
+  ≥2 processes / ≥300 census size. Creates real on-chain elections and votes.
 
 The fixture-based suites (connectivity/bundle/login/process-info/vote-encrypted) run
 against the dev defaults out of the box:
