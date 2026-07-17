@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { computeProcessStatus } from '@vocdoni/api-client'
+import { computeProcessStatus, VocdoniApiError } from '@vocdoni/api-client'
 import { useBundleOptional } from '../bundle/BundleProvider'
 import { useClient } from '../client/ClientProvider'
 
@@ -73,9 +73,15 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
     enabled: !!id,
   })
 
-  const { data: results = null } = useQuery<VotingProcessResultsResponse, Error>({
+  const { data: results = null } = useQuery<VotingProcessResultsResponse | null, Error>({
     queryKey: electionQueryKeys.results(id),
-    queryFn: () => client.elections.getResults(id),
+    // A 404 legitimately means "no results yet" (e.g. before any question is
+    // published) — swallow it instead of letting react-query retry the endpoint.
+    queryFn: () =>
+      client.elections.getResults(id).catch((err) => {
+        if (err instanceof VocdoniApiError && err.status === 404) return null
+        throw err
+      }),
     enabled: !!id && !!election,
   })
 
