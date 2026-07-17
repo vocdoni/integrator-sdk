@@ -138,6 +138,8 @@ describe('computeProcessStatus', () => {
     expect(computeProcessStatus([q('PAUSED'), q('ENDED')])).toBe('PROCESS_UNKNOWN')
     expect(computeProcessStatus([q('CANCELED'), q('PAUSED')])).toBe('PROCESS_UNKNOWN')
     expect(computeProcessStatus([q('UPCOMING'), q('PAUSED')])).toBe('PROCESS_UNKNOWN')
+    // ENDED+CANCELED: CANCELED is terminal but not ENDED/RESULTS, so the mix is unresolvable
+    expect(computeProcessStatus([q('ENDED'), q('CANCELED')])).toBe('PROCESS_UNKNOWN')
   })
 })
 
