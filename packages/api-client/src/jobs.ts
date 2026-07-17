@@ -9,6 +9,11 @@ export interface WaitForJobOptions {
   timeoutMs?: number
   /** Abort signal to cancel polling. */
   signal?: AbortSignal
+  /**
+   * When set, a completed job whose `type` does not match this value throws
+   * instead of resolving silently — guards against polling the wrong job id.
+   */
+  expectType?: string
 }
 
 /** Thrown when a polled job ends in the `failed` state. */
@@ -49,12 +54,17 @@ export class JobsClient {
    * @throws {JobFailedError} when the job ends as `failed`.
    */
   async waitFor(jobId: string, opts: WaitForJobOptions = {}): Promise<JobStatusResponse> {
-    const { intervalMs = 1000, timeoutMs = 60000, signal } = opts
+    const { intervalMs = 1000, timeoutMs = 60000, signal, expectType } = opts
     const deadline = Date.now() + timeoutMs
 
     for (;;) {
       const job = await this.get(jobId)
-      if (job.status === 'completed') return job
+      if (job.status === 'completed') {
+        if (expectType && job.type !== expectType) {
+          throw new Error(`Job ${jobId} completed with unexpected type "${job.type}" (expected "${expectType}")`)
+        }
+        return job
+      }
       if (job.status === 'failed') throw new JobFailedError(job)
       if (Date.now() >= deadline) {
         throw new Error(`Timed out waiting for job ${jobId} after ${timeoutMs}ms`)
