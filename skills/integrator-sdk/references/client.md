@@ -74,7 +74,7 @@ await client.bundle.resend(bundleId, { authToken, email: 'voter@example.com' })
 // Check census membership (and whether the voter already voted for a process)
 const { belongs, hasVoted, weight } = await client.bundle.check(bundleId, {
   authToken,
-  electionId: processId,   // vochain id (election.address); omit for bundle-level check
+  electionId: processId,   // vochain id (question.upstreamId); omit for bundle-level check
 })
 
 // Get CSP signature over an ephemeral voter address
@@ -99,48 +99,51 @@ const { weight } = await client.bundle.weight(bundleId, { authToken })
 ## ElectionsClient (`client.elections`)
 
 ```ts
-// Fetch election by Mongo id — merges vochain data (address, chainId, encryptionPublicKeys)
+// Fetch a process by Mongo id — per-question vochain data lives on questions[]
 const election = await client.elections.get(mongoId)
 // election.id              — Mongo id (admin endpoints)
-// election.address         — vochain hex id (voting, bundle check/sign)
-// election.chainId         — Vochain chain id
-// election.questions       — Question[]
-// election.voteType        — { maxCount, maxValue, uniqueChoices, ... }
-// election.electionType    — { secretUntilTheEnd, ... }
-// election.encryptionPublicKeys — EncryptionKey[] | undefined
+// election.orgAddress      — owner organization address
+// election.title           — MultiLangString ({ default, [lang]: string })
+// election.census          — CensusSpec ({ weighted, authFields, twoFaFields, ... })
+// election.questions       — VotingProcessQuestion[]
+//   question.upstreamId        — vochain hex id (voting, bundle check/sign)
+//   question.ballotProtocol    — { maxCount, maxValue, uniqueValues, ... }
+//   question.secretUntilTheEnd — boolean
+//   question.status            — QuestionStatus
+// chainId is NOT on the process — read it from bundle.chainId.
 
-// List elections
-const { elections, total } = await client.elections.list({ organizationId, page, pageSize, status })
+// List processes
+const { processes, pagination } = await client.elections.list({ orgAddress, page, limit, status })
+// List items carry no tallies — vote counts require getResults() per process.
 
-// Get results
-const results = await client.elections.getResults(mongoId)
-// results.results    — string[][] (raw histogram matrix; see ballot protocol)
-// results.voteCount
-// results.status
+// Get per-question results
+const { questions } = await client.elections.getResults(mongoId)
+// questions[i] — { questionId, upstreamId, status, voteCount, finalResults,
+//                 results?: string[][] (raw histogram; see ballot protocol) }
 
-// Admin: create a draft election → returns the draft id (Mongo hex string).
-// Election text (title/description, question & choice titles) may be a plain
+// Admin: create a draft process → returns the draft id (Mongo hex string).
+// Text fields (title/description, question & choice titles) may be a plain
 // string or a { default, <lang> } language map — plain strings are normalized
-// to { default } for you.
+// to { default } for you. Each question carries its own type/ballotProtocol.
 const draftId = await client.elections.create({
   orgAddress,
-  electionParams: {
-    title: 'My election',
-    questions: [
-      { title: 'Approve?', choices: [{ title: 'No', value: 0 }, { title: 'Yes', value: 1 }] },
-    ],
-    voteType: { maxCount: 1, maxValue: 1 },
-    electionType: { autostart: true, interruptible: true },
-    maxCensusSize: 100,
-    // endDate is required; omit startDate (with autostart) to start immediately.
-    endDate: new Date(Date.now() + 2 * 3_600_000).toISOString(),
-  },
+  title: 'My election',
+  // endDate is required; omit startDate to start immediately on publish.
+  endDate: new Date(Date.now() + 2 * 3_600_000).toISOString(),
+  questions: [
+    {
+      title: 'Approve?',
+      type: 'singleChoice',
+      choices: [{ title: 'No', value: 0 }, { title: 'Yes', value: 1 }],
+    },
+  ],
 })
 
 // Admin: publish the draft on-chain. Async — returns { jobId } to poll (or
 // { address, status } if already published). publishAndWait does the polling.
 const published = await client.elections.publishAndWait(draftId)
-// published.address — on-chain (vochain) process id
+// published.address — on-chain address from the publish job. The per-question
+// vochain ids appear as questions[i].upstreamId on the next get(draftId).
 
 // Admin: lifecycle — also async (each returns { jobId }); *AndWait polls for you.
 await client.elections.setStatusAndWait(mongoId, { status: 'paused' })   // pause
@@ -188,16 +191,18 @@ Async transaction outcomes — vote relays, publishes, status changes all return
 // One-shot status check
 const job = await client.jobs.get(jobId)
 // job.status  — 'pending' | 'completed' | 'failed'
+// job.type    — 'relay_vote' | 'publish_process' | 'set_process_status' | ...
 // job.result?.voteID — vote nullifier (relay_vote jobs)
 
 // Poll until terminal state
 const job = await client.jobs.waitFor(jobId, {
-  intervalMs: 1000,   // default 1000
-  timeoutMs: 60000,   // default 60000
-  signal,             // optional AbortSignal
+  intervalMs: 1000,        // default 1000
+  timeoutMs: 60000,        // default 60000
+  signal,                  // optional AbortSignal
+  expectType: 'relay_vote', // optional: throw if the completed job.type differs
 })
 // throws JobFailedError if job.status === 'failed'
-// throws Error on timeout
+// throws Error on timeout, or on job.type mismatch when expectType is set
 ```
 
 `JobFailedError` carries the full `JobStatusResponse` on `error.job`.
@@ -231,36 +236,40 @@ const { addresses } = await client.auth.addresses()
 ## Key types from @vocdoni/api-types
 
 ```ts
-import type { Election, Bundle, VoteType, ElectionType, EncryptionKey } from '@vocdoni/api-types'
+import type { VotingProcessResponse, VotingProcessQuestion, BallotProtocol, Bundle } from '@vocdoni/api-types'
 
-interface Election {
-  id: string                          // Mongo id
-  address: string                     // on-chain vochain hex id (use for voting)
-  chainId?: string                    // Vochain chain id
-  status: ElectionStatus              // 'READY' | 'PAUSED' | 'ENDED' | 'CANCELED' | 'UPCOMING'
-  questions: Question[]
-  voteType: VoteType
-  electionType: ElectionType
-  encryptionPublicKeys?: EncryptionKey[]
-  results?: string[][]
-  finalResults?: boolean
+interface VotingProcessResponse {
+  id: string                          // Mongo id (admin endpoints, getResults)
+  orgAddress: string                  // owner organization address
+  title: MultiLangString              // { default, [lang]: string }
+  description?: MultiLangString
+  startDate: string
+  endDate: string
+  published: boolean
+  census: CensusSpec                  // { weighted?, authFields?, twoFaFields?, ... }
+  questions: VotingProcessQuestion[]
 }
 
-interface VoteType {
+interface VotingProcessQuestion {
+  id: string
+  upstreamId?: string                 // on-chain vochain hex id (voting, bundle check/sign)
+  title: MultiLangString
+  choices: Choice[]                   // { title, value }
+  ballotProtocol: BallotProtocol
+  type: string                        // 'singleChoice' | 'multiChoice' | 'approval' | ...
+  typeSetup?: QuestionTypeSetup       // { minChoices, maxChoices, uniqueChoices }
+  secretUntilTheEnd: boolean
+  status: QuestionStatus              // 'UPCOMING' | 'ONGOING' | 'ENDED' | 'CANCELED' | 'PAUSED' | 'RESULTS' | 'PROCESS_UNKNOWN'
+}
+
+interface BallotProtocol {
   maxCount: number          // ballot length (number of fields)
   maxValue: number          // max value per field
-  uniqueChoices: boolean    // values must be unique (ranked voting)
+  uniqueValues: boolean     // values must be unique (ranked voting)
+  maxTotalCost: number
   maxVoteOverwrites: number
   costExponent: number
-}
-
-interface ElectionType {
-  secretUntilTheEnd: boolean
-}
-
-interface EncryptionKey {
-  index: number   // key slot index
-  key: string     // hex curve25519 public key
+  costFromWeight: boolean
 }
 
 interface Bundle {

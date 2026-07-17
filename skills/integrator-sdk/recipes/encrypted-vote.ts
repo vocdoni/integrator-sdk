@@ -12,11 +12,20 @@
  * choices format: same as single-choice-vote.ts or multichoice-vote.ts; the
  * encryption is transparent to the choices encoding.
  *
+ * ⚠ STATUS: blocked on a backend change. `GET /processes/{id}` (the new
+ * per-question model) does not expose the questions' encryption public keys
+ * yet — they are only served by the legacy `GET /process/{id}` route. The
+ * sealing path below (`encryptionKeys` → NaCl SealedBox) is implemented and
+ * tested in @vocdoni/api-voting; once the backend adds the keys to the
+ * process read, replace the key-sourcing step (step 2) with the real field.
+ * Tracked in GAPS.md.
+ *
  * Prerequisites:
- *   pnpm add @vocdoni/api-client @vocdoni/api-voting
+ *   pnpm add @vocdoni/api-client @vocdoni/api-types @vocdoni/api-voting
  */
 
 import { VocdoniApiClient } from '@vocdoni/api-client'
+import type { EncryptionKey } from '@vocdoni/api-types'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 
 const API_URL = 'https://saas-api.vocdoni.net'
@@ -34,25 +43,27 @@ const voting = new VotingClient({ client })
 const bundle = await client.bundle.get(BUNDLE_ID)
 if (!bundle.chainId) throw new Error('Bundle has no chainId')
 
-// ─── 2. Election info → verify encryption keys are present ───────────────────
-// elections.get() merges vochain data including encryptionPublicKeys.
-// These keys are required to seal the ballot; the vote will be rejected
-// on-chain if they are absent or malformed.
+// ─── 2. Process info → find the secret question ──────────────────────────────
+// Each question maps to its own upstream Vochain process (question.upstreamId),
+// and encryption keys are per upstream process.
 
 const election = await client.elections.get(ELECTION_MONGO_ID)
-const processId = election.address
-if (!processId) throw new Error('Election has no vochain address (not yet published?)')
-
-if (!election.electionType.secretUntilTheEnd) {
-  throw new Error('This election is not secretUntilTheEnd — use single-choice-vote.ts instead')
+const question = election.questions.find((q) => q.secretUntilTheEnd)
+if (!question) {
+  throw new Error('No secretUntilTheEnd question — use single-choice-vote.ts instead')
 }
+const processId = question.upstreamId
+if (!processId) throw new Error('Question has no upstreamId (process not yet published?)')
 
-const encryptionKeys = election.encryptionPublicKeys
-if (!encryptionKeys || encryptionKeys.length === 0) {
+// TODO(encrypted): the new-model process read does not expose the questions'
+// encryption public keys yet (backend change pending — see the STATUS note in
+// the header). When it lands, source them from the question here. The keys are
+// required to seal the ballot; the vote is rejected on-chain without them.
+const encryptionKeys: EncryptionKey[] = []
+if (encryptionKeys.length === 0) {
   throw new Error(
-    'Election is secretUntilTheEnd but has no encryptionPublicKeys. ' +
-      'The backend may not have published the election yet, or the process mapper ' +
-      'failed to include the encryptionKeys field.',
+    'Encryption keys are not available on GET /processes/{id} yet — ' +
+      'this recipe is blocked on a backend change (see header STATUS note).',
   )
 }
 
@@ -94,10 +105,10 @@ if (!signature) throw new Error('CSP did not return a signature')
 // The NaCl SealedBox uses ephemeralPublicKey(32) || box layout.
 // If multiple keys are present, they are applied in ascending index order.
 //
-// The choices format is the same as for a plain election:
+// The choices format is the same as for a plain question (one transaction per
+// question — prefer encodeQuestionBallot from @vocdoni/ballot):
 //   [0]       → single choice, option 0
 //   [1, 0, 1] → multi-choice / approval
-//   [2, 0, 1] → multi-question
 // See single-choice-vote.ts and multichoice-vote.ts for format details.
 
 const jobId = await voting.vote({
@@ -116,8 +127,8 @@ const job = await client.jobs.waitFor(jobId, { timeoutMs: 90_000 })
 console.log('Encrypted vote cast — nullifier:', job.result?.voteID)
 
 // ─── Note on result reading ───────────────────────────────────────────────────
-// election.electionType.secretUntilTheEnd === true means:
-//   - election.finalResults will be false until the election ends
-//   - election.results will be null / empty until decryption completes
-// After the election ends, the Vochain decrypts all sealed ballots on-chain
-// and the results become available via client.elections.getResults(mongoId).
+// question.secretUntilTheEnd === true means, in getResults(mongoId).questions[i]:
+//   - finalResults stays false until the question's process ends
+//   - results (string[][] histogram) stays empty until decryption completes
+// After the process ends, the Vochain decrypts all sealed ballots on-chain
+// and the per-question results become available via getResults().

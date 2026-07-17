@@ -1,8 +1,9 @@
 /**
- * Single-choice vote — pick one option from a list.
+ * Single-choice vote — pick one option per question.
  *
- * Election config (as created by the backend):
- *   voteType.maxCount = 1, voteType.maxValue = numOptions - 1
+ * Ballot protocol for a plain single-choice pick:
+ *   question.ballotProtocol.maxCount = 1
+ *   question.ballotProtocol.maxValue = numOptions - 1
  *
  * choices[0] = 0-based index of the chosen option
  *   [0] → first option ("Yes" / option A / …)
@@ -11,12 +12,17 @@
  *
  * This is the most common election format and the one used by the integration tests.
  *
+ * A process casts ONE Vochain transaction per question — `question.upstreamId`
+ * is that question's on-chain process id. This recipe loops `election.questions`
+ * and votes on each one with the voter's chosen option index.
+ *
  * Prerequisites:
- *   pnpm add @vocdoni/api-client @vocdoni/api-voting
+ *   pnpm add @vocdoni/api-client @vocdoni/api-voting @vocdoni/ballot
  */
 
 import { VocdoniApiClient } from '@vocdoni/api-client'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
+import { encodeQuestionBallot } from '@vocdoni/ballot'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +30,12 @@ const API_URL = 'https://saas-api.vocdoni.net'
 const BUNDLE_ID = '<your-bundle-id>'
 const ELECTION_MONGO_ID = '<election-mongo-id>'
 const VOTER = { memberNumber: '42' } // fields required by bundle.census.authFields
+
+// Voter's chosen option index, keyed by question id. Replace with the voter's
+// real picks (e.g. collected from a UI form).
+const CHOSEN_OPTION_BY_QUESTION: Record<string, number> = {
+  // '<questionId>': 0,
+}
 
 // ─── Setup ───────────────────────────────────────────────────────────────────
 
@@ -35,20 +47,19 @@ const voting = new VotingClient({ client })
 const bundle = await client.bundle.get(BUNDLE_ID)
 if (!bundle.chainId) throw new Error('Bundle has no chainId')
 
-// ─── 2. Fetch election → vochain processId ───────────────────────────────────
-// elections.get() merges the vochain data (address, chainId, encryptionPublicKeys)
-// into the Mongo record. Use election.address (not election.id) for voting.
+// ─── 2. Fetch the process → per-question Vochain ids ─────────────────────────
+// elections.get() returns a VotingProcessResponse: one process, many questions.
+// Each question is its own on-chain Vochain process; question.upstreamId is its
+// hex process id (undefined until that question is published).
 
 const election = await client.elections.get(ELECTION_MONGO_ID)
-const processId = election.address // hex vochain id
-if (!processId) throw new Error('Election has no vochain address (not yet published?)')
 
-// Log the available options so we can pick one. Election text is a language map
-// ({ default, … }), so resolve it rather than casting to string.
+// Log the available options so we can pick one per question. Election text is a
+// language map ({ default, … }), so resolve it rather than casting to string.
 const text = (t: string | Record<string, string>) => (typeof t === 'string' ? t : t.default)
 console.log('Questions:')
 for (const [qi, q] of election.questions.entries()) {
-  console.log(`  Q${qi}: ${text(q.title)}`)
+  console.log(`  Q${qi} (${q.id}): ${text(q.title)}`)
   for (const [ci, c] of q.choices.entries()) {
     console.log(`    [${ci}] ${text(c.title)}`)
   }
@@ -57,6 +68,7 @@ for (const [qi, q] of election.questions.entries()) {
 // ─── 3. Auth (auth-only census — no 2FA step) ────────────────────────────────
 // For a 2FA census: call authStep0() then authStep1(otp).
 // Detect auth type: bundle.census.twoFaFields is empty/absent → auth-only.
+// One auth token is obtained once and reused for every question in the bundle.
 
 const isAuthOnly = (bundle.census?.twoFaFields?.length ?? 0) === 0
 
@@ -72,50 +84,55 @@ if (!isAuthOnly) {
   authToken = res1.authToken ?? authToken
 }
 
-// ─── 4. Check membership ─────────────────────────────────────────────────────
+// ─── 4. Check membership (once per bundle) ───────────────────────────────────
 
-const { belongs, hasVoted } = await client.bundle.check(BUNDLE_ID, {
-  authToken,
-  electionId: processId,
-})
+const { belongs } = await client.bundle.check(BUNDLE_ID, { authToken })
 if (!belongs) throw new Error('Voter is not in this census')
-if (hasVoted) throw new Error('Voter has already voted in this election')
 
-// ─── 5. CSP sign ─────────────────────────────────────────────────────────────
+// ─── 5-8. Sign, build, relay and poll — once per question ───────────────────
+// A multi-question process casts one Vochain transaction per question, so the
+// CSP-sign / build-transaction / relay / poll steps repeat for every question.
 
-const signer = new EphemeralSigner()
-const { signature, weight } = await client.bundle.sign(BUNDLE_ID, {
-  authToken,
-  electionId: processId,
-  payload: signer.address,
-})
-if (!signature) throw new Error('CSP did not return a signature')
+for (const question of election.questions) {
+  const processId = question.upstreamId
+  if (!processId) {
+    console.warn(`Question ${question.id} has no upstreamId yet (not published?) — skipping`)
+    continue
+  }
 
-// ─── 6. Cast the vote ────────────────────────────────────────────────────────
-// choices: [optionIndex] — single element, 0-based index of the chosen option.
-//
-// Examples:
-//   [0] → vote for the first option
-//   [1] → vote for the second option
-//
-// election.voteType.maxCount must equal choices.length (1 here)
-// election.voteType.maxValue must be >= chosen index
+  // hasVoted is reported per question when `electionId` is passed to check().
+  const { hasVoted } = await client.bundle.check(BUNDLE_ID, { authToken, electionId: processId })
+  if (hasVoted) {
+    console.log(`Already voted on question ${question.id} — skipping`)
+    continue
+  }
 
-const CHOSEN_OPTION = 0 // ← change to the option the voter picked
+  const signer = new EphemeralSigner()
+  const { signature, weight } = await client.bundle.sign(BUNDLE_ID, {
+    authToken,
+    electionId: processId,
+    payload: signer.address,
+  })
+  if (!signature) throw new Error(`CSP did not return a signature for question ${question.id}`)
 
-const jobId = await voting.vote({
-  processId,
-  chainId: bundle.chainId,
-  choices: [CHOSEN_OPTION],
-  signer,
-  cspSignature: signature,
-  cspWeight: weight,
-})
+  // choices: [optionIndex] — single element, 0-based index of the chosen option.
+  // encodeQuestionBallot infers the ballot type from question.ballotProtocol; for
+  // a plain single-choice question it just validates and wraps the index.
+  const chosenOption = CHOSEN_OPTION_BY_QUESTION[question.id] ?? 0 // ← set the voter's pick
+  const choices = encodeQuestionBallot(question, [chosenOption])
 
-// ─── 7. Poll for the nullifier ───────────────────────────────────────────────
+  const jobId = await voting.vote({
+    processId,
+    chainId: bundle.chainId,
+    choices,
+    signer,
+    cspSignature: signature,
+    cspWeight: weight,
+  })
 
-const job = await client.jobs.waitFor(jobId, { timeoutMs: 90_000 })
-console.log('Vote cast — nullifier:', job.result?.voteID)
+  const job = await client.jobs.waitFor(jobId, { timeoutMs: 90_000 })
+  console.log(`Vote cast on question ${question.id} — nullifier:`, job.result?.voteID)
+}
 
 // ─── Helpers (replace with your own) ─────────────────────────────────────────
 

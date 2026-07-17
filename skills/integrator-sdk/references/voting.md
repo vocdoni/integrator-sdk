@@ -51,14 +51,14 @@ await client.elections.vote({ txPayload })
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `processId` | `string` | yes | On-chain (Vochain) hex id — `election.address`, not `election.id` |
-| `choices` | `number[]` | yes | Ballot values — see "Choices format" below |
-| `chainId` | `string` | yes | From `bundle.chainId` or `election.chainId` |
+| `processId` | `string` | yes | On-chain (Vochain) hex id for ONE question — `question.upstreamId` from `VotingProcessResponse.questions[i]`, not the process's Mongo `id` |
+| `choices` | `number[]` | yes | Ballot values for that one question — see "Choices format" below |
+| `chainId` | `string` | yes | From `bundle.chainId` — there is no per-process or per-question `chainId` |
 | `signer` | `EphemeralSigner` | yes | Fresh per-vote ephemeral keypair |
 | `cspSignature` | `string` | yes | Hex signature from `bundle.sign()` |
 | `cspWeight` | `string` | no | Hex census weight from `bundle.sign()`; omit if absent |
-| `encryptionKeys` | `EncryptionKey[]` | no | Required for `secretUntilTheEnd` elections — from `election.encryptionPublicKeys` |
-| `proofType` | `ProofCA_Type` | no | Defaults to `ECDSA_PIDSALTED` (correct for all SaaS bundle elections) |
+| `encryptionKeys` | `EncryptionKey[]` | no | Required when `question.secretUntilTheEnd` is `true`; see "Encrypted elections" below for how keys are sourced |
+| `proofType` | `ProofCA_Type` | no | Defaults to `ECDSA_PIDSALTED` (correct for all SaaS bundle processes) |
 
 ---
 
@@ -81,13 +81,22 @@ Never reuse a signer across votes. One `new EphemeralSigner()` per vote call.
 
 ## Choices format
 
-`choices` maps directly to the `votes` field in the on-chain vote package JSON. The array length must equal `election.voteType.maxCount`; each value must be in `[0, election.voteType.maxValue]`.
+`buildVoteTransaction` builds ONE transaction for ONE question. `choices` maps
+directly to the `votes` field in that question's on-chain vote package JSON.
+The array length must equal `question.ballotProtocol.maxCount`; each value
+must be in `[0, question.ballotProtocol.maxValue]`.
 
-The encoding pattern depends on how the election was created:
+A multi-question process still casts one transaction per question — call
+`buildVoteTransaction` (or `voting.vote`) once per entry in
+`election.questions`, each with its own `processId` (`question.upstreamId`)
+and `choices` array. There is no format where a single `choices` array spans
+multiple questions.
 
-### Single question, pick one option (index format)
+The encoding pattern depends on the question's `ballotProtocol`:
 
-`maxCount = 1`, `maxValue = numOptions - 1`
+### Single choice, pick one option (index format)
+
+`ballotProtocol.maxCount = 1`, `ballotProtocol.maxValue = numOptions - 1`
 
 The array has one element: the **0-based index** of the chosen option.
 
@@ -100,9 +109,9 @@ choices: [2]   // voted "Abstain"
 
 This is the most common format and the one used by the integration tests.
 
-### Single question, approve multiple options (binary format)
+### Approve multiple options (binary format)
 
-`maxCount = numOptions`, `maxValue = 1`
+`ballotProtocol.maxCount = numOptions`, `ballotProtocol.maxValue = 1`
 
 The array has one element per option: `1` = approved, `0` = not approved.
 
@@ -111,22 +120,12 @@ The array has one element per option: `1` = approved, `0` = not approved.
 choices: [1, 0, 1, 0]
 ```
 
-For approval elections that require exactly N approvals, `maxTotalCost = minTotalCost = N` enforces the count on-chain.
-
-### Multiple questions, one choice per question
-
-`maxCount = numQuestions`, `maxValue = maxOptionsPerQuestion - 1`
-
-One element per question; each element is the chosen option index for that question.
-
-```ts
-// 3 questions, each with 4 options; voter picks option 2 on Q1, option 0 on Q2, option 3 on Q3
-choices: [2, 0, 3]
-```
+For approval questions that cap the number of approvals, `ballotProtocol.maxTotalCost = N` enforces the count on-chain.
 
 ### Ranked / rated (unique values)
 
-`maxCount = numOptions`, `maxValue = maxRank`, `uniqueChoices = true`
+`ballotProtocol.maxCount = numOptions`, `ballotProtocol.maxValue = maxRank`,
+`ballotProtocol.uniqueValues = true`
 
 Each option is ranked; values must not repeat.
 
@@ -135,34 +134,46 @@ Each option is ranked; values must not repeat.
 choices: [0, 2, 1]
 ```
 
+Prefer `encodeQuestionBallot(question, selections)` from `@vocdoni/ballot`
+over hand-building this array — it infers the ballot type from
+`question.ballotProtocol` and handles multichoice abstain-padding for you
+(see the recipes).
+
 ---
 
 ## Encrypted elections (secretUntilTheEnd)
 
-Pass `encryptionPublicKeys` from the election object. `buildVoteTransaction` seals the ballot with NaCl SealedBox automatically; you don't call `BallotEncryptor` directly.
+Each question carries its own `secretUntilTheEnd: boolean`
+(`VotingProcessQuestion.secretUntilTheEnd`). When `true`,
+`buildVoteTransaction` seals the ballot with NaCl SealedBox automatically if
+you pass `encryptionKeys`; you don't call `BallotEncryptor` directly.
 
 ```ts
 const election = await client.elections.get(electionMongoId)
-// election.electionType.secretUntilTheEnd === true
-// election.encryptionPublicKeys: Array<{ index: number; key: string }> — hex curve25519 public keys
+const question = election.questions[0]
+// question.secretUntilTheEnd === true
+
+const bundle = await client.bundle.get(bundleId)
 
 const txPayload = buildVoteTransaction({
-  processId: election.address,
+  processId: question.upstreamId!,
   choices: [0],
-  chainId: election.chainId!,
+  chainId: bundle.chainId!,
   signer,
   cspSignature: signature,
   cspWeight: weight,
-  encryptionKeys: election.encryptionPublicKeys, // ← triggers NaCl sealing
+  encryptionKeys, // ← triggers NaCl sealing; Array<{ index: number; key: string }>
 })
 ```
 
 When multiple keys are present they are applied in ascending `index` order (innermost first), matching how the Vochain unseals them.
 
-> **Freshly published secret elections:** the keykeepers publish the encryption
-> keys asynchronously, so `election.encryptionPublicKeys` can be empty for a few
-> seconds right after publish. Poll `client.elections.get(mongoId)` until it is
-> populated before building the vote (see `integration/full-flow.itest.ts`).
+> **Key sourcing:** the exact field that exposes a question's per-question
+> encryption public keys is still being finalized on this branch — check
+> `@vocdoni/api-types` (`VotingProcessQuestion`) for the current shape before
+> wiring this up. Once available, expect the keykeepers to publish keys
+> asynchronously right after publish (poll until populated — see
+> `integration/full-flow.itest.ts`).
 
 ---
 
