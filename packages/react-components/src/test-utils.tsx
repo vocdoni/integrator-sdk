@@ -121,21 +121,23 @@ export function makeProcess(opts: MakeProcessOptions = {}): VotingProcessRespons
     title: { default: q.title ?? `Question ${i + 1}` },
     choices: (q.choices ?? []).map((c) => ({ title: { default: c.title }, value: c.value })),
     ballotProtocol: { ...DEFAULT_BALLOT_PROTOCOL, ...bpOverrides, ...(q.ballotProtocol ?? {}) },
-    type: 'singleChoice',
+    type: 'singlechoice',
     secretUntilTheEnd: q.secretUntilTheEnd ?? electionType?.secretUntilTheEnd ?? false,
     status: q.status ?? status,
   }))
 
-  return {
+  // Process reads return orgAddress as unprefixed lowercase hex.
+  const common = {
     id: rest.id ?? 'proc-1',
-    orgAddress: '0x0000000000000000000000000000000000000001',
+    orgAddress: '0000000000000000000000000000000000000001',
     title: { default: rest.title ?? 'Test Process' },
     startDate: rest.startDate ?? '2024-01-01T00:00:00Z',
     endDate: rest.endDate ?? '2024-12-31T23:59:59Z',
-    published: rest.published ?? true,
     census: rest.census ?? {},
     questions,
   }
+
+  return (rest.published ?? true) ? { ...common, published: true } : { ...common, published: false }
 }
 
 /** Builds a {@link VotingProcessResultsResponse} for use in Results tests. */

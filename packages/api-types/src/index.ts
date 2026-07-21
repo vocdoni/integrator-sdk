@@ -347,6 +347,11 @@ export interface ElectionMetadata {
 }
 
 export interface ElectionListParams {
+  /**
+   * Owner organization address filter. The returned list items echo it as
+   * UNPREFIXED lowercase hex regardless of the form passed here — see
+   * {@link VotingProcessBase.orgAddress}.
+   */
   orgAddress: string
   status?: string
   page?: number
@@ -378,6 +383,11 @@ export interface VotingProcessQuestion {
   choices: Choice[]
   eligibleMemberIds?: string[]
   ballotProtocol: BallotProtocol
+  /**
+   * Named question type as stored — `"singlechoice"` / `"multichoice"` when
+   * the question was created with one (see {@link VotingProcessQuestionType}),
+   * empty for raw-`ballotProtocol` questions. Kept as `string` defensively.
+   */
   type: string
   typeSetup?: QuestionTypeSetup
   secretUntilTheEnd: boolean
@@ -399,20 +409,63 @@ export interface EligibilitySpec {
   memberIds?: string[]
 }
 
-export interface VotingProcessResponse {
+/**
+ * Fields shared by both variants of {@link VotingProcessResponse}. Returned by
+ * `GET /processes/{id}` and as the list items of `GET /processes`.
+ */
+export interface VotingProcessBase {
+  /** Process id, a Mongo ObjectID (24-hex chars) — never a `0x…` hex id. */
   id: string
-  /** Owner organization address, lowercase `0x…` hex. */
+  /**
+   * Owner organization address as UNPREFIXED lowercase hex (e.g.
+   * `"1a9ffe1f4c2493578ce4a7dbebd7d95433eee6f0"`). Beware: other endpoints
+   * (`GET /auth/addresses`, `GET /organizations/{address}`) return the same
+   * logical value `0x`-prefixed, so never compare the raw strings across
+   * endpoints — strip/normalize the `0x` prefix first.
+   */
   orgAddress: string
   title: MultiLangString
   description?: MultiLangString
   header?: string
   streamUri?: string
-  startDate: string
-  endDate: string
-  published: boolean
   census: CensusSpec
   questions: VotingProcessQuestion[]
 }
+
+/**
+ * A process that has not been published yet. Drafts can legitimately lack both
+ * dates: `endDate` is optional at creation and `startDate` may be omitted to
+ * mean "start immediately on publish". The backend serializes both with
+ * `omitempty`, so absent means absent — do not synthesize values.
+ */
+export interface DraftVotingProcessResponse extends VotingProcessBase {
+  published: false
+  startDate?: string
+  endDate?: string
+}
+
+/**
+ * A published process. Publish validation hard-requires a future `endDate`, so
+ * it is always present.
+ *
+ * Caveat: the `startDate` guarantee lands with saas-backend#586 (backfills
+ * `startDate` at publish), which is not deployed yet — until it is, published
+ * immediate-start processes may still omit `startDate`, so runtime consumers
+ * should stay defensive about its absence for now.
+ */
+export interface PublishedVotingProcessResponse extends VotingProcessBase {
+  published: true
+  startDate: string
+  endDate: string
+}
+
+/**
+ * Response of `GET /processes/{id}` (and list items of `GET /processes`),
+ * discriminated on `published`: drafts may lack `startDate`/`endDate`;
+ * published processes always carry them. Narrow on `published` before reading
+ * the dates.
+ */
+export type VotingProcessResponse = DraftVotingProcessResponse | PublishedVotingProcessResponse
 
 export interface VotingProcessListResponse {
   processes: VotingProcessResponse[]
@@ -460,7 +513,24 @@ export interface VotingProcessValidateResponse {
   errors?: string[]
 }
 
-/** Question input for {@link CreateVotingProcessRequest}. Each question carries its own ballot protocol. */
+/**
+ * Named question types the backend accepts — lowercase only. CamelCase
+ * variants (`"singleChoice"`, `"multiChoice"`) are rejected with
+ * `unsupported type` (error code 40037), and there is no `"approval"` type.
+ */
+export const VOTING_PROCESS_QUESTION_TYPES = ['singlechoice', 'multichoice'] as const
+
+/** Named question type — see {@link VOTING_PROCESS_QUESTION_TYPES}. */
+export type VotingProcessQuestionType = (typeof VOTING_PROCESS_QUESTION_TYPES)[number]
+
+/**
+ * Question input for {@link CreateVotingProcessRequest}. Each question carries
+ * its own ballot protocol.
+ *
+ * Each question requires EITHER a named `type` OR a raw `ballotProtocol`;
+ * omitting both is rejected with "a type or a ballotProtocol is required".
+ * When both are given, `ballotProtocol` wins.
+ */
 export interface VotingProcessQuestionRequest {
   title: LocalizedInput
   description?: LocalizedInput
@@ -469,9 +539,17 @@ export interface VotingProcessQuestionRequest {
   ballotProtocol?: BallotProtocol
   /** Per-question member eligibility restriction. */
   census?: EligibilitySpec
-  /** Named question type (e.g. "singleChoice", "multiChoice", "approval"). */
-  type?: string
-  /** Type-specific configuration (required for "multiChoice"). */
+  /**
+   * Named question type. Lowercase only — the backend rejects `"singleChoice"`
+   * / `"multiChoice"` with `unsupported type` (40037). Required unless
+   * `ballotProtocol` is given (which takes precedence over it).
+   */
+  type?: VotingProcessQuestionType
+  /**
+   * Type-specific configuration. Required for `"multichoice"`, which validates
+   * `1 <= maxChoices <= choices.length` and `minChoices <= maxChoices`.
+   * `"singlechoice"` ignores it.
+   */
   typeSetup?: QuestionTypeSetup
   secretUntilTheEnd?: boolean
   metadata?: Record<string, unknown>
@@ -479,6 +557,12 @@ export interface VotingProcessQuestionRequest {
 
 /** Body of `POST /processes` and `PUT /processes/{id}` — flat process draft with per-question ballot protocols. */
 export interface CreateVotingProcessRequest {
+  /**
+   * Owner organization address. The request side tolerates the `0x`-prefixed
+   * form (verified live), but note the asymmetry: process reads
+   * ({@link VotingProcessResponse}) always return it back as UNPREFIXED
+   * lowercase hex, so don't expect to read back what you sent.
+   */
   orgAddress: string
   census?: CensusSpec
   title: LocalizedInput
@@ -492,6 +576,7 @@ export interface CreateVotingProcessRequest {
 
 /** Response of `POST /processes`. */
 export interface CreateVotingProcessResponse {
+  /** New process id — a Mongo ObjectID (24-hex chars), never a `0x…` hex id. */
   processId: string
 }
 

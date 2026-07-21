@@ -105,7 +105,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         {
           label: 'single-choice',
           secret: false,
-          // singleChoice ballot: one value — the chosen option ("Yes" = 1).
+          // singlechoice ballot: one value — the chosen option ("Yes" = 1).
           choices: [1],
           body: {
             orgAddress,
@@ -119,7 +119,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
                   { title: 'No', value: 0 },
                   { title: 'Yes', value: 1 },
                 ],
-                type: 'singleChoice',
+                type: 'singlechoice',
               },
             ],
           },
@@ -127,7 +127,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         {
           label: 'multi-choice',
           secret: false,
-          // multiChoice ballot: one picked option index per slot (maxChoices
+          // multichoice ballot: one picked option index per slot (maxChoices
           // slots) — pick "A" (0) and "C" (2), filling both slots so no
           // abstain padding is needed.
           choices: [0, 2],
@@ -143,7 +143,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
                   { title: 'B', value: 1 },
                   { title: 'C', value: 2 },
                 ],
-                type: 'multiChoice',
+                type: 'multichoice',
                 typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: true },
               },
             ],
@@ -165,7 +165,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         //           { title: 'No', value: 0 },
         //           { title: 'Yes', value: 1 },
         //         ],
-        //         type: 'singleChoice',
+        //         type: 'singlechoice',
         //         secretUntilTheEnd: true,
         //       },
         //     ],

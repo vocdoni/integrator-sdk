@@ -38,7 +38,8 @@ export const mockElection = {
 
 export const mockProcess = {
   id: 'abc123',
-  orgAddress: [],
+  // Process reads return orgAddress as unprefixed lowercase hex.
+  orgAddress: '1a9ffe1f4c2493578ce4a7dbebd7d95433eee6f0',
   title: { default: 'Test Process' },
   description: { default: 'A test process' },
   startDate: '2024-01-01T00:00:00Z',
@@ -61,7 +62,7 @@ export const mockProcess = {
         uniqueValues: false,
         costFromWeight: false,
       },
-      type: 'singleChoice',
+      type: 'singlechoice',
       secretUntilTheEnd: false,
       status: 'ONGOING',
     },

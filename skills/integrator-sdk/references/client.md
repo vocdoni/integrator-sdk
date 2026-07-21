@@ -102,7 +102,9 @@ const { weight } = await client.bundle.weight(bundleId, { authToken })
 // Fetch a process by Mongo id — per-question vochain data lives on questions[]
 const election = await client.elections.get(mongoId)
 // election.id              — Mongo id (admin endpoints)
-// election.orgAddress      — owner organization address
+// election.orgAddress      — owner org address, UNPREFIXED lowercase hex.
+//                            Other endpoints (auth/addresses, organizations/{address})
+//                            return the same value 0x-prefixed — normalize before comparing.
 // election.title           — MultiLangString ({ default, [lang]: string })
 // election.census          — CensusSpec ({ weighted, authFields, twoFaFields, ... })
 // election.questions       — VotingProcessQuestion[]
@@ -133,7 +135,12 @@ const draftId = await client.elections.create({
   questions: [
     {
       title: 'Approve?',
-      type: 'singleChoice',
+      // Lowercase only: 'singlechoice' | 'multichoice'. camelCase is rejected
+      // (40037 unsupported type). Alternatively pass a raw ballotProtocol
+      // (which wins when both are given); omitting both is an error.
+      // 'multichoice' requires typeSetup ({ maxChoices, minChoices, uniqueChoices });
+      // 'singlechoice' ignores typeSetup.
+      type: 'singlechoice',
       choices: [{ title: 'No', value: 0 }, { title: 'Yes', value: 1 }],
     },
   ],
@@ -238,16 +245,29 @@ const { addresses } = await client.auth.addresses()
 ```ts
 import type { VotingProcessResponse, VotingProcessQuestion, BallotProtocol, Bundle } from '@vocdoni/api-types'
 
-interface VotingProcessResponse {
-  id: string                          // Mongo id (admin endpoints, getResults)
-  orgAddress: string                  // owner organization address
+// Discriminated union on `published`: drafts may lack both dates; published
+// processes always carry endDate (startDate guaranteed once saas-backend#586
+// deploys — stay defensive about it until then). Narrow before reading dates.
+type VotingProcessResponse = DraftVotingProcessResponse | PublishedVotingProcessResponse
+
+interface VotingProcessBase {
+  id: string                          // Mongo ObjectID (admin endpoints, getResults) — never 0x-hex
+  orgAddress: string                  // owner org address, UNPREFIXED lowercase hex (other
+                                      // endpoints return it 0x-prefixed — normalize to compare)
   title: MultiLangString              // { default, [lang]: string }
   description?: MultiLangString
-  startDate: string
-  endDate: string
-  published: boolean
   census: CensusSpec                  // { weighted?, authFields?, twoFaFields?, ... }
   questions: VotingProcessQuestion[]
+}
+interface DraftVotingProcessResponse extends VotingProcessBase {
+  published: false
+  startDate?: string
+  endDate?: string
+}
+interface PublishedVotingProcessResponse extends VotingProcessBase {
+  published: true
+  startDate: string
+  endDate: string
 }
 
 interface VotingProcessQuestion {
@@ -256,7 +276,8 @@ interface VotingProcessQuestion {
   title: MultiLangString
   choices: Choice[]                   // { title, value }
   ballotProtocol: BallotProtocol
-  type: string                        // 'singleChoice' | 'multiChoice' | 'approval' | ...
+  type: string                        // 'singlechoice' | 'multichoice' when created with a named
+                                      // type; empty for raw-ballotProtocol questions
   typeSetup?: QuestionTypeSetup       // { minChoices, maxChoices, uniqueChoices }
   secretUntilTheEnd: boolean
   status: QuestionStatus              // 'UPCOMING' | 'ONGOING' | 'ENDED' | 'CANCELED' | 'PAUSED' | 'RESULTS' | 'PROCESS_UNKNOWN'

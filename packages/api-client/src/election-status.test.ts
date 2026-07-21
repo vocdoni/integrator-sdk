@@ -18,7 +18,7 @@ const q = (status: VotingProcessQuestion['status']): VotingProcessQuestion =>
 
 const base: VotingProcessResponse = {
   id: 'proc-1',
-  orgAddress: '0x0000000000000000000000000000000000000001',
+  orgAddress: '0000000000000000000000000000000000000001',
   title: { default: 'Test process' },
   startDate: '2024-01-01T00:00:00Z',
   endDate: '2024-12-31T23:59:59Z',
