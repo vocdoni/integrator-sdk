@@ -31,10 +31,12 @@ export class VocdoniApiClient {
         baseUrl: config.apiUrl,
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         parseResponse: async (res) => {
-          if (res.status === 204 || res.headers.get('content-length') === '0') {
-            return undefined as never
-          }
-          return res.json()
+          if (res.status === 204) return undefined as never
+          const text = await res.text()
+          // Write endpoints (process update/delete, status changes) answer a
+          // bare 200 with a "\n" body — treat any blank body as empty, not JSON.
+          if (!text.trim()) return undefined as never
+          return JSON.parse(text)
         },
       }
     })

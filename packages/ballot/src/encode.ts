@@ -160,7 +160,7 @@ function ballotProtocolToVoteType(bp: BallotProtocol): VoteType {
  * @param selections - The voter's raw selections for this question
  */
 export function encodeQuestionBallot(
-  question: { ballotProtocol?: BallotProtocol; choices: Choice[] },
+  question: { ballotProtocol?: BallotProtocol; type?: string; choices: Choice[] },
   selections: number[]
 ): number[] {
   const ballotType = inferQuestionBallotType(question)
@@ -168,14 +168,22 @@ export function encodeQuestionBallot(
 
   switch (ballotType) {
     case BallotType.SingleChoice:
-      if (selections.length === 0) throw new Error('single-choice requires exactly one choice')
+      if (selections.length !== 1) {
+        throw new Error(`single-choice requires exactly one choice (got ${selections.length})`)
+      }
       return [selections[0]]
 
     case BallotType.Approval:
       return encodeApproval(fakeQuestion, selections)
 
     case BallotType.MultiChoice:
-      return encodeMultiChoice(ballotProtocolToVoteType(question.ballotProtocol!), fakeQuestion, selections)
+      // Reachable via the named-type fallback in inferQuestionBallotType: the
+      // slot count and abstain reservation live in the protocol, so encoding
+      // is impossible without it.
+      if (!question.ballotProtocol) {
+        throw new Error('multichoice question has no ballotProtocol; cannot encode')
+      }
+      return encodeMultiChoice(ballotProtocolToVoteType(question.ballotProtocol), fakeQuestion, selections)
 
     case BallotType.Budget:
     case BallotType.Quadratic:

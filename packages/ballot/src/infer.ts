@@ -53,10 +53,29 @@ export function inferBallotType(input: Pick<Election, 'questions' | 'voteType'>)
 /**
  * Infer the ballot type for a single question from its `ballotProtocol`.
  * Mirrors the {@link inferBallotType} decision tree for the per-question model.
+ *
+ * Backend reads always carry a `ballotProtocol` (it is derived from the named
+ * type at creation), so the fallback path only applies to partial shapes
+ * (e.g. `PublicQuestionResponse`): the named `type` is used when recognized,
+ * and anything else throws rather than silently assuming single-choice.
  */
-export function inferQuestionBallotType(question: { ballotProtocol?: BallotProtocol }): BallotType {
+export function inferQuestionBallotType(question: {
+  ballotProtocol?: BallotProtocol
+  type?: string
+}): BallotType {
   const bp = question.ballotProtocol
-  if (!bp) return BallotType.SingleChoice
+  if (!bp) {
+    switch (question.type) {
+      case 'singlechoice':
+        return BallotType.SingleChoice
+      case 'multichoice':
+        return BallotType.MultiChoice
+      default:
+        throw new Error(
+          'cannot infer ballot type: question has neither a ballotProtocol nor a supported type'
+        )
+    }
+  }
   if (bp.maxValue === 0) {
     return bp.costExponent === 2 ? BallotType.Quadratic : BallotType.Budget
   }

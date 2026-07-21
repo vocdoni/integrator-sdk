@@ -73,6 +73,45 @@ describe('ElectionResults', () => {
     expect(choices[3].percent).toBe('66.7%')
   })
 
+  it('matches results to questions by questionId, not array position', () => {
+    const q2 = {
+      title: 'Q2',
+      choices: [
+        { title: 'C', value: 0 },
+        { title: 'D', value: 1 },
+      ],
+    }
+    state.election = makeProcess({ questions: [question, q2] })
+    state.status = 'RESULTS'
+    // Results arrive reversed: q-1 first, q-0 second.
+    state.results = makeResults([
+      { questionId: 'q-1', results: [['7', '0']] },
+      { questionId: 'q-0', results: [['0', '9']] },
+    ])
+    renderWithComponents(<ElectionResults />, slots)
+
+    expect(captured.questions[0].choices.map((c: any) => c.votes)).toEqual(['0', '9'])
+    expect(captured.questions[1].choices.map((c: any) => c.votes)).toEqual(['7', '0'])
+  })
+
+  it('renders zero votes for a question missing from the results response', () => {
+    const q2 = {
+      title: 'Q2',
+      choices: [
+        { title: 'C', value: 0 },
+        { title: 'D', value: 1 },
+      ],
+    }
+    state.election = makeProcess({ questions: [question, q2] })
+    state.status = 'RESULTS'
+    // Only the second question has results (e.g. the first is not yet published).
+    state.results = makeResults([{ questionId: 'q-1', results: [['3', '4']] }])
+    renderWithComponents(<ElectionResults />, slots)
+
+    expect(captured.questions[0].choices.map((c: any) => c.votes)).toEqual(['0', '0'])
+    expect(captured.questions[1].choices.map((c: any) => c.votes)).toEqual(['3', '4'])
+  })
+
   it('renders nothing for a canceled election', () => {
     state.election = makeProcess({ questions: [question] })
     state.status = 'CANCELED'

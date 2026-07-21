@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { inferBallotType } from './infer.js'
+import { inferBallotType, inferQuestionBallotType } from './infer.js'
 import { BallotType } from './types.js'
 import type { Election } from '@vocdoni/api-types'
 
@@ -118,5 +118,40 @@ describe('inferBallotType', () => {
       const election = createElection({ maxValue: 0, costExponent: 1, maxCount: 1 })
       expect(inferBallotType(election)).toBe(BallotType.Budget)
     })
+  })
+})
+
+describe('inferQuestionBallotType', () => {
+  const bp = (overrides: Record<string, number | boolean> = {}) => ({
+    maxCount: 1,
+    maxValue: 1,
+    maxVoteOverwrites: 0,
+    maxTotalCost: 0,
+    costExponent: 1,
+    uniqueValues: false,
+    costFromWeight: false,
+    ...overrides,
+  })
+
+  it('infers from ballotProtocol when present (type is ignored)', () => {
+    expect(inferQuestionBallotType({ ballotProtocol: bp() })).toBe(BallotType.SingleChoice)
+    expect(inferQuestionBallotType({ ballotProtocol: bp({ maxCount: 2, maxValue: 3 }) })).toBe(
+      BallotType.MultiChoice
+    )
+    // A protocol wins over a conflicting named type.
+    expect(
+      inferQuestionBallotType({ ballotProtocol: bp(), type: 'multichoice' })
+    ).toBe(BallotType.SingleChoice)
+  })
+
+  it('falls back to the named type when ballotProtocol is missing', () => {
+    expect(inferQuestionBallotType({ type: 'singlechoice' })).toBe(BallotType.SingleChoice)
+    expect(inferQuestionBallotType({ type: 'multichoice' })).toBe(BallotType.MultiChoice)
+  })
+
+  it('throws when neither ballotProtocol nor a supported type is present', () => {
+    expect(() => inferQuestionBallotType({})).toThrow(/cannot infer ballot type/)
+    expect(() => inferQuestionBallotType({ type: 'singleChoice' })).toThrow(/cannot infer/)
+    expect(() => inferQuestionBallotType({ type: 'approval' })).toThrow(/cannot infer/)
   })
 })

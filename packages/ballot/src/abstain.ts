@@ -33,7 +33,11 @@ export function multichoiceReservesAbstain(input: Pick<Election, 'questions' | '
 }
 
 /** True when a per-question multichoice ballot reserves abstain sentinels. */
-export function questionReservesAbstain(question: { ballotProtocol?: BallotProtocol; choices: Choice[] }): boolean {
+export function questionReservesAbstain(question: {
+  ballotProtocol?: BallotProtocol
+  type?: string
+  choices: Choice[]
+}): boolean {
   if (inferQuestionBallotType(question) !== BallotType.MultiChoice) return false
   const bp = question.ballotProtocol
   if (!bp) return false

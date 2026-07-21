@@ -580,7 +580,7 @@ export interface CreateVotingProcessResponse {
   processId: string
 }
 
-/** Body of `PUT /processes/{id}/questions/{qId}/status` — single-question status change. */
+/** Identifies one target question by id inside {@link SetQuestionsStatusRequest}. */
 export interface QuestionStatusID {
   id: string
 }
@@ -734,12 +734,35 @@ export interface ConsumedAddressRequest {
   authToken: string
 }
 
+/** Legacy response of `POST /process/{id}/sign-info` (single-election model). */
 export interface ConsumedAddressResponse {
   authToken?: string
   /** Vote nullifier of the consumed process. */
   nullifier: string
   /** Consumption timestamp. */
   at: string
+}
+
+/** One question's consumed voting info in {@link ProcessSignInfoResponse}. */
+export interface QuestionConsumedAddress {
+  questionId: string
+  /** Vochain election id of the question (64-hex). */
+  upstreamId: string
+  /** Ephemeral address that consumed the question's election. */
+  address: string
+  /** Vote nullifier. */
+  nullifier: string
+  /** Consumption timestamp. */
+  at: string
+}
+
+/**
+ * Response of `POST /processes/{id}/sign-info` — the voter's consumed
+ * addresses/nullifiers across a voting process, one entry per question the
+ * voter has already cast (questions not voted are omitted).
+ */
+export interface ProcessSignInfoResponse {
+  consumed: QuestionConsumedAddress[]
 }
 
 // ─── Pagination ─────────────────────────────────────────────────────────────────

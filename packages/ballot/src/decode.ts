@@ -93,7 +93,7 @@ function decodeQuestion(
  * Decode results for a single question using its own {@link BallotProtocol}.
  */
 export function decodeQuestionResults(
-  question: { ballotProtocol?: BallotProtocol; choices: Choice[] },
+  question: { ballotProtocol?: BallotProtocol; type?: string; choices: Choice[] },
   results: string[][]
 ): DecodedQuestionResults {
   const ballotType = inferQuestionBallotType(question)

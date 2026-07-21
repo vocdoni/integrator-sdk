@@ -152,13 +152,21 @@ const published = await client.elections.publishAndWait(draftId)
 // published.address — on-chain address from the publish job. The per-question
 // vochain ids appear as questions[i].upstreamId on the next get(draftId).
 
-// Admin: lifecycle — also async (each returns { jobId }); *AndWait polls for you.
-await client.elections.setStatusAndWait(mongoId, { status: 'paused' })   // pause
-await client.elections.setStatusAndWait(mongoId, { status: 'ready' })    // resume
-await client.elections.setStatusAndWait(mongoId, { status: 'ended' })    // end early
-await client.elections.setStatusAndWait(mongoId, { status: 'canceled' }) // cancel
-// Non-blocking variants returning the job: publish(), setStatus().
-// Also: getMetadata(id), delete(id), signInfo(id, body).
+// Admin: lifecycle — per-QUESTION status changes (the new model has no
+// process-level status route). Async: each returns { jobId } to poll.
+const { jobId: sjob } = await client.elections.bulkSetQuestionStatus(mongoId, {
+  status: 'paused', // 'ready' | 'paused' | 'ended' | 'canceled'
+  questions: process.questions.map((q) => ({ id: q.id })), // omit → all published questions
+})
+await client.jobs.waitFor(sjob)
+// Single question: setQuestionStatus(processId, questionId, status).
+
+// Drafts: update(id, draft) PUTs the same shape as create and resolves void
+// (re-get() for the stored shape; 409 once published). delete(id) removes it.
+// signInfo(id, { authToken }) → { consumed: [{ questionId, nullifier, … }] },
+// one entry per question the voter already cast.
+// Legacy-only (single-election model, vochain ids): setStatus()/setStatusAndWait()
+// (PUT /process/{id}/status) and getMetadata() — do not use with mongo process ids.
 
 // Relay a vote (called internally by VotingClient — you rarely call this directly)
 const { jobId } = await client.elections.vote({ txPayload })

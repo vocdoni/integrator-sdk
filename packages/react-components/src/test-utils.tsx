@@ -142,12 +142,12 @@ export function makeProcess(opts: MakeProcessOptions = {}): VotingProcessRespons
 
 /** Builds a {@link VotingProcessResultsResponse} for use in Results tests. */
 export function makeResults(
-  questionResults: Array<{ results?: string[][]; finalResults?: boolean }> = [],
+  questionResults: Array<{ questionId?: string; results?: string[][]; finalResults?: boolean }> = [],
 ): VotingProcessResultsResponse {
   return {
     id: 'proc-1',
     questions: questionResults.map((qr, i) => ({
-      questionId: `q-${i}`,
+      questionId: qr.questionId ?? `q-${i}`,
       upstreamId: `upstream-${i}`,
       status: 'RESULTS' as QuestionStatus,
       voteCount: 0,

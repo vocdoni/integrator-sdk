@@ -161,6 +161,70 @@ describe('admin / integrator client methods', () => {
     })
   })
 
+  describe('elections.update', () => {
+    it('PUTs the draft and resolves void (backend answers a bare 200 OK)', async () => {
+      let body: any
+      server.use(
+        http.put(`${BASE_URL}/processes/draft-9`, async ({ request }) => {
+          body = await request.json()
+          // The real handler writes a bare "\n" text body, not JSON.
+          return HttpResponse.text('\n', { status: 200 })
+        }),
+      )
+
+      const res = await client.elections.update('draft-9', {
+        orgAddress: ORG,
+        title: 'Edited title',
+        questions: [{ title: 'Q?', type: 'singlechoice', choices: [{ title: 'A', value: 0 }] }],
+      })
+      expect(res).toBeUndefined()
+      expect(body.title).toEqual({ default: 'Edited title' })
+      expect(body.questions[0].title).toEqual({ default: 'Q?' })
+    })
+  })
+
+  describe('elections.delete', () => {
+    it('DELETEs the new-model /processes/{id} route', async () => {
+      let hit = false
+      server.use(
+        http.delete(`${BASE_URL}/processes/draft-9`, () => {
+          hit = true
+          return HttpResponse.text('\n', { status: 200 })
+        }),
+      )
+
+      await expect(client.elections.delete('draft-9')).resolves.toBeUndefined()
+      expect(hit).toBe(true)
+    })
+  })
+
+  describe('elections.signInfo', () => {
+    it('POSTs the auth token and returns the per-question consumed entries', async () => {
+      let body: unknown
+      server.use(
+        http.post(`${BASE_URL}/processes/p1/sign-info`, async ({ request }) => {
+          body = await request.json()
+          return HttpResponse.json({
+            consumed: [
+              {
+                questionId: 'q-0',
+                upstreamId: 'deadbeef',
+                address: 'aa'.repeat(20),
+                nullifier: 'bb'.repeat(32),
+                at: '2026-01-01T00:00:00Z',
+              },
+            ],
+          })
+        }),
+      )
+
+      const res = await client.elections.signInfo('p1', { authToken: 'tok-1' })
+      expect(res.consumed).toHaveLength(1)
+      expect(res.consumed[0].questionId).toBe('q-0')
+      expect(body).toEqual({ authToken: 'tok-1' })
+    })
+  })
+
   describe('elections.publishAndWait', () => {
     it('enqueues a publish job and resolves the on-chain address', async () => {
       server.use(

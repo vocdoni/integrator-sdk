@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { encodeBallot } from './encode.js'
+import { encodeBallot, encodeQuestionBallot } from './encode.js'
 import { BallotType } from './types.js'
 import { inferBallotType } from './infer.js'
 import type { Election } from '@vocdoni/api-types'
@@ -240,5 +240,49 @@ describe('encodeBallot', () => {
       expect(encodeBallot(election, [])).toEqual([0, 0, 0, 0, 0])
       expect(encodeBallot(election, [])).toEqual(encodeBallot(election, [[]]))
     })
+  })
+})
+
+describe('encodeQuestionBallot', () => {
+  const bp = (overrides: Record<string, number | boolean> = {}) => ({
+    maxCount: 1,
+    maxValue: 1,
+    maxVoteOverwrites: 0,
+    maxTotalCost: 0,
+    costExponent: 1,
+    uniqueValues: false,
+    costFromWeight: false,
+    ...overrides,
+  })
+  const choices = [
+    { title: { default: 'A' }, value: 0 },
+    { title: { default: 'B' }, value: 1 },
+    { title: { default: 'C' }, value: 2 },
+  ]
+
+  describe('single-choice strictness', () => {
+    it('encodes exactly one selection', () => {
+      expect(encodeQuestionBallot({ ballotProtocol: bp(), choices }, [2])).toEqual([2])
+    })
+
+    it('throws on zero selections', () => {
+      expect(() => encodeQuestionBallot({ ballotProtocol: bp(), choices }, [])).toThrow(
+        /exactly one choice \(got 0\)/
+      )
+    })
+
+    it('throws on more than one selection instead of silently dropping extras', () => {
+      expect(() => encodeQuestionBallot({ ballotProtocol: bp(), choices }, [0, 2])).toThrow(
+        /exactly one choice \(got 2\)/
+      )
+    })
+  })
+
+  it('throws for a multichoice named type without a ballotProtocol', () => {
+    // Type-only questions can be classified but not encoded: the slot count and
+    // abstain reservation live in the protocol.
+    expect(() => encodeQuestionBallot({ type: 'multichoice', choices }, [0, 1])).toThrow(
+      /no ballotProtocol/
+    )
   })
 })

@@ -1,6 +1,5 @@
 import type {
   ConsumedAddressRequest,
-  ConsumedAddressResponse,
   CreateVotingProcessRequest,
   CreateVotingProcessResponse,
   ElectionListParams,
@@ -8,9 +7,9 @@ import type {
   EnqueuedResponse,
   LocalizedInput,
   MultiLangString,
+  ProcessSignInfoResponse,
   PublicQuestionResponse,
   PublishProcessResponse,
-  QuestionStatusID,
   RelayVoteRequest,
   RelayVoteResponse,
   SetElectionStatusRequest,
@@ -81,6 +80,11 @@ export class ElectionsClient {
     return this.fetch<VotingProcessResultsResponse>(`/processes/${id}/results`).catch(handleError)
   }
 
+  /**
+   * Legacy-only: `GET /process/{id}/metadata` (single-election model, vochain
+   * process id). The `/processes/{id}` model has no metadata endpoint — new-model
+   * consumers should read `title`/`description`/`header` from {@link get} instead.
+   */
   async getMetadata(id: string): Promise<ElectionMetadata> {
     return this.fetch<ElectionMetadata>(`/process/${id}/metadata`).catch(handleError)
   }
@@ -107,18 +111,18 @@ export class ElectionsClient {
 
   /**
    * Update a draft process via `PUT /processes/{id}`. Takes the same flat
-   * {@link CreateVotingProcessRequest} shape as `create`. Returns the process id.
+   * {@link CreateVotingProcessRequest} shape as `create`. The backend answers a
+   * bare `200 OK` with no JSON body, so this resolves to void — re-{@link get}
+   * the process if you need the updated shape. Fails with 409 once published.
    */
-  async update(draftId: string, data: CreateVotingProcessRequest): Promise<string> {
+  async update(draftId: string, data: CreateVotingProcessRequest): Promise<void> {
     const body = normalizeVotingProcessRequest(data)
-    return this.fetch<string>(`/processes/${draftId}`, {
-      method: 'PUT',
-      body,
-    }).catch(handleError)
+    await this.fetch(`/processes/${draftId}`, { method: 'PUT', body }).catch(handleError)
   }
 
+  /** Delete a process via `DELETE /processes/{id}`. */
   async delete(id: string): Promise<void> {
-    return this.fetch<void>(`/process/${id}`, { method: 'DELETE' }).catch(handleError)
+    await this.fetch(`/processes/${id}`, { method: 'DELETE' }).catch(handleError)
   }
 
   /**
@@ -151,7 +155,12 @@ export class ElectionsClient {
     return { address: job.result?.address ?? '', status: job.result?.status ?? '' }
   }
 
-  /** Change a process status. Returns the enqueued job to poll. */
+  /**
+   * Legacy-only: change a whole election's status via `PUT /process/{id}/status`
+   * (single-election model, vochain process id). The `/processes/{id}` model has
+   * no process-level status route — use {@link setQuestionStatus} /
+   * {@link bulkSetQuestionStatus} instead. Returns the enqueued job to poll.
+   */
   async setStatus(id: string, status: SetElectionStatusRequest): Promise<EnqueuedResponse> {
     return this.fetch<EnqueuedResponse>(`/process/${id}/status`, {
       method: 'PUT',
@@ -159,7 +168,7 @@ export class ElectionsClient {
     }).catch(handleError)
   }
 
-  /** Change a process status and wait for the on-chain transaction to complete. */
+  /** Legacy-only companion of {@link setStatus} that waits for the on-chain result. */
   async setStatusAndWait(
     id: string,
     status: SetElectionStatusRequest,
@@ -200,9 +209,13 @@ export class ElectionsClient {
     return this.fetch<PublicQuestionResponse>(`/processes/${processId}/questions/${questionId}`).catch(handleError)
   }
 
-  /** Consumed-address / sign-info: report the nullifier consumed for a process. */
-  async signInfo(id: string, body: ConsumedAddressRequest): Promise<ConsumedAddressResponse> {
-    return this.fetch<ConsumedAddressResponse>(`/process/${id}/sign-info`, {
+  /**
+   * Consumed-address / sign-info via `POST /processes/{id}/sign-info`: the
+   * voter's consumed addresses and nullifiers, one entry per question already
+   * cast. Requires the voter's verified CSP `authToken`.
+   */
+  async signInfo(id: string, body: ConsumedAddressRequest): Promise<ProcessSignInfoResponse> {
+    return this.fetch<ProcessSignInfoResponse>(`/processes/${id}/sign-info`, {
       method: 'POST',
       body,
     }).catch(handleError)

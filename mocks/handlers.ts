@@ -90,7 +90,7 @@ export const handlers = [
   // Per-process results endpoint.
   http.get(`${BASE}/processes/:id/results`, ({ params }) =>
     HttpResponse.json({
-      processId: params.id as string,
+      id: params.id as string,
       questions: mockProcess.questions.map((q) => ({
         questionId: q.id,
         upstreamId: q.upstreamId,

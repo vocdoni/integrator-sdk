@@ -20,10 +20,16 @@ export const ElectionResults = ({ forceRender, ...rest }: ElectionResultsProps) 
 
   if (!election || status === 'CANCELED') return null
 
+  // Results entries are keyed by question id — never pair by array position,
+  // since the backend omits not-yet-published questions and guarantees no order.
+  const resultsByQuestionId = new Map(
+    (results?.questions ?? []).map((qResults) => [qResults.questionId, qResults])
+  )
+
   // Secret-until-the-end: show placeholder if any question is still secret
   // and its results are not yet final.
-  const anySecretNotFinal = election.questions.some((q, i) => {
-    const qResults = results?.questions[i]
+  const anySecretNotFinal = election.questions.some((q) => {
+    const qResults = resultsByQuestionId.get(q.id)
     return q.secretUntilTheEnd && !qResults?.finalResults && !forceRender
   })
 
@@ -39,8 +45,8 @@ export const ElectionResults = ({ forceRender, ...rest }: ElectionResultsProps) 
     )
   }
 
-  const questions = election.questions.map((question, qIdx: number) => {
-    const rawResults = results?.questions[qIdx]?.results ?? []
+  const questions = election.questions.map((question) => {
+    const rawResults = resultsByQuestionId.get(question.id)?.results ?? []
     const decoded = decodeQuestionResults(question, rawResults)
     const choiceByValue = new Map(question.choices.map((choice) => [choice.value, choice]))
 
