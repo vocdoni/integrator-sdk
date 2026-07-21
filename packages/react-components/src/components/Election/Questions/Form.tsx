@@ -1,6 +1,7 @@
 import { encodeQuestionBallot } from '@vocdoni/ballot'
 import { createContext, PropsWithChildren, useContext, useEffect } from 'react'
 import { FieldValues, FormProvider, useForm, UseFormReturn } from 'react-hook-form'
+import { EnsureConfirmProvider } from '../../../confirm/ConfirmProvider'
 import { useConfirm } from '../../../confirm/useConfirm'
 import { useElection } from '@vocdoni/react-providers'
 import { QuestionsConfirmation } from './Confirmation'
@@ -22,7 +23,15 @@ export const useQuestionsForm = () => {
 
 export type QuestionsFormProviderProps = {}
 
-export const QuestionsFormProvider = ({ children }: PropsWithChildren<QuestionsFormProviderProps>) => {
+// Mounts its own ConfirmProvider when the app doesn't provide one, so the
+// vote-confirmation dialog works out of the box.
+export const QuestionsFormProvider = (props: PropsWithChildren<QuestionsFormProviderProps>) => (
+  <EnsureConfirmProvider>
+    <QuestionsFormProviderInner {...props} />
+  </EnsureConfirmProvider>
+)
+
+const QuestionsFormProviderInner = ({ children }: PropsWithChildren<QuestionsFormProviderProps>) => {
   const fmethods = useForm()
   const { confirm } = useConfirm()
   const { election, vote: baseVote } = useElection()

@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useState } from 'react'
+import { createContext, ReactNode, useContext, useState } from 'react'
 import { ConfirmModal } from './ConfirmModal'
 
 type ConfirmState = {
@@ -52,4 +52,15 @@ export const ConfirmProvider = ({ children }: { children: ReactNode }) => {
       {children}
     </ConfirmContext.Provider>
   )
+}
+
+/**
+ * Mounts a {@link ConfirmProvider} only when none is present above, so
+ * components that call `useConfirm` work out of the box while an app-provided
+ * provider (e.g. one mounted app-wide to share a single modal) still wins.
+ */
+export const EnsureConfirmProvider = ({ children }: { children: ReactNode }) => {
+  const existing = useContext(ConfirmContext)
+  if (existing) return <>{children}</>
+  return <ConfirmProvider>{children}</ConfirmProvider>
 }

@@ -17,9 +17,14 @@ vi.mock('../../../confirm/useConfirm', () => ({
 }))
 
 import { QuestionsFormProvider, useQuestionsForm } from './Form'
+import { ComponentsProvider } from '../../context/ComponentsProvider'
 
+// ComponentsProvider is needed because QuestionsFormProvider auto-mounts a
+// ConfirmProvider, whose modal renders through the ConfirmShell slot.
 const wrapper = ({ children }: { children: ReactNode }) => (
-  <QuestionsFormProvider>{children}</QuestionsFormProvider>
+  <ComponentsProvider>
+    <QuestionsFormProvider>{children}</QuestionsFormProvider>
+  </ComponentsProvider>
 )
 
 function setup(election: ReturnType<typeof makeProcess> | null, confirmResult = true) {

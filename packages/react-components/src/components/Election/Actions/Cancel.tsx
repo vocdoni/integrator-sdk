@@ -1,12 +1,21 @@
 import { ComponentPropsWithoutRef } from 'react'
 import { useComponents } from '../../context/useComponents'
+import { EnsureConfirmProvider } from '../../../confirm/ConfirmProvider'
 import { useConfirm } from '../../../confirm/useConfirm'
 import { useReactComponentsLocalize } from '../../../i18n/localize'
 import { useActions, useElection } from '@vocdoni/react-providers'
 import { ConfirmActionModal } from './ConfirmActionModal'
 import { getElectionTitle } from '../../../election/normalized'
 
-export const ActionCancel = (props: ComponentPropsWithoutRef<'button'>) => {
+// Mounts its own ConfirmProvider when the app doesn't provide one, so the
+// confirmation dialog works out of the box.
+export const ActionCancel = (props: ComponentPropsWithoutRef<'button'>) => (
+  <EnsureConfirmProvider>
+    <ActionCancelButton {...props} />
+  </EnsureConfirmProvider>
+)
+
+const ActionCancelButton = (props: ComponentPropsWithoutRef<'button'>) => {
   const localize = useReactComponentsLocalize()
   const { confirm } = useConfirm()
   const { election, status } = useElection()

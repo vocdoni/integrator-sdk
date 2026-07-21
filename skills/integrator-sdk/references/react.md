@@ -229,6 +229,11 @@ Key election components (all from `@vocdoni/react-components`):
 | `<ElectionResults />` | Results histogram; respects `secretUntilTheEnd` |
 | `<ElectionEnvelope />` | Vote envelope / nullifier display |
 
+Components that open a confirmation dialog (`<ElectionQuestions />` via its
+`QuestionsFormProvider`, `<ActionCancel />`, `<ActionEnd />`) mount their own
+`ConfirmProvider` automatically. Mount one yourself (e.g. app-wide) only to make
+them share a single dialog boundary — a provider you mount takes precedence.
+
 **Slot customization** — every component accepts a slot override for rendering:
 
 ```tsx

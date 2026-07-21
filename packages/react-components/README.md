@@ -25,7 +25,10 @@ On top of the components it ships:
   that lets you override any built-in component with your own, without forking.
 - **i18n** — a localization layer for all the bundled UI.
 - **Helpers** — pagination, a confirmation dialog (`ConfirmProvider` / `useConfirm`) and
-  election-normalization utilities.
+  election-normalization utilities. Components that need a confirmation dialog
+  (`QuestionsFormProvider`, `ActionCancel`, `ActionEnd`) mount their own `ConfirmProvider`
+  automatically; mount one yourself (app-wide) only if you want them to share a single
+  dialog boundary — a provider you mount always takes precedence.
 - **The providers and hooks** from [`@vocdoni/react-providers`](../react-providers),
   re-exported so you don't have to install it separately.
 

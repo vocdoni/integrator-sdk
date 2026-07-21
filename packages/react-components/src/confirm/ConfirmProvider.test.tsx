@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { renderWithComponents } from '../test-utils'
-import { ConfirmProvider } from './ConfirmProvider'
+import { ConfirmProvider, EnsureConfirmProvider } from './ConfirmProvider'
 import { useConfirm } from './useConfirm'
 
 // The prompt rendered inside the modal: wires the provider's proceed/cancel
@@ -87,5 +87,46 @@ describe('ConfirmProvider (real provider, no mocks)', () => {
 
     await waitFor(() => expect(outcomes).toEqual([false]))
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('EnsureConfirmProvider', () => {
+  it('mounts a working ConfirmProvider when none is present', async () => {
+    const outcomes: boolean[] = []
+    renderWithComponents(
+      <EnsureConfirmProvider>
+        <Trigger outcomes={outcomes} />
+      </EnsureConfirmProvider>,
+    )
+
+    act(() => {
+      fireEvent.click(screen.getByText('open'))
+    })
+    act(() => {
+      fireEvent.click(screen.getByText('confirm'))
+    })
+
+    await waitFor(() => expect(outcomes).toEqual([true]))
+  })
+
+  it('reuses an existing provider instead of double-mounting', () => {
+    // Capture the context value seen above and below the Ensure wrapper: same
+    // reference means Ensure reused the outer provider rather than nesting one.
+    const seen: Record<string, unknown> = {}
+    const Capture = ({ as }: { as: string }) => {
+      seen[as] = useConfirm()
+      return null
+    }
+    renderWithComponents(
+      <ConfirmProvider>
+        <Capture as='outer' />
+        <EnsureConfirmProvider>
+          <Capture as='inner' />
+        </EnsureConfirmProvider>
+      </ConfirmProvider>,
+    )
+
+    expect(seen.inner).toBeDefined()
+    expect(seen.inner).toBe(seen.outer)
   })
 })

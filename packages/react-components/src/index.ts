@@ -36,7 +36,7 @@ export {
 
 // ─── Confirm ──────────────────────────────────────────────────────────────────
 export { ConfirmModal } from './confirm/ConfirmModal'
-export { ConfirmProvider } from './confirm/ConfirmProvider'
+export { ConfirmProvider, EnsureConfirmProvider } from './confirm/ConfirmProvider'
 export { useConfirm } from './confirm/useConfirm'
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
