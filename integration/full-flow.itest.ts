@@ -10,11 +10,19 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 //   4. builds + publishes a CSP census from that group
 //   5. creates and publishes 3 processes (single-choice, multi-choice, and a
 //      secretUntilTheEnd single-choice — its per-question encryption keys are
-//      polled after publish, per saas-backend#594) sharing that one group census
+//      polled after publish, per saas-backend#594) sharing that one group
+//      census, then proves the PUBLIC voter surface for each: the token-less
+//      question read (choices/ballotProtocol/upstreamId, and the secret
+//      question's encryption keys) and the 401 on the protected process read
 //   6. bundles every question's on-chain process and has 3 members vote on all
 //      of them (chainId comes from the bundle info, not the process); the
 //      secret question's ballots are sealed with its encryption keys
 //   7. asserts a distinct vote nullifier per (member, question)
+//
+// This is deliberately the ONLY integration suite: anything needing a live
+// backend gets asserted inside this lifecycle (it creates all its own data, so
+// there are no rot-prone fixtures). The goal is to run it in CI against a
+// disposable saas-api + vochain container on every PR/push.
 //
 // Opt-in: needs INTEGRATION_API_KEY (a `vsk_…` key whose org is an integrator
 // with scopes managed:write + members:write + voting:write, and quota for >=3
@@ -212,6 +220,24 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           step(`5. encryption keys ready — ${keyCount} key(s) for ${d.label}`)
         }
 
+        // Public voter surface for this process (no API key): every question is
+        // readable through the public single-question route — including, for
+        // secret questions, the encryption keys the ballot is sealed with.
+        for (const q of info.questions) {
+          const pub = await voterClient.processes.getQuestion(draftId, q.id)
+          expect(pub.id).toBe(q.id)
+          expect(pub.upstreamId).toBe(q.upstreamId)
+          expect(pub.choices.length, `${d.label} public question has no choices`).toBeGreaterThan(0)
+          expect(pub.ballotProtocol, `${d.label} public question has no ballotProtocol`).toBeTruthy()
+          if (q.secretUntilTheEnd) {
+            expect(
+              pub.encryptionKeys?.length,
+              `${d.label} public read misses encryption keys`,
+            ).toBeGreaterThan(0)
+          }
+        }
+        step(`5. public question reads verified — ${d.label}`)
+
         processes.push({
           label: d.label,
           draftId,
@@ -220,6 +246,14 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           choices: d.choices,
         })
       }
+
+      // The merged process read is a PROTECTED route (saas-backend#582) — a
+      // token-less voter client must get a 401, never the full process (that is
+      // why chainId reaches voter apps via the integrator handoff).
+      await expect(voterClient.elections.get(processes[0].draftId)).rejects.toMatchObject({
+        status: 401,
+      })
+      step('5. protected process read verified — voter client 401s')
 
       // 6. One bundle holding every question's on-chain process. The bundle is
       // also where the Vochain chainId (which the vote signature depends on)
