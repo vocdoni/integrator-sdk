@@ -1,18 +1,19 @@
 import { computeProcessStatus } from '@vocdoni/api-client'
-import { fixtures, makeClient } from './helpers'
+import { apiKey, fixtures, makeAdminClient } from './helpers'
 
 // Read-only proof that the multi-question remodel maps real backend data:
 // fetching a process by its Mongo id returns the merged VotingProcessResponse,
 // exposing each question's on-chain Vochain id as `questions[i].upstreamId` and
-// its lifecycle as `questions[i].status`. The chainId a vote signs against is
-// NOT on the process — it comes from the bundle info (see bundle.itest.ts).
-// Non-consuming — runs out of the box against the dev fixture (override with
-// INTEGRATION_PROCESS_INFO_ID).
-const suite = fixtures.processMongoId ? describe : describe.skip
+// its lifecycle as `questions[i].status`. `GET /processes/{id}` is a protected
+// read (saas-backend#582), so this suite needs INTEGRATION_API_KEY — voter apps
+// receive processId/chainId from the integrator and use the public question
+// read instead (see process-question.itest.ts). Non-consuming; override the
+// fixture with INTEGRATION_PROCESS_INFO_ID.
+const suite = fixtures.processMongoId && apiKey ? describe : describe.skip
 
 suite('process info (live, by mongo id)', () => {
   it('maps /processes/{mongoId} onto a multi-question process with per-question upstream ids', async () => {
-    const client = makeClient()
+    const client = makeAdminClient()
     const election = await client.elections.get(fixtures.processMongoId)
 
     // The id stays the Mongo id we asked for.

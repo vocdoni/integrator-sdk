@@ -8,19 +8,16 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 //   2. loads a 100-member memberbase (memberNumber 1..100)
 //   3. reads the auto-created "All members" group
 //   4. builds + publishes a CSP census from that group
-//   5. creates and publishes 2 processes (single-choice and multi-choice)
-//      sharing that one group census
+//   5. creates and publishes 3 processes (single-choice, multi-choice, and a
+//      secretUntilTheEnd single-choice — its per-question encryption keys are
+//      polled after publish, per saas-backend#594) sharing that one group census
 //   6. bundles every question's on-chain process and has 3 members vote on all
-//      of them (chainId comes from the bundle info, not the process)
+//      of them (chainId comes from the bundle info, not the process); the
+//      secret question's ballots are sealed with its encryption keys
 //   7. asserts a distinct vote nullifier per (member, question)
 //
-// TODO(encrypted): re-enable when encryption keys are exposed on the process read
-// — a third, secretUntilTheEnd draft (and its key-polling + sealed-vote
-// assertions) is commented out below because `GET /processes/{id}`
-// (VotingProcessResponse) carries no encryption-keys field yet.
-//
 // Opt-in: needs INTEGRATION_API_KEY (a `vsk_…` key whose org is an integrator
-// with scopes managed:write + members:write + voting:write, and quota for >=2
+// with scopes managed:write + members:write + voting:write, and quota for >=3
 // processes / >=200 census). It creates real on-chain elections and votes, so it
 // is excluded from the default run.
 const suite = apiKey ? describe : describe.skip
@@ -53,8 +50,8 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
 
       // 1. Managed organization.
       const org = await admin.organizations.createManaged({
+        name: `e2e-${Date.now()}`,
         type: 'company',
-        meta: { name: `e2e-${Date.now()}` },
       })
       const orgAddress = org.address
       expect(orgAddress, 'managed org has no address').toBeTruthy()
@@ -66,11 +63,13 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       }))
       const added = await admin.organizations.addMembers(orgAddress, members)
       if (added.jobId) {
-        const job = await admin.organizations.waitForMembersJob(orgAddress, added.jobId, {
+        // Member imports poll the unified jobs endpoint (saas-backend#582).
+        const job = await admin.jobs.waitFor(added.jobId, {
           timeoutMs: 120000,
           intervalMs: 2000,
+          expectType: 'org_members',
         })
-        expect(job.progress).toBe(100)
+        expect(job.result?.progress).toBe(100)
       }
       step(`2. ${MEMBER_COUNT} members added (memberNumber 1..${MEMBER_COUNT})`)
 
@@ -149,28 +148,27 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             ],
           },
         },
-        // TODO(encrypted): re-enable when encryption keys are exposed on the process read
-        // {
-        //   label: 'secret single-choice',
-        //   secret: true,
-        //   choices: [1],
-        //   body: {
-        //     orgAddress,
-        //     title: 'Secret single choice',
-        //     endDate,
-        //     questions: [
-        //       {
-        //         title: 'Approve (secret)?',
-        //         choices: [
-        //           { title: 'No', value: 0 },
-        //           { title: 'Yes', value: 1 },
-        //         ],
-        //         type: 'singlechoice',
-        //         secretUntilTheEnd: true,
-        //       },
-        //     ],
-        //   },
-        // },
+        {
+          label: 'secret single-choice',
+          secret: true,
+          choices: [1],
+          body: {
+            orgAddress,
+            title: 'Secret single choice',
+            endDate,
+            questions: [
+              {
+                title: 'Approve (secret)?',
+                choices: [
+                  { title: 'No', value: 0 },
+                  { title: 'Yes', value: 1 },
+                ],
+                type: 'singlechoice',
+                secretUntilTheEnd: true,
+              },
+            ],
+          },
+        },
       ]
 
       const processes: ProcessSpec[] = []
@@ -186,7 +184,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         // Re-fetch the merged process: each question now carries its on-chain
         // Vochain process id as `upstreamId` (chainId lives on the bundle, not
         // here).
-        const info = await admin.elections.get(draftId)
+        let info = await admin.elections.get(draftId)
         expect(info.questions.length, `${d.label} has no questions`).toBeGreaterThan(0)
         for (const q of info.questions) {
           expect(q.upstreamId, `${d.label} question has no upstreamId`).toMatch(/^[0-9a-f]{64}$/i)
@@ -195,20 +193,24 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           `5. process published — ${d.label} → ${info.questions.map((q) => q.upstreamId).join(', ')}`,
         )
 
-        // TODO(encrypted): re-enable when encryption keys are exposed on the process read
-        // A secretUntilTheEnd election's encryption keys are published by the
-        // keykeepers asynchronously once it is live, so they may not be present
-        // the moment publish returns — poll until they appear.
-        // let encryptionKeys = info.encryptionPublicKeys
-        // if (d.secret) {
-        //   const deadline = Date.now() + 120000
-        //   while ((encryptionKeys?.length ?? 0) === 0 && Date.now() < deadline) {
-        //     await new Promise((r) => setTimeout(r, 3000))
-        //     encryptionKeys = (await admin.elections.get(draftId)).encryptionPublicKeys
-        //   }
-        //   expect(encryptionKeys?.length, 'secret process has no encryption keys').toBeGreaterThan(0)
-        //   step(`5. encryption keys ready — ${encryptionKeys!.length} key(s) for ${d.label}`)
-        // }
+        // A secretUntilTheEnd question's encryption keys (per-question since
+        // saas-backend#594) are published by the keykeepers asynchronously once
+        // it is live, so they may be absent the moment publish returns — poll
+        // the process read until every secret question carries them.
+        if (d.secret) {
+          const missingKeys = () =>
+            info.questions.some((q) => q.secretUntilTheEnd && !q.encryptionKeys?.length)
+          const deadline = Date.now() + 120000
+          while (missingKeys() && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 3000))
+            info = await admin.elections.get(draftId)
+          }
+          expect(missingKeys(), `secret process has no encryption keys (${d.label})`).toBe(false)
+          const keyCount = info.questions
+            .filter((q) => q.secretUntilTheEnd)
+            .reduce((n, q) => n + (q.encryptionKeys?.length ?? 0), 0)
+          step(`5. encryption keys ready — ${keyCount} key(s) for ${d.label}`)
+        }
 
         processes.push({
           label: d.label,
@@ -260,7 +262,9 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             expect(sign.signature, `no CSP signature (${p.label})`).toBeTruthy()
 
             // Build + sign + relay through the public VotingClient — the path an
-            // integrator uses. It returns the relay job id to poll for the nullifier.
+            // integrator uses. It returns the relay job id to poll for the
+            // nullifier. Secret questions pass their per-question encryption
+            // keys, which seals the ballot (NaCl SealedBox) before relay.
             const jobId = await voting.vote({
               processId,
               choices: p.choices,
@@ -268,6 +272,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
               signer,
               cspSignature: sign.signature!,
               cspWeight: sign.weight,
+              encryptionKeys: question.secretUntilTheEnd ? question.encryptionKeys : undefined,
             })
             const job = await voterClient.jobs.waitFor(jobId, {
               timeoutMs: 90000,
