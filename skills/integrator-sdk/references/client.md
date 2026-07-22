@@ -106,13 +106,18 @@ const election = await client.elections.get(mongoId)
 //                            Other endpoints (auth/addresses, organizations/{address})
 //                            return the same value 0x-prefixed — normalize before comparing.
 // election.title           — MultiLangString ({ default, [lang]: string })
-// election.census          — CensusSpec ({ weighted, authFields, twoFaFields, ... })
+// election.census          — CensusSpec ({ weighted, authFields, twoFaFields, size?, ... })
+//   census.size            — member count (response-only; omitted when 0). There is
+//                            deliberately NO census type/uri/id over this API: the census
+//                            "type" is inferred from authFields/twoFaFields (every
+//                            new-model census is CSP-backed).
 // election.questions       — VotingProcessQuestion[]
 //   question.upstreamId        — vochain hex id (voting, bundle check/sign)
 //   question.ballotProtocol    — { maxCount, maxValue, uniqueValues, ... }
 //   question.secretUntilTheEnd — boolean
 //   question.status            — QuestionStatus
-// chainId is NOT on the process — read it from bundle.chainId.
+// election.chainId         — vochain chain id votes are signed against (omitempty;
+//                            same value as bundle.chainId).
 
 // List processes
 const { processes, pagination } = await client.elections.list({ orgAddress, page, limit, status })
@@ -160,6 +165,24 @@ const { jobId: sjob } = await client.elections.bulkSetQuestionStatus(mongoId, {
 })
 await client.jobs.waitFor(sjob)
 // Single question: setQuestionStatus(processId, questionId, status).
+
+// Admin: look up census members by credential, with per-question voted status.
+// field is limited to 'email' | 'phone' | 'memberNumber' | 'nationalId'.
+const { participants } = await client.elections.participants(mongoId, {
+  field: 'memberNumber',
+  value: '42',
+})
+// participants[i] — { memberId, name?, surname?, email?, memberNumber?,
+//                     questions: [{ questionId, upstreamId?, hasVoted }] }
+
+// Admin: append org members to a PUBLISHED process's census (append-only;
+// drafts 409 — edit those via update()). jobId tracks the async on-chain
+// maxCensusSize bump when one is needed.
+const { added, jobId } = await client.elections.addCensusMembers(mongoId, ['m-1', 'm-2'])
+if (jobId) await client.jobs.waitFor(jobId)
+
+// Admin: publish-readiness dry-run (GET /processes/{id}/validation).
+const { valid, errors } = await client.elections.validate(mongoId)
 
 // Drafts: update(id, draft) PUTs the same shape as create and resolves void
 // (re-get() for the stored shape; 409 once published). delete(id) removes it.

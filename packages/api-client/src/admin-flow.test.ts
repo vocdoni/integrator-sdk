@@ -225,6 +225,69 @@ describe('admin / integrator client methods', () => {
     })
   })
 
+  describe('elections.validate', () => {
+    it('GETs the /processes/{id}/validation dry-run route', async () => {
+      server.use(
+        http.get(`${BASE_URL}/processes/draft-5/validation`, () =>
+          HttpResponse.json({ valid: false, errors: ['census is empty'] }),
+        ),
+      )
+
+      const res = await client.elections.validate('draft-5')
+      expect(res.valid).toBe(false)
+      expect(res.errors).toEqual(['census is empty'])
+    })
+  })
+
+  describe('elections.participants', () => {
+    it('GETs the lookup with field/value query params and returns per-question voted status', async () => {
+      let query: URLSearchParams | undefined
+      server.use(
+        http.get(`${BASE_URL}/processes/p1/participants`, ({ request }) => {
+          query = new URL(request.url).searchParams
+          return HttpResponse.json({
+            participants: [
+              {
+                memberId: 'm-1',
+                name: 'Ada',
+                surname: 'Lovelace',
+                memberNumber: '42',
+                questions: [
+                  { questionId: 'q-0', upstreamId: 'deadbeef', hasVoted: true },
+                  { questionId: 'q-1', hasVoted: false },
+                ],
+              },
+            ],
+          })
+        }),
+      )
+
+      const res = await client.elections.participants('p1', { field: 'memberNumber', value: '42' })
+      expect(query?.get('field')).toBe('memberNumber')
+      expect(query?.get('value')).toBe('42')
+      expect(res.participants).toHaveLength(1)
+      expect(res.participants[0].questions[0].hasVoted).toBe(true)
+      expect(res.participants[0].questions[1].hasVoted).toBe(false)
+    })
+  })
+
+  describe('elections.addCensusMembers', () => {
+    it('PUTs { memberIds } to /processes/{id}/census and returns the added count + job', async () => {
+      let body: unknown
+      server.use(
+        http.put(`${BASE_URL}/processes/p1/census`, async ({ request }) => {
+          body = await request.json()
+          return HttpResponse.json({ added: 2, jobId: 'cjob-1' })
+        }),
+      )
+
+      const res = await client.elections.addCensusMembers('p1', ['m-1', 'm-2'])
+      expect(res.added).toBe(2)
+      expect(res.jobId).toBe('cjob-1')
+      expect(body).toEqual({ memberIds: ['m-1', 'm-2'] })
+    })
+  })
+
   describe('elections.publishAndWait', () => {
     it('enqueues a publish job and resolves the on-chain address', async () => {
       server.use(

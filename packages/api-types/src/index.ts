@@ -395,12 +395,27 @@ export interface VotingProcessQuestion {
   metadata?: Record<string, unknown>
 }
 
+/**
+ * Inline census definition of a voting process. There is no census id / type /
+ * uri over this API by design — the census "type" is inferred from
+ * `authFields`/`twoFaFields` (every new-model census is CSP-backed), and
+ * member management goes through the process-scoped routes
+ * (`GET /processes/{id}/participants`, `PUT /processes/{id}/census`).
+ */
 export interface CensusSpec {
   authFields?: OrgMemberAuthField[]
+  /** Create/update input only — not returned on reads. */
   groupId?: string
+  /** Create/update input only — not returned on reads. */
   memberIds?: string[]
   twoFaFields?: OrgMemberTwoFaField[]
   weighted?: boolean
+  /**
+   * Number of members in the census. Response-only (ignored on create/update);
+   * for a published process it equals the on-chain `maxCensusSize` of its
+   * whole-census questions. Serialized with `omitempty`, so `0` arrives absent.
+   */
+  size?: number
 }
 
 /** Per-question member eligibility restriction (subset of the process census). */
@@ -430,6 +445,12 @@ export interface VotingProcessBase {
   streamUri?: string
   census: CensusSpec
   questions: VotingProcessQuestion[]
+  /**
+   * Vochain chain id votes must be signed against — vote signatures are
+   * chain-id-bound (a mismatch makes the on-chain signer recovery diverge).
+   * Same value as `Bundle.chainId`; serialized with `omitempty`.
+   */
+  chainId?: string
 }
 
 /**
@@ -763,6 +784,57 @@ export interface QuestionConsumedAddress {
  */
 export interface ProcessSignInfoResponse {
   consumed: QuestionConsumedAddress[]
+}
+
+/**
+ * Member field the admin participants lookup can match on
+ * (`GET /processes/{id}/participants?field=&value=`). Note this is narrower
+ * than {@link OrgMemberAuthField}: name/surname/birthDate are not queryable.
+ */
+export type ProcessParticipantLookupField = 'email' | 'phone' | 'memberNumber' | 'nationalId'
+
+/**
+ * One question's voted status for a matched participant — `hasVoted` is true
+ * when the member has consumed that question's on-chain election. Questions
+ * not yet published (no `upstreamId`) are omitted from the list.
+ */
+export interface ProcessParticipantQuestionVote {
+  questionId: string
+  /** Vochain election id of the question (64-hex). */
+  upstreamId?: string
+  hasVoted: boolean
+}
+
+/** A matched org member that is also a participant of the process census. */
+export interface ProcessParticipantEntry {
+  memberId: string
+  name?: string
+  surname?: string
+  email?: string
+  memberNumber?: string
+  questions: ProcessParticipantQuestionVote[]
+}
+
+/**
+ * Response of `GET /processes/{id}/participants?field=&value=` — org members
+ * matching the lookup that are participants of the process census, with their
+ * per-question voted status. Manager/Admin only. Empty when none match.
+ */
+export interface ProcessParticipantsResponse {
+  participants: ProcessParticipantEntry[]
+}
+
+/**
+ * Response of `PUT /processes/{id}/census` — the number of members added to
+ * the census synchronously, plus the async job id that raises each published
+ * election's `maxCensusSize` on-chain (absent when no on-chain update was
+ * needed). Only published processes can have their census extended; drafts are
+ * edited through `PUT /processes/{id}` instead (409 otherwise).
+ */
+export interface UpdateProcessCensusResponse {
+  jobId?: string
+  added: number
+  errors?: string[]
 }
 
 // ─── Pagination ─────────────────────────────────────────────────────────────────

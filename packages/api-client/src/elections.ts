@@ -7,6 +7,8 @@ import type {
   EnqueuedResponse,
   LocalizedInput,
   MultiLangString,
+  ProcessParticipantLookupField,
+  ProcessParticipantsResponse,
   ProcessSignInfoResponse,
   PublicQuestionResponse,
   PublishProcessResponse,
@@ -14,6 +16,7 @@ import type {
   RelayVoteResponse,
   SetElectionStatusRequest,
   SetQuestionsStatusRequest,
+  UpdateProcessCensusResponse,
   VotingProcessListResponse,
   VotingProcessResponse,
   VotingProcessResultsResponse,
@@ -126,11 +129,40 @@ export class ElectionsClient {
   }
 
   /**
-   * Publish-readiness dry-run via `GET /processes/{id}/check`. Returns
-   * `{ valid, errors }` without touching the process.
+   * Publish-readiness dry-run via `GET /processes/{id}/validation`. Returns
+   * `{ valid, errors }` without touching the process. (Not to be confused with
+   * `POST /processes/{id}/check`, the public CSP voter-eligibility route.)
    */
   async validate(id: string): Promise<VotingProcessValidateResponse> {
-    return this.fetch<VotingProcessValidateResponse>(`/processes/${id}/check`).catch(handleError)
+    return this.fetch<VotingProcessValidateResponse>(`/processes/${id}/validation`).catch(handleError)
+  }
+
+  /**
+   * Admin lookup of org members inside the process census via
+   * `GET /processes/{id}/participants?field=&value=`, with each match's
+   * per-question voted status. Manager/Admin only. `field` is limited to
+   * {@link ProcessParticipantLookupField} — name/surname/birthDate census auth
+   * fields are not queryable.
+   */
+  async participants(
+    id: string,
+    params: { field: ProcessParticipantLookupField; value: string },
+  ): Promise<ProcessParticipantsResponse> {
+    return this.fetch<ProcessParticipantsResponse>(`/processes/${id}/participants`, { params }).catch(handleError)
+  }
+
+  /**
+   * Append existing org members to a published process's census via
+   * `PUT /processes/{id}/census` (members already present are skipped). When
+   * the census grows past the on-chain `maxCensusSize`, the returned `jobId`
+   * tracks the async on-chain bump — wait for it with `jobs.waitFor`. Fails
+   * with 409 for drafts (edit those through {@link update} instead).
+   */
+  async addCensusMembers(id: string, memberIds: string[]): Promise<UpdateProcessCensusResponse> {
+    return this.fetch<UpdateProcessCensusResponse>(`/processes/${id}/census`, {
+      method: 'PUT',
+      body: { memberIds },
+    }).catch(handleError)
   }
 
   /**
