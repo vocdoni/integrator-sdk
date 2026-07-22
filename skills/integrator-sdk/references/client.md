@@ -54,10 +54,12 @@ Ids to keep straight: `processId` is the process's **Mongo id** (what
 `elections.get` takes — the bundle routes 404 on it), and `electionId` in
 `sign()` is the **question's** on-chain Vochain id (`question.upstreamId`).
 
-```ts
-// Read the process (chainId, census auth config, questions with upstreamIds)
-const election = await client.elections.get(processId)
+Note the full process read (`client.elections.get`) is **Bearer-authed** —
+integrator-side only. The voter app receives `processId` and `chainId` from the
+integrator's backend (no public route exposes `chainId` — see GAPS.md) and uses
+only the routes below.
 
+```ts
 // Public single-question read — no API key. Includes choices, ballotProtocol,
 // census auth config and (for secretUntilTheEnd questions) encryptionKeys.
 const question = await client.processes.getQuestion(processId, questionId)
@@ -65,11 +67,11 @@ const question = await client.processes.getQuestion(processId, questionId)
 //                           poll until present before building an encrypted ballot
 
 // Auth step 0 — identify the voter.
-// Pass all fields the census requires (see election.census.authFields)
+// Pass all fields the census requires (see question.census.authFields)
 const res0 = await client.processes.authStep0(processId, {
   memberNumber: '42',      // or: name, surname, birthDate, nationalId, email, phone
 })
-// res0.authToken — verified immediately if election.census.twoFaFields is empty (auth-only)
+// res0.authToken — verified immediately if question.census.twoFaFields is empty (auth-only)
 //               — pending verification otherwise (proceed to step 1)
 
 // Auth step 1 — confirm the 2FA OTP (skip for auth-only censuses)
@@ -103,7 +105,8 @@ const { weight } = await client.processes.weight(processId, { authToken })
 const { consumed } = await client.processes.signInfo(processId, { authToken })
 ```
 
-**Census type detection** — check `election.census.twoFaFields`:
+**Census type detection** — check `census.twoFaFields` (on the public question
+read's `question.census`, or on the integrator backend's process read):
 - Empty or absent → auth-only census; step 0 returns a verified token, skip step 1.
 - Non-empty → 2FA census; step 0 returns a pending token, confirm with step 1.
 

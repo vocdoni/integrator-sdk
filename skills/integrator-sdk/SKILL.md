@@ -33,25 +33,31 @@ A monorepo of TypeScript packages that replaces the `@vocdoni/sdk` with a SaaS-f
 
 ## The vote flow in one minute
 
-Every vote follows the same steps regardless of election type. All a voter app
-needs is the process's Mongo id — no bundle:
+Every vote follows the same steps regardless of election type. The full process
+read (`GET /processes/{id}`, `client.elections.get`) is **Bearer-authed** — it
+belongs to the integrator's backend, which hands the voter app the process's
+Mongo id and `chainId` (step 0). Everything the voter app calls itself is
+public or auth-token-identified — no bundle:
 
 ```
-1. GET  /processes/{id}                      → VotingProcessResponse (questions[], chainId, census auth config)
-   GET  /processes/{id}/results              → VotingProcessResultsResponse (optional, for results view)
-   GET  /processes/{id}/questions/{qId}      → public single-question read (choices, ballotProtocol, encryptionKeys)
+0. (integrator backend, Bearer-authed)
+   GET  /processes/{id}                      → VotingProcessResponse; hand the voter app
+                                               processId + chainId (chainId has no public route — see GAPS.md)
+1. GET  /processes/{id}/questions/{qId}      → public single-question read (choices, ballotProtocol, encryptionKeys)
+   GET  /processes/{id}/results              → public per-question results (optional, for results view)
 2. POST /processes/{id}/auth/0               → auth step 0 (identify the voter)
    POST /processes/{id}/auth/1               → auth step 1 (confirm 2FA — skip if auth-only census)
-3. POST /processes/{id}/check                → belongsToProcess + per-question canVote/hasVoted
-   [repeat steps 4–6 for each votable question in questions[]]
+3. POST /processes/{id}/check                → belongsToProcess + per-question {questionId, upstreamId, canVote, hasVoted}
+   [repeat steps 4–6 for each votable question]
 4. POST /processes/{id}/sign                 → CSP signs voter's ephemeral address for question.upstreamId
 5. buildVoteTransaction(...)                 → build + sign the protobuf tx locally
 6. POST /vote                                → relay tx → jobId
    GET  /jobs/{jobId}                        → poll until completed → voteID (nullifier)
 ```
 
-Steps 1–4 are handled by `@vocdoni/api-client` (`client.elections` for the reads,
-`client.processes` — `ProcessesCspClient` — for the voter CSP routes).
+Steps 1–4 are handled by `@vocdoni/api-client` (`client.processes` —
+`ProcessesCspClient` — for all voter routes; `client.elections.get` is the
+backend-side read of step 0).
 Steps 5–6 are handled by `@vocdoni/api-voting` (`VotingClient` or `buildVoteTransaction` directly).
 In React, `BundleProvider` + `ElectionProvider` automate the flow (still on the
 legacy bundle routes — see below).
@@ -67,30 +73,34 @@ bundle deployments — the new `/processes` model needs no bundle.
 import { VocdoniApiClient } from '@vocdoni/api-client'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 
+// From YOUR backend — the process read (elections.get) is Bearer-authed, so the
+// integrator does it server-side and hands the voter app these values:
+const processId = '<process-mongo-id>'
+const chainId = '<vochain-chain-id>'
+
 const client = new VocdoniApiClient({ apiUrl: 'https://saas-api.vocdoni.net' })
 const voting = new VotingClient({ client })
 
-// 1. Process read → questions (with their Vochain ids) + chainId
-const election = await client.elections.get(processId) // Mongo id
-const question = election.questions[0]
-
-// 2. Auth (auth-only census — no 2FA step; else follow with authStep1)
+// 1. Auth (auth-only census — no 2FA step; else follow with authStep1)
 const { authToken } = await client.processes.authStep0(processId, { memberNumber: '42' })
 
-// 3. Check — per-question eligibility in one call
+// 2. Check — per-question {questionId, upstreamId, canVote, hasVoted} in one call
 const { belongsToProcess, questions } = await client.processes.check(processId, { authToken })
-const q = questions.find((s) => s.questionId === question.id)
-if (!belongsToProcess || !q?.canVote || q.hasVoted) throw new Error('Cannot vote')
+const q = questions.find((s) => s.canVote && !s.hasVoted)
+if (!belongsToProcess || !q?.upstreamId) throw new Error('Cannot vote')
+
+// 3. Display data — public single-question read (choices, ballotProtocol, encryptionKeys)
+const question = await client.processes.getQuestion(processId, q.questionId)
 
 // 4. CSP sign — electionId is the QUESTION's on-chain id (upstreamId)
 const signer = new EphemeralSigner()
 const { signature, weight } = await client.processes.sign(processId, {
-  authToken, electionId: question.upstreamId!, payload: signer.address,
+  authToken, electionId: q.upstreamId, payload: signer.address,
 })
 
 // 5–6. Build tx, relay, poll for nullifier
 const jobId = await voting.vote({
-  processId: question.upstreamId!, chainId: election.chainId!, choices: [0],
+  processId: q.upstreamId, chainId, choices: [0],
   signer, cspSignature: signature, cspWeight: weight,
 })
 const job = await client.jobs.waitFor(jobId)
@@ -100,8 +110,9 @@ console.log('nullifier:', job.result?.voteID)
 ## Mental model
 
 - **The voter's auth token is anchored to the process (new model).** `client.processes` authenticates the voter directly against the voting process; one verified `authToken` covers check/sign for every question. Bundles — organizer-created groups of processes sharing a census, authenticated via `client.bundle` — are the legacy equivalent and are not part of the new `/processes` model.
-- **Admin vs voter surface.** `client.elections` is the ADMIN side of `/processes/{id}` (create, publish, census, status — API-key/JWT authed); `client.processes` is the VOTER side (auth/check/sign/weight — public, token-identified).
-- **One process, many questions.** `GET /processes/{id}` returns a `VotingProcessResponse` with a `questions[]` array. Each question is a separate on-chain Vochain election (`question.upstreamId` is its Vochain hex id). Voting casts one Vochain transaction per question.
+- **Admin vs voter surface.** `client.elections` is the ADMIN side of `/processes/{id}` (create, publish, census, status — API-key/JWT authed); `client.processes` is the VOTER side (auth/check/sign/weight/getQuestion — public, token-identified). Never call `client.elections.get` from a token-less voter client — it 401s.
+- **`chainId` reaches the voter via the integrator.** The only per-process `chainId` source is the Bearer-authed process read; no public route exposes it (see GAPS.md). The integrator's backend hands it to the voter app together with the process id.
+- **One process, many questions.** `GET /processes/{id}` returns a `VotingProcessResponse` with a `questions[]` array. Each question is a separate on-chain Vochain election (`question.upstreamId` is its Vochain hex id — also reported publicly by the process check). Voting casts one Vochain transaction per question.
 - **Process status is computed.** `computeProcessStatus(questions)` derives the top-level status from all question statuses. Any question `ONGOING` → `ONGOING`; all `ENDED`/`RESULTS` → `ENDED`. Statuses: `ONGOING`, `PAUSED`, `ENDED`, `CANCELED`, `UPCOMING`, `RESULTS`, `PROCESS_UNKNOWN`.
 - **Ballot encoding is per-question.** Use `encodeQuestionBallot(question, answers)` from `@vocdoni/ballot` to produce each question's `number[]`, then pass `number[][]` to `vote()`.
 - **The vote tx is signed by an ephemeral key, not the voter's wallet.** `EphemeralSigner` generates a fresh secp256k1 keypair per vote; the CSP signs its Ethereum address. This decouples the voter's identity from the on-chain signature.

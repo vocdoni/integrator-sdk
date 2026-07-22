@@ -9,11 +9,11 @@
  * buildVoteTransaction (or VotingClient.vote). Everything else — auth, sign,
  * relay, job polling — is identical.
  *
- * Key sourcing: `question.encryptionKeys` — on the process read
- * (elections.get) and on the public single-question read
- * (processes.getQuestion). The keykeepers publish the keys asynchronously
- * right after publish, and the field is ABSENT (not an empty array) until
- * then — treat absence as "not yet published" and poll.
+ * Key sourcing: `question.encryptionKeys` — on the public single-question read
+ * (`processes.getQuestion`, no API key needed) and on the Bearer-authed process
+ * read (elections.get, integrator-side). The keykeepers publish the keys
+ * asynchronously right after publish, and the field is ABSENT (not an empty
+ * array) until then — treat absence as "not yet published" and poll.
  *
  * choices format: same as single-choice-vote.ts or multichoice-vote.ts; the
  * encryption is transparent to the choices encoding.
@@ -26,8 +26,14 @@ import { VocdoniApiClient } from '@vocdoni/api-client'
 import type { EncryptionKey } from '@vocdoni/api-types'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 
+// ─── Config — handed to the voter app by the integrator's backend ────────────
+// The full process read (GET /processes/{id}) is Bearer-authed; the backend
+// does it server-side and passes these through. chainId has NO public route in
+// the new model (see GAPS.md).
+
 const API_URL = 'https://saas-api.vocdoni.net'
-const PROCESS_ID = '<process-mongo-id>' // the id elections.get() takes
+const PROCESS_ID = '<process-mongo-id>' // election.id from the backend's process read
+const CHAIN_ID = '<vochain-chain-id>' // election.chainId — votes are signed against it
 const VOTER = { memberNumber: '42' }
 
 // ─── Setup ───────────────────────────────────────────────────────────────────
@@ -35,26 +41,45 @@ const VOTER = { memberNumber: '42' }
 const client = new VocdoniApiClient({ apiUrl: API_URL })
 const voting = new VotingClient({ client })
 
-// ─── 1. Process info → chainId + the secret question ─────────────────────────
-// Each question maps to its own upstream Vochain process (question.upstreamId),
-// and encryption keys are per question/upstream process.
+// ─── 1. Auth ─────────────────────────────────────────────────────────────────
 
-const election = await client.elections.get(PROCESS_ID)
-if (!election.chainId) throw new Error('Process has no chainId (not published yet?)')
+const res0 = await client.processes.authStep0(PROCESS_ID, VOTER)
+if (!res0.authToken) throw new Error('Auth step 0 did not return a token')
+const authToken = res0.authToken
+// For 2FA censuses, also call authStep1 — see single-choice-vote.ts.
 
-const question = election.questions.find((q) => q.secretUntilTheEnd)
-if (!question) {
+// ─── 2. Check membership + find the secret question ──────────────────────────
+// The check reports every question's id + upstreamId; the public question read
+// tells us which one is secretUntilTheEnd. Each question maps to its own
+// upstream Vochain process, and encryption keys are per question.
+
+const check = await client.processes.check(PROCESS_ID, { authToken })
+if (!check.belongsToProcess) throw new Error('Voter is not in this census')
+
+let found: { questionId: string; processId: string } | undefined
+for (const s of check.questions) {
+  if (!s.upstreamId) continue
+  const q = await client.processes.getQuestion(PROCESS_ID, s.questionId)
+  if (q.secretUntilTheEnd) {
+    found = { questionId: s.questionId, processId: s.upstreamId }
+    break
+  }
+}
+if (!found) {
   throw new Error('No secretUntilTheEnd question — use single-choice-vote.ts instead')
 }
-const processId = question.upstreamId
-if (!processId) throw new Error('Question has no upstreamId (process not yet published?)')
+const { questionId, processId } = found
 
-// ─── 2. Encryption keys — poll the public question read until published ──────
+const status = check.questions.find((q) => q.questionId === questionId)
+if (!status?.canVote) throw new Error('Voter is not eligible for this question')
+if (status.hasVoted) throw new Error('Voter has already voted in this election')
+
+// ─── 3. Encryption keys — poll the public question read until published ──────
 // Right after publish the keykeepers may not have published the keys yet; the
 // field is absent (not an empty array) until they do. The public question read
 // needs no API key, so a voter UI can poll it directly.
 
-const encryptionKeys = await pollEncryptionKeys(PROCESS_ID, question.id)
+const encryptionKeys = await pollEncryptionKeys(PROCESS_ID, questionId)
 console.log(
   `Encryption keys: ${encryptionKeys.length} key(s), ` +
     `index(es) ${encryptionKeys.map((k) => k.index).join(', ')}`,
@@ -62,22 +87,7 @@ console.log(
 // Each key: { index: number, key: string (hex curve25519 public key) }
 // Multiple keys are applied innermost-first (ascending index order).
 
-// ─── 3. Auth ─────────────────────────────────────────────────────────────────
-
-const res0 = await client.processes.authStep0(PROCESS_ID, VOTER)
-if (!res0.authToken) throw new Error('Auth step 0 did not return a token')
-const authToken = res0.authToken
-// For 2FA censuses, also call authStep1 — see single-choice-vote.ts.
-
-// ─── 4. Check membership + eligibility ───────────────────────────────────────
-
-const check = await client.processes.check(PROCESS_ID, { authToken })
-if (!check.belongsToProcess) throw new Error('Voter is not in this census')
-const status = check.questions.find((q) => q.questionId === question.id)
-if (!status?.canVote) throw new Error('Voter is not eligible for this question')
-if (status.hasVoted) throw new Error('Voter has already voted in this election')
-
-// ─── 5. CSP sign ─────────────────────────────────────────────────────────────
+// ─── 4. CSP sign ─────────────────────────────────────────────────────────────
 
 const signer = new EphemeralSigner()
 const { signature, weight } = await client.processes.sign(PROCESS_ID, {
@@ -87,7 +97,7 @@ const { signature, weight } = await client.processes.sign(PROCESS_ID, {
 })
 if (!signature) throw new Error('CSP did not return a signature')
 
-// ─── 6. Cast the encrypted vote ──────────────────────────────────────────────
+// ─── 5. Cast the encrypted vote ──────────────────────────────────────────────
 // Pass encryptionKeys — buildVoteTransaction seals the ballot automatically.
 // The NaCl SealedBox uses ephemeralPublicKey(32) || box layout.
 // If multiple keys are present, they are applied in ascending index order.
@@ -100,7 +110,7 @@ if (!signature) throw new Error('CSP did not return a signature')
 
 const jobId = await voting.vote({
   processId,
-  chainId: election.chainId,
+  chainId: CHAIN_ID,
   choices: [0], // ← voter's choice(s); same format as unencrypted elections
   signer,
   cspSignature: signature,
@@ -108,7 +118,7 @@ const jobId = await voting.vote({
   encryptionKeys, // ← triggers NaCl sealing; omit for unencrypted elections
 })
 
-// ─── 7. Poll for the nullifier ───────────────────────────────────────────────
+// ─── 6. Poll for the nullifier ───────────────────────────────────────────────
 
 const job = await client.jobs.waitFor(jobId, { timeoutMs: 90_000 })
 console.log('Encrypted vote cast — nullifier:', job.result?.voteID)
@@ -124,12 +134,12 @@ console.log('Encrypted vote cast — nullifier:', job.result?.voteID)
 
 async function pollEncryptionKeys(
   procId: string,
-  questionId: string,
+  qId: string,
   { intervalMs = 2_000, timeoutMs = 60_000 } = {},
 ): Promise<EncryptionKey[]> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
-    const q = await client.processes.getQuestion(procId, questionId)
+    const q = await client.processes.getQuestion(procId, qId)
     if (q.encryptionKeys?.length) return q.encryptionKeys
     if (Date.now() > deadline) {
       throw new Error('Timed out waiting for the keykeepers to publish the encryption keys')

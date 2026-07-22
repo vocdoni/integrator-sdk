@@ -1,12 +1,12 @@
 /**
  * Multi-choice voting patterns.
  *
- * A process casts ONE Vochain transaction per question — this recipe loops
- * `election.questions` and encodes each question's raw `selections` (the
- * voter's picks) into the on-chain `choices` array via `encodeQuestionBallot`,
- * which infers the ballot type from that question's `ballotProtocol`. The
- * auth + CSP-sign steps are identical to single-choice-vote.ts; only how you
- * build `selections` per question changes.
+ * A process casts ONE Vochain transaction per question — this recipe loops the
+ * questions reported by the process check and encodes each question's raw
+ * `selections` (the voter's picks) into the on-chain `choices` array via
+ * `encodeQuestionBallot`, which infers the ballot type from that question's
+ * `ballotProtocol`. The auth + CSP-sign steps are identical to
+ * single-choice-vote.ts; only how you build `selections` per question changes.
  *
  * ─── Format A: Single choice, pick one option ─────────────────────────────
  *   question.ballotProtocol.maxCount = 1
@@ -40,30 +40,31 @@ import { VocdoniApiClient } from '@vocdoni/api-client'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 import { encodeQuestionBallot } from '@vocdoni/ballot'
 
+// ─── Config — handed to the voter app by the integrator's backend ────────────
+// The full process read (GET /processes/{id}) is Bearer-authed; the backend
+// does it server-side and passes these through. chainId has NO public route in
+// the new model (see GAPS.md).
+
 const API_URL = 'https://saas-api.vocdoni.net'
-const PROCESS_ID = '<process-mongo-id>' // the id elections.get() takes
-const VOTER = { memberNumber: '42' }
+const PROCESS_ID = '<process-mongo-id>' // election.id from the backend's process read
+const CHAIN_ID = '<vochain-chain-id>' // election.chainId — votes are signed against it
+const VOTER = { memberNumber: '42' } // fields required by election.census.authFields
 
 // ─── Shared setup + auth (identical to single-choice-vote.ts) ────────────────
 
 const client = new VocdoniApiClient({ apiUrl: API_URL })
 const voting = new VotingClient({ client })
 
-// elections.get() returns a VotingProcessResponse: one process, many questions.
-// Each question is its own on-chain Vochain process (question.upstreamId), and
-// the chainId the votes sign against is on the process read.
-const election = await client.elections.get(PROCESS_ID)
-if (!election.chainId) throw new Error('Process has no chainId (not published yet?)')
-
 const res0 = await client.processes.authStep0(PROCESS_ID, VOTER)
 if (!res0.authToken) throw new Error('Auth step 0 did not return a token')
 const authToken = res0.authToken
 // (add authStep1 here for 2FA censuses — see single-choice-vote.ts)
 
-// Membership + per-question eligibility in one call.
+// Membership + per-question eligibility in one call. Each entry carries the
+// question's id and its on-chain Vochain id (upstreamId) — no authed process
+// read needed to discover them.
 const check = await client.processes.check(PROCESS_ID, { authToken })
 if (!check.belongsToProcess) throw new Error('Voter is not in this census')
-const statusByQuestion = new Map(check.questions.map((q) => [q.questionId, q]))
 
 // ─── Per-question selections ──────────────────────────────────────────────
 // Replace this with however your UI collects the voter's picks. Each entry is
@@ -87,33 +88,35 @@ const SELECTIONS_BY_QUESTION: Record<string, number[]> = {
 
 // ─── Vote — once per question ──────────────────────────────────────────────
 // A multi-question process casts one Vochain transaction per question, so
-// CSP-sign / build-transaction / relay / poll repeat for every question.
+// question-read / CSP-sign / build-transaction / relay / poll repeat for every
+// question.
 
-for (const question of election.questions) {
-  const processId = question.upstreamId
+for (const status of check.questions) {
+  const processId = status.upstreamId
   if (!processId) {
-    console.warn(`Question ${question.id} has no upstreamId yet (not published?) — skipping`)
+    console.warn(`Question ${status.questionId} has no upstreamId yet (not published?) — skipping`)
     continue
   }
 
-  const selections = SELECTIONS_BY_QUESTION[question.id]
+  const selections = SELECTIONS_BY_QUESTION[status.questionId]
   if (!selections) {
-    console.warn(`No selections configured for question ${question.id} — skipping`)
+    console.warn(`No selections configured for question ${status.questionId} — skipping`)
     continue
   }
 
+  if (!status.canVote || status.hasVoted) {
+    console.log(`Cannot vote on question ${status.questionId} (ineligible or already voted) — skipping`)
+    continue
+  }
+
+  // Public single-question read — choices + ballotProtocol; no API key needed.
+  const question = await client.processes.getQuestion(PROCESS_ID, status.questionId)
   console.log(`Question ${question.id} ballotProtocol:`, question.ballotProtocol)
   // question.ballotProtocol.maxCount      — how many picks/slots the ballot has
   // question.ballotProtocol.maxValue      — max encoded value per element
   // question.ballotProtocol.uniqueValues  — true for ranked voting
   // question.ballotProtocol.maxTotalCost  — caps total approvals/weight, if set
   // question.typeSetup?.minChoices/maxChoices — UI-facing pick bounds, if set
-
-  const status = statusByQuestion.get(question.id)
-  if (!status?.canVote || status.hasVoted) {
-    console.log(`Cannot vote on question ${question.id} (ineligible or already voted) — skipping`)
-    continue
-  }
 
   const signer = new EphemeralSigner()
   const { signature, weight } = await client.processes.sign(PROCESS_ID, {
@@ -130,7 +133,7 @@ for (const question of election.questions) {
 
   const jobId = await voting.vote({
     processId,
-    chainId: election.chainId,
+    chainId: CHAIN_ID,
     choices,
     signer,
     cspSignature: signature,
