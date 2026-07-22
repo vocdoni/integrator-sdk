@@ -7,29 +7,16 @@ import type {
   VotingProcessResultsResponse,
 } from '@vocdoni/api-types'
 import { render, type RenderOptions } from '@testing-library/react'
-import i18next from 'i18next'
-import { I18nextProvider, initReactI18next } from 'react-i18next'
+import { I18nextProvider } from 'react-i18next'
 import type { ReactElement, ReactNode } from 'react'
 import { ComponentsProvider } from './components/context/ComponentsProvider'
 import type { ComponentsPartialDefinition } from './components/context/types'
-import {
-  reactComponentsDefaultLanguage,
-  reactComponentsNamespace,
-  reactComponentsResources,
-} from './i18n/locales'
+import { createTestI18n } from './i18n/test-i18n'
 
 // A dedicated i18n instance preloaded with the package's English resources, so
 // components render real labels ("Ongoing", "Vote", …) under test instead of
 // raw keys. Created once and reused across the suite.
-const testI18n = i18next.createInstance()
-testI18n.use(initReactI18next).init({
-  lng: reactComponentsDefaultLanguage,
-  fallbackLng: reactComponentsDefaultLanguage,
-  ns: [reactComponentsNamespace],
-  defaultNS: reactComponentsNamespace,
-  resources: reactComponentsResources,
-  interpolation: { escapeValue: false },
-})
+const testI18n = createTestI18n()
 
 export interface RenderWithComponentsOptions extends Omit<RenderOptions, 'wrapper'> {
   /** Slot overrides — inject simple test slots to assert on the props a component emits. */
