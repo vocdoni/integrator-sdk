@@ -15,9 +15,12 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 //      question read (choices/ballotProtocol/upstreamId, and the secret
 //      question's encryption keys) and the 401 on the protected process read
 //   6. bundles every question's on-chain process and has 3 members vote on all
-//      of them (chainId comes from the bundle info, not the process); the
-//      secret question's ballots are sealed with its encryption keys
+//      of them via the LEGACY bundle CSP flow (chainId from the bundle info);
+//      the secret question's ballots are sealed with its encryption keys
 //   7. asserts a distinct vote nullifier per (member, question)
+//   8. has a 4th member vote every process via the NEW process-scoped CSP flow
+//      (client.processes: authStep0 → check → sign), chainId handed over from
+//      the admin's protected process read (the integrator handoff)
 //
 // This is deliberately the ONLY integration suite: anything needing a live
 // backend gets asserted inside this lifecycle (it creates all its own data, so
@@ -116,6 +119,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           choices: [1],
           body: {
             orgAddress,
+            census: { authFields: ['memberNumber'], groupId },
             // Plain strings on purpose: the SDK normalizes them to language maps.
             title: 'Single choice',
             endDate,
@@ -140,6 +144,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           choices: [0, 2],
           body: {
             orgAddress,
+            census: { authFields: ['memberNumber'], groupId },
             title: 'Multi choice',
             endDate,
             questions: [
@@ -162,6 +167,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           choices: [1],
           body: {
             orgAddress,
+            census: { authFields: ['memberNumber'], groupId },
             title: 'Secret single choice',
             endDate,
             questions: [
@@ -228,7 +234,13 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           expect(pub.id).toBe(q.id)
           expect(pub.upstreamId).toBe(q.upstreamId)
           expect(pub.choices.length, `${d.label} public question has no choices`).toBeGreaterThan(0)
-          expect(pub.ballotProtocol, `${d.label} public question has no ballotProtocol`).toBeTruthy()
+          // A question needs a named `type` OR a raw `ballotProtocol` — questions
+          // created via `type` may omit the protocol (encodeQuestionBallot infers
+          // it from the type in that case).
+          expect(
+            pub.ballotProtocol ?? pub.type,
+            `${d.label} public question has neither ballotProtocol nor type`,
+          ).toBeTruthy()
           if (q.secretUntilTheEnd) {
             expect(
               pub.encryptionKeys?.length,
@@ -322,7 +334,59 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         }
       }
 
-      expect(nullifiers.size).toBe(VOTERS.length * questionCount)
+      // 8. The bundle-less voter path (client.processes — ProcessesCspClient):
+      // member 4 votes every process through the process-scoped CSP flow. The
+      // auth token is anchored to the process (one per process), and chainId
+      // reaches the voter via the integrator handoff — modeled here by reading
+      // it off the admin's protected process read.
+      const PROCESS_FLOW_VOTER = '4'
+      for (const p of processes) {
+        const procInfo = await admin.elections.get(p.draftId)
+        expect(procInfo.chainId, `${p.label} has no chainId on the admin read`).toBe(chainId)
+
+        const auth = await voterClient.processes.authStep0(p.draftId, {
+          memberNumber: PROCESS_FLOW_VOTER,
+        })
+        expect(auth.authToken, `process auth failed (${p.label})`).toBeTruthy()
+
+        const check = await voterClient.processes.check(p.draftId, { authToken: auth.authToken! })
+        expect(check.belongsToProcess, `member 4 not in process census (${p.label})`).toBe(true)
+
+        for (const status of check.questions) {
+          expect(status.canVote, `member 4 cannot vote (${p.label})`).toBe(true)
+          expect(status.hasVoted, `member 4 already voted (${p.label})`).toBe(false)
+          expect(status.upstreamId, `check misses upstreamId (${p.label})`).toMatch(/^[0-9a-f]{64}$/i)
+          const question = p.questions.find((q) => q.id === status.questionId)
+          expect(question, `check reported unknown question ${status.questionId}`).toBeTruthy()
+
+          const signer = new EphemeralSigner()
+          const sign = await voterClient.processes.sign(p.draftId, {
+            authToken: auth.authToken!,
+            electionId: status.upstreamId!,
+            payload: signer.address,
+          })
+          expect(sign.signature, `no CSP signature via process flow (${p.label})`).toBeTruthy()
+
+          const jobId = await voting.vote({
+            processId: status.upstreamId!,
+            choices: p.choices,
+            chainId,
+            signer,
+            cspSignature: sign.signature!,
+            cspWeight: sign.weight,
+            encryptionKeys: question!.secretUntilTheEnd ? question!.encryptionKeys : undefined,
+          })
+          const job = await voterClient.jobs.waitFor(jobId, { timeoutMs: 90000, intervalMs: 2000 })
+          expect(job.status, `process-flow vote relay failed (${p.label})`).toBe('completed')
+          const nullifier = job.result?.voteID
+          expect(nullifier, `no nullifier (process flow, ${p.label})`).toBeTruthy()
+          expect(nullifiers.has(nullifier!), 'duplicate nullifier (process flow)').toBe(false)
+          nullifiers.add(nullifier!)
+          step(`8. process-flow vote — member 4 on ${p.label} → ${nullifier!.slice(0, 12)}…`)
+        }
+      }
+
+      expect(nullifiers.size).toBe((VOTERS.length + 1) * questionCount)
       step(`done — ${nullifiers.size} votes cast across ${questionCount} on-chain processes`)
     },
     600000,
