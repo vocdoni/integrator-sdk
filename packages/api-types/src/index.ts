@@ -449,9 +449,9 @@ export interface DraftVotingProcessResponse extends VotingProcessBase {
  * it is always present.
  *
  * Caveat: the `startDate` guarantee lands with saas-backend#586 (backfills
- * `startDate` at publish), which is not deployed yet — until it is, published
- * immediate-start processes may still omit `startDate`, so runtime consumers
- * should stay defensive about its absence for now.
+ * `startDate` at publish), merged 2026-07 — processes published before that
+ * deploy may still omit `startDate`, so runtime consumers should stay
+ * defensive about its absence when reading older processes.
  */
 export interface PublishedVotingProcessResponse extends VotingProcessBase {
   published: true

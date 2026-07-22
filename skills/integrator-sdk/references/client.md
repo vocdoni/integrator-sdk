@@ -254,8 +254,8 @@ const { addresses } = await client.auth.addresses()
 import type { VotingProcessResponse, VotingProcessQuestion, BallotProtocol, Bundle } from '@vocdoni/api-types'
 
 // Discriminated union on `published`: drafts may lack both dates; published
-// processes always carry endDate (startDate guaranteed once saas-backend#586
-// deploys — stay defensive about it until then). Narrow before reading dates.
+// processes always carry endDate (startDate backfill merged in saas-backend#586;
+// processes published before it may still lack startDate). Narrow before reading dates.
 type VotingProcessResponse = DraftVotingProcessResponse | PublishedVotingProcessResponse
 
 interface VotingProcessBase {
