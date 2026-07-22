@@ -1,8 +1,38 @@
 import { http, HttpResponse } from 'msw'
 import { server } from '../../../mocks/server'
 import { VocdoniApiClient } from './client'
+import { JobFailedError } from './jobs'
 
 const BASE_URL = 'http://localhost'
+const ORG = '0xorg'
+
+describe('jobs.list', () => {
+  let client: VocdoniApiClient
+
+  beforeEach(() => {
+    client = new VocdoniApiClient({ apiUrl: BASE_URL })
+  })
+
+  it('GETs /jobs with orgAddress, type, page and limit as query params', async () => {
+    let search: URLSearchParams | undefined
+    server.use(
+      http.get(`${BASE_URL}/jobs`, ({ request }) => {
+        search = new URL(request.url).searchParams
+        return HttpResponse.json({
+          jobs: [{ jobId: 'j1', type: 'org_members', status: 'completed' }],
+        })
+      }),
+    )
+
+    const res = await client.jobs.list({ orgAddress: ORG, type: 'org_members', page: 2, limit: 5 })
+    expect(res.jobs).toHaveLength(1)
+    expect(res.jobs[0].jobId).toBe('j1')
+    expect(search?.get('orgAddress')).toBe(ORG)
+    expect(search?.get('type')).toBe('org_members')
+    expect(search?.get('page')).toBe('2')
+    expect(search?.get('limit')).toBe('5')
+  })
+})
 
 describe('jobs.waitFor', () => {
   let client: VocdoniApiClient
@@ -60,5 +90,41 @@ describe('jobs.waitFor', () => {
     const job = await client.jobs.waitFor('job-1', { expectType: 'relay_vote' })
     expect(job.status).toBe('completed')
     expect(job.type).toBe('relay_vote')
+  })
+
+  it('throws JobFailedError with the joined errors when the job fails', async () => {
+    server.use(
+      http.get(`${BASE_URL}/jobs/failed-1`, () =>
+        HttpResponse.json({
+          jobId: 'failed-1',
+          type: 'org_members',
+          status: 'failed',
+          errors: ['row 3: invalid email', 'row 7: duplicate memberNumber'],
+        }),
+      ),
+    )
+
+    await expect(client.jobs.waitFor('failed-1', { intervalMs: 1 })).rejects.toMatchObject({
+      name: 'JobFailedError',
+      message: 'row 3: invalid email; row 7: duplicate memberNumber',
+    })
+  })
+
+  it('falls back to a generic message when the job has no errors', async () => {
+    server.use(
+      http.get(`${BASE_URL}/jobs/failed-2`, () =>
+        HttpResponse.json({ jobId: 'failed-2', type: 'relay_vote', status: 'failed' }),
+      ),
+    )
+
+    let caught: unknown
+    try {
+      await client.jobs.waitFor('failed-2', { intervalMs: 1 })
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(JobFailedError)
+    expect((caught as Error).message).toBe('Job failed-2 failed')
   })
 })

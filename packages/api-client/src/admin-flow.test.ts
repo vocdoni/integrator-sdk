@@ -47,18 +47,25 @@ describe('admin / integrator client methods', () => {
     })
   })
 
-  describe('organizations.waitForMembersJob', () => {
-    it('polls the members job until progress reaches 100', async () => {
+  describe('jobs.waitFor (member-add job)', () => {
+    it('polls GET /jobs/:jobId until the org_members job completes', async () => {
       let calls = 0
       server.use(
-        http.get(`${BASE_URL}/organizations/${ORG}/members/job/:jobid`, () => {
+        http.get(`${BASE_URL}/jobs/mjob-1`, () => {
           calls += 1
-          return HttpResponse.json({ added: calls, total: 2, progress: calls < 2 ? 50 : 100 })
+          const done = calls >= 2
+          return HttpResponse.json({
+            jobId: 'mjob-1',
+            type: 'org_members',
+            status: done ? 'completed' : 'pending',
+            result: { added: done ? 2 : 1, total: 2, progress: done ? 100 : 50 },
+          })
         }),
       )
 
-      const job = await client.organizations.waitForMembersJob(ORG, 'mjob-1', { intervalMs: 1 })
-      expect(job.progress).toBe(100)
+      const job = await client.jobs.waitFor('mjob-1', { intervalMs: 1 })
+      expect(job.status).toBe('completed')
+      expect(job.result?.progress).toBe(100)
       expect(calls).toBeGreaterThanOrEqual(2)
     })
   })
@@ -354,6 +361,213 @@ describe('admin / integrator client methods', () => {
       expect(res.bundleId).toBe('bundle-xyz')
       expect(res.root).toBe('0xroot')
       expect(body).toEqual({ censusId: 'c1', processes: ['0xa', '0xb'] })
+    })
+  })
+})
+
+
+describe('organizations API keys (integrator) + getIntegratorInfo', () => {
+  let client: VocdoniApiClient
+
+  beforeEach(() => {
+    client = new VocdoniApiClient({ apiUrl: BASE_URL })
+  })
+
+  describe('organizations.listApiKeys', () => {
+    it('GETs /integrator/organizations/:address/apikeys', async () => {
+      let requestUrl = ''
+      server.use(
+        http.get(`${BASE_URL}/integrator/organizations/${ORG}/apikeys`, ({ request }) => {
+          requestUrl = request.url
+          return HttpResponse.json({ apiKeys: [{ id: 'k1', label: 'ci', prefix: 'vsk_ab', scopes: ['quota:read'], createdBy: 'u1', createdAt: '2026-01-01', revoked: false }] })
+        }),
+      )
+
+      const res = await client.organizations.listApiKeys(ORG)
+      expect(requestUrl).toBe(`${BASE_URL}/integrator/organizations/${ORG}/apikeys`)
+      expect(res.apiKeys[0].id).toBe('k1')
+    })
+  })
+
+  describe('organizations.createApiKey', () => {
+    it('POSTs to /integrator/organizations/:address/apikeys and returns the one-time secret', async () => {
+      let requestUrl = ''
+      let body: unknown
+      server.use(
+        http.post(`${BASE_URL}/integrator/organizations/${ORG}/apikeys`, async ({ request }) => {
+          requestUrl = request.url
+          body = await request.json()
+          return HttpResponse.json({
+            id: 'k1',
+            label: 'ci',
+            prefix: 'vsk_ab',
+            scopes: ['quota:read', 'managed:read'],
+            createdBy: 'u1',
+            createdAt: '2026-01-01',
+            revoked: false,
+            secret: 'vsk_abcdef',
+          })
+        }),
+      )
+
+      const res = await client.organizations.createApiKey(ORG, {
+        label: 'ci',
+        scopes: ['quota:read', 'managed:read'],
+      })
+      expect(requestUrl).toBe(`${BASE_URL}/integrator/organizations/${ORG}/apikeys`)
+      expect(body).toEqual({ label: 'ci', scopes: ['quota:read', 'managed:read'] })
+      expect(res.secret).toBe('vsk_abcdef')
+    })
+  })
+
+  describe('organizations.revokeApiKey', () => {
+    it('DELETEs /integrator/organizations/:address/apikeys/:keyId', async () => {
+      let requestUrl = ''
+      server.use(
+        http.delete(`${BASE_URL}/integrator/organizations/${ORG}/apikeys/k1`, ({ request }) => {
+          requestUrl = request.url
+          return HttpResponse.json('revoked')
+        }),
+      )
+
+      await client.organizations.revokeApiKey(ORG, 'k1')
+      expect(requestUrl).toBe(`${BASE_URL}/integrator/organizations/${ORG}/apikeys/k1`)
+    })
+  })
+
+  describe('organizations.getIntegratorInfo', () => {
+    it('parses an enabled integrator with limits and usage', async () => {
+      server.use(
+        http.get(`${BASE_URL}/integrator`, () =>
+          HttpResponse.json({
+            enabled: true,
+            limits: { maxManagedOrgs: 10, maxManagedProcesses: 100, maxVotes: 1000, maxSMS: 500, maxEmails: 500 },
+            usage: { managedOrgs: 1, managedProcesses: 2, sentVotes: 3, sentSMS: 4, sentEmails: 5 },
+          }),
+        ),
+      )
+
+      const info = await client.organizations.getIntegratorInfo()
+      expect(info.enabled).toBe(true)
+      expect(info.limits).toEqual({
+        maxManagedOrgs: 10,
+        maxManagedProcesses: 100,
+        maxVotes: 1000,
+        maxSMS: 500,
+        maxEmails: 500,
+      })
+      expect(info.usage).toEqual({
+        managedOrgs: 1,
+        managedProcesses: 2,
+        sentVotes: 3,
+        sentSMS: 4,
+        sentEmails: 5,
+      })
+    })
+
+    it('parses a non-integrator org: enabled false, limits omitted', async () => {
+      server.use(
+        http.get(`${BASE_URL}/integrator`, () =>
+          HttpResponse.json({
+            enabled: false,
+            usage: { managedOrgs: 0, managedProcesses: 0, sentVotes: 0, sentSMS: 0, sentEmails: 0 },
+          }),
+        ),
+      )
+
+      const info = await client.organizations.getIntegratorInfo()
+      expect(info.enabled).toBe(false)
+      expect(info.limits).toBeUndefined()
+      expect(info.usage).toEqual({
+        managedOrgs: 0,
+        managedProcesses: 0,
+        sentVotes: 0,
+        sentSMS: 0,
+        sentEmails: 0,
+      })
+    })
+  })
+})
+
+describe('workstream C: new methods and list fixes', () => {
+  let client: VocdoniApiClient
+
+  beforeEach(() => {
+    client = new VocdoniApiClient({ apiUrl: BASE_URL })
+  })
+
+  describe('elections.validateCensus', () => {
+    it('POSTs the org address + census spec and resolves the OK string', async () => {
+      let body: unknown
+      server.use(
+        http.post(`${BASE_URL}/processes/census/validation`, async ({ request }) => {
+          body = await request.json()
+          return HttpResponse.json('OK')
+        }),
+      )
+
+      const res = await client.elections.validateCensus({
+        orgAddress: ORG,
+        census: { authFields: ['memberNumber'], twoFaFields: ['email'] },
+      })
+      expect(res).toBe('OK')
+      expect(body).toEqual({
+        orgAddress: ORG,
+        census: { authFields: ['memberNumber'], twoFaFields: ['email'] },
+      })
+    })
+
+    it('throws with the offending member ids on 400 (duplicates/missing data)', async () => {
+      server.use(
+        http.post(`${BASE_URL}/processes/census/validation`, () =>
+          HttpResponse.json({ error: 'invalid census', duplicates: ['m-1'] }, { status: 400 }),
+        ),
+      )
+
+      await expect(
+        client.elections.validateCensus({ orgAddress: ORG, census: { groupId: 'g1' } }),
+      ).rejects.toThrow('invalid census')
+    })
+  })
+
+  describe('organizations.listBundles', () => {
+    it('sends page/limit query params and parses the { bundles, pagination } wrapper', async () => {
+      let query: URLSearchParams | undefined
+      server.use(
+        http.get(`${BASE_URL}/organizations/${ORG}/processes`, ({ request }) => {
+          query = new URL(request.url).searchParams
+          return HttpResponse.json({
+            bundles: [{ bundleId: 'b-1', primaryProcessId: '0xa', processes: ['0xa'] }],
+            pagination: { totalItems: 1, previousPage: null, currentPage: 1, nextPage: null, lastPage: 1 },
+          })
+        }),
+      )
+
+      const res = await client.organizations.listBundles(ORG, { page: 2, limit: 5 })
+      expect(query?.get('page')).toBe('2')
+      expect(query?.get('limit')).toBe('5')
+      expect(res.bundles).toHaveLength(1)
+      expect(res.bundles[0].bundleId).toBe('b-1')
+      expect(res.pagination.totalItems).toBe(1)
+    })
+  })
+
+  describe('organizations.addMembers', () => {
+    it('sends async=true as a query param and returns the jobId to poll', async () => {
+      let query: URLSearchParams | undefined
+      let body: unknown
+      server.use(
+        http.post(`${BASE_URL}/organizations/${ORG}/members`, async ({ request }) => {
+          query = new URL(request.url).searchParams
+          body = await request.json()
+          return HttpResponse.json({ added: 0, jobId: 'mjob-async-1' })
+        }),
+      )
+
+      const res = await client.organizations.addMembers(ORG, [{ memberNumber: '1' }], { async: true })
+      expect(query?.get('async')).toBe('true')
+      expect(res.jobId).toBe('mjob-async-1')
+      expect(body).toEqual({ members: [{ memberNumber: '1' }] })
     })
   })
 })

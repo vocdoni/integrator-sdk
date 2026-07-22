@@ -124,4 +124,22 @@ describe('VocdoniApiClient', () => {
       expect(token.expirity).toBe(mockAuthToken.expirity)
     })
   })
+
+  describe('info', () => {
+    it('reads GET /info without an API key', async () => {
+      let auth: string | null = 'unset'
+      server.use(
+        http.get(`${BASE_URL}/info`, ({ request }) => {
+          auth = request.headers.get('Authorization')
+          return HttpResponse.json({ chainId: 'vocdoni/DEV/36', version: '1.2.3', goVersion: 'go1.22' })
+        }),
+      )
+
+      const info = await client.info()
+      expect(info.chainId).toBe('vocdoni/DEV/36')
+      expect(info.version).toBe('1.2.3')
+      expect(info.goVersion).toBe('go1.22')
+      expect(auth).toBeNull()
+    })
+  })
 })

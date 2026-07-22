@@ -221,4 +221,20 @@ describe('ProcessesCspClient (voter CSP routes on /processes)', () => {
       expect(q.encryptionKeys?.[0].key).toBe('cc'.repeat(32))
     })
   })
+
+  describe('getParticipant', () => {
+    it('reads the public participant placeholder without an API key', async () => {
+      let auth: string | null = 'unset'
+      server.use(
+        http.get(`${BASE_URL}/processes/${PROCESS_ID}/participants/part-1`, ({ request }) => {
+          auth = request.headers.get('Authorization')
+          return HttpResponse.json(null)
+        }),
+      )
+
+      const res = await client.processes.getParticipant(PROCESS_ID, 'part-1')
+      expect(res).toBeNull()
+      expect(auth).toBeNull()
+    })
+  })
 })

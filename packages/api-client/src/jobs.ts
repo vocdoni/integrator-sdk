@@ -1,4 +1,4 @@
-import type { JobStatusResponse } from '@vocdoni/api-types'
+import type { JobsResponse, JobStatusResponse } from '@vocdoni/api-types'
 import type { UpFetch } from 'up-fetch'
 import { handleError } from './errors'
 
@@ -19,7 +19,7 @@ export interface WaitForJobOptions {
 /** Thrown when a polled job ends in the `failed` state. */
 export class JobFailedError extends Error {
   constructor(public readonly job: JobStatusResponse) {
-    super(job.error || `Job ${job.jobId} failed`)
+    super(job.errors?.length ? job.errors.join('; ') : `Job ${job.jobId} failed`)
     this.name = 'JobFailedError'
   }
 }
@@ -46,6 +46,21 @@ export class JobsClient {
 
   async get(jobId: string): Promise<JobStatusResponse> {
     return this.fetch<JobStatusResponse>(`/jobs/${jobId}`).catch(handleError)
+  }
+
+  /**
+   * List an organization's async jobs (member/census imports and tx jobs: publish, status
+   * change, census update, vote relay), newest first. Requires Manager/Admin of the org.
+   * @param params.orgAddress Organization address (required).
+   * @param params.type Filter by job type, e.g. `org_members`, `census_participants`, `relay_vote`.
+   */
+  async list(params: {
+    orgAddress: string
+    type?: string
+    page?: number
+    limit?: number
+  }): Promise<JobsResponse> {
+    return this.fetch<JobsResponse>('/jobs', { params }).catch(handleError)
   }
 
   /**

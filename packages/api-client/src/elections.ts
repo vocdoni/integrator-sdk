@@ -17,6 +17,8 @@ import type {
   SetElectionStatusRequest,
   SetQuestionsStatusRequest,
   UpdateProcessCensusResponse,
+  ValidateProcessCensusRequest,
+  ValidateProcessCensusResponse,
   VotingProcessListResponse,
   VotingProcessResponse,
   VotingProcessResultsResponse,
@@ -162,6 +164,22 @@ export class ElectionsClient {
     return this.fetch<UpdateProcessCensusResponse>(`/processes/${id}/census`, {
       method: 'PUT',
       body: { memberIds },
+    }).catch(handleError)
+  }
+
+  /**
+   * Pre-flight census validation via `POST /processes/census/validation`:
+   * checks that the chosen auth/2FA fields produce unique, complete
+   * credentials over the target members (a group, an explicit `memberIds`
+   * subset, or the whole organization when neither is set), without creating
+   * anything. Requires Manager/Admin role of the organization. Fails with 400
+   * and the offending duplicate/missing-data member ids when the census is
+   * not usable.
+   */
+  async validateCensus(req: ValidateProcessCensusRequest): Promise<ValidateProcessCensusResponse> {
+    return this.fetch<ValidateProcessCensusResponse>('/processes/census/validation', {
+      method: 'POST',
+      body: req,
     }).catch(handleError)
   }
 

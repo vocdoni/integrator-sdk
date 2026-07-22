@@ -101,24 +101,28 @@ export interface CreateOrganizationRequest {
   provisionAccount?: boolean
 }
 
+/** Effective managed-resource quota for an integrator. A 0 in any field means unlimited. */
 export interface IntegratorLimits {
   maxManagedOrgs: number
-  maxProcessesPerOrg: number
-  maxTotalProcesses: number
-  maxCensusPerProcess: number
-  maxCensusPerOrg: number
-  maxTotalCensusSize: number
+  maxManagedProcesses: number
+  maxVotes: number
+  maxSMS: number
+  maxEmails: number
 }
 
 export interface IntegratorUsage {
   managedOrgs: number
   managedProcesses: number
-  managedCensusSize: number
+  sentVotes: number
+  sentSMS: number
+  sentEmails: number
 }
 
+/** Response of `GET /integrator`. */
 export interface IntegratorInfo {
   enabled: boolean
-  limits: IntegratorLimits
+  /** Omitted when `enabled` is false (the org is not an integrator). */
+  limits?: IntegratorLimits
   usage: IntegratorUsage
 }
 
@@ -432,6 +436,24 @@ export interface EligibilitySpec {
 }
 
 /**
+ * Body of `POST /processes/census/validation` — a pre-flight check of a
+ * {@link CensusSpec} against an organization's members, without creating
+ * anything. On 400, the error body carries the offending duplicate/missing-data
+ * member ids.
+ */
+export interface ValidateProcessCensusRequest {
+  orgAddress: string
+  census: CensusSpec
+}
+
+/**
+ * Response of `POST /processes/census/validation` when the census is usable.
+ * The backend answers a bare JSON string (not an object); treat it as a
+ * success signal only — failures come back as a 400 error instead.
+ */
+export type ValidateProcessCensusResponse = string
+
+/**
  * Fields shared by both variants of {@link VotingProcessResponse}. Returned by
  * `GET /processes/{id}` and as the list items of `GET /processes`.
  */
@@ -648,13 +670,22 @@ export type JobType =
   | 'census_participants'
   | 'publish_process'
   | 'set_process_status'
+  | 'set_process_census'
   | 'relay_vote'
+  | 'publish_voting_process'
 
+/** Unified job result — each field is only populated by the job types that produce it. */
 export interface JobResult {
   address?: string
   status?: string
   /** Vote nullifier — present once a relay_vote job completes. */
   voteID?: string
+  /** Members/census rows imported so far — produced by member/census import jobs. */
+  added?: number
+  /** Total rows to import — produced by member/census import jobs. */
+  total?: number
+  /** added / total * 100 — produced by member/census import jobs. */
+  progress?: number
 }
 
 export interface JobStatusResponse {
@@ -662,7 +693,7 @@ export interface JobStatusResponse {
   status: JobStatus
   type: JobType
   result?: JobResult
-  error?: string
+  errors?: string[]
 }
 
 export interface EnqueuedResponse {
@@ -871,6 +902,18 @@ export interface ProcessParticipantsResponse {
 }
 
 /**
+ * Response of `GET /processes/{processId}/participants/{participantId}` — a
+ * public voter-facing participant lookup, mirroring the bundle equivalent
+ * (`BundleClient.getParticipant`). No API key needed.
+ *
+ * PLACEHOLDER: the backend validates the process (published only) and the
+ * participant id but currently always returns `null` — participant election
+ * info is not yet surfaced (the bundle equivalent is likewise a stub, pending
+ * the CSP indexer lookup).
+ */
+export type ProcessParticipantResponse = null
+
+/**
  * Response of `PUT /processes/{id}/census` — the number of members added to
  * the census synchronously, plus the async job id that raises each published
  * election's `maxCensusSize` on-chain (absent when no on-chain update was
@@ -900,17 +943,17 @@ export interface Pagination {
 
 export type OrganizationInfo = Organization
 
-/** Body of `POST /integrator/organizations` — creates a managed organization. */
-export interface CreateManagedOrganizationRequest {
-  /** Organization type, e.g. "company" (see `GET /organizations/types`). */
-  type: string
-  website?: string
-  size?: string
-  color?: string
-  country?: string
-  timezone?: string
-  meta?: Record<string, unknown>
-  /** Optionally assign an existing user (by email) as the managed org's admin. */
+/**
+ * Body of `POST /integrator/organizations` — creates a managed organization.
+ * Same shape as {@link CreateOrganizationRequest} plus `ownerEmail`; setting
+ * `integrator: true` on the underlying org-create fields opts the new managed
+ * org into the free integrator plan.
+ */
+export type CreateManagedOrganizationRequest = CreateOrganizationRequest & {
+  /**
+   * Optionally assign an existing user (by email) as the managed org's admin,
+   * defaults to the calling user.
+   */
   ownerEmail?: string
 }
 
@@ -943,17 +986,8 @@ export interface AddMembersRequest {
 export interface AddMembersResponse {
   added: number
   errors?: string[]
-  /** Present when the add runs asynchronously — poll the members job. */
+  /** Present when the add runs asynchronously — poll via `GET /jobs/{jobId}` (`jobs.waitFor`). */
   jobId?: string
-}
-
-/** Status of an async member-add job (`progress === 100` means done). */
-export interface AddMembersJobResponse {
-  added: number
-  total: number
-  /** added / total * 100. */
-  progress: number
-  errors?: string[]
 }
 
 export interface OrganizationMembersResponse {
@@ -1102,19 +1136,8 @@ export interface OrganizationAddresses {
   addresses: string[]
 }
 
-export interface JobInfo {
-  jobId: string
-  type: JobType
-  total: number
-  added: number
-  errors?: string[]
-  createdAt: string
-  completedAt?: string
-  completed: boolean
-}
-
 export interface JobsResponse {
-  jobs: JobInfo[]
+  jobs: JobStatusResponse[]
   pagination?: Pagination
 }
 
@@ -1184,6 +1207,17 @@ export interface OrganizationBundle {
   processes: string[]
 }
 
+/**
+ * Response of `GET /organizations/{address}/processes` (deprecated) — a
+ * paginated list of the organization's bundles. Wraps the previously bare
+ * `OrganizationBundle[]` the endpoint returned before backend pagination
+ * landed (`apicommon.ListOrganizationBundles`).
+ */
+export interface OrganizationBundlesResponse {
+  bundles: OrganizationBundle[]
+  pagination: Pagination
+}
+
 /** `GET /organizations/{address}/processes/drafts`. `processes` are raw process docs. */
 export interface OrganizationProcessDraftsResponse {
   processes: unknown[]
@@ -1192,6 +1226,24 @@ export interface OrganizationProcessDraftsResponse {
 
 export interface DeleteManagedOrganizationResponse {
   address: string
+}
+
+// ─── Service info ─────────────────────────────────────────────────────────────
+
+/**
+ * Response of the public `GET /info` — service version, Go build version, and
+ * the Vocdoni chain id.
+ *
+ * `chainId` here is the service's CURRENT Vochain chain id — NOT necessarily
+ * the chain id a given process's votes must sign against (that one only
+ * exists on the Bearer-authed process read; a process published before a
+ * chain migration signs against its own, older chain id — see GAPS.md
+ * "No public chainId source").
+ */
+export interface InfoResponse {
+  chainId: string
+  version: string
+  goVersion: string
 }
 
 // ─── Client config ────────────────────────────────────────────────────────────

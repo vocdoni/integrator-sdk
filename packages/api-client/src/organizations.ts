@@ -1,5 +1,4 @@
 import type {
-  AddMembersJobResponse,
   AddMembersResponse,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
@@ -10,11 +9,10 @@ import type {
   DeleteMembersRequest,
   DeleteMembersResponse,
   IntegratorInfo,
-  JobsResponse,
   ListApiKeysResponse,
   ManagedOrganizationsResponse,
   Organization,
-  OrganizationBundle,
+  OrganizationBundlesResponse,
   OrganizationCensusesResponse,
   OrganizationGroup,
   OrganizationGroupsResponse,
@@ -33,15 +31,6 @@ import type {
 } from '@vocdoni/api-types'
 import type { UpFetch } from 'up-fetch'
 import { handleError } from './errors'
-
-export interface WaitForMembersJobOptions {
-  /** Poll interval in ms. Default 1000. */
-  intervalMs?: number
-  /** Max time to wait before giving up, in ms. Default 60000. */
-  timeoutMs?: number
-}
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 export class OrganizationsClient {
   constructor(private readonly fetch: UpFetch) {}
@@ -100,10 +89,20 @@ export class OrganizationsClient {
     }).catch(handleError)
   }
 
-  /** Add members to the org memberbase. Large batches run async (returns `jobId`). */
-  async addMembers(address: string, members: OrgMember[]): Promise<AddMembersResponse> {
+  /**
+   * Add members to the org memberbase. Subject to the plan's member quota.
+   * With `{ async: true }` (or when the backend decides a large batch runs
+   * async) the response carries a `jobId` — poll it via
+   * `client.jobs.waitFor(jobId)` (progress in `job.result.added/total/progress`).
+   */
+  async addMembers(
+    address: string,
+    members: OrgMember[],
+    opts: { async?: boolean } = {},
+  ): Promise<AddMembersResponse> {
     return this.fetch<AddMembersResponse>(`/organizations/${address}/members`, {
       method: 'POST',
+      params: opts.async !== undefined ? { async: opts.async } : undefined,
       body: { members },
     }).catch(handleError)
   }
@@ -120,30 +119,6 @@ export class OrganizationsClient {
       method: 'DELETE',
       body,
     }).catch(handleError)
-  }
-
-  async getMembersJob(address: string, jobId: string): Promise<AddMembersJobResponse> {
-    return this.fetch<AddMembersJobResponse>(
-      `/organizations/${address}/members/job/${jobId}`,
-    ).catch(handleError)
-  }
-
-  /** Poll a member-add job until it reaches 100% progress. */
-  async waitForMembersJob(
-    address: string,
-    jobId: string,
-    opts: WaitForMembersJobOptions = {},
-  ): Promise<AddMembersJobResponse> {
-    const { intervalMs = 1000, timeoutMs = 60000 } = opts
-    const deadline = Date.now() + timeoutMs
-    for (;;) {
-      const job = await this.getMembersJob(address, jobId)
-      if (job.progress >= 100) return job
-      if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting for members job ${jobId} after ${timeoutMs}ms`)
-      }
-      await sleep(intervalMs)
-    }
   }
 
   // ─── Member groups ─────────────────────────────────────────────────────────
@@ -205,18 +180,20 @@ export class OrganizationsClient {
     )
   }
 
-  async listBundles(address: string): Promise<OrganizationBundle[]> {
-    return this.fetch<OrganizationBundle[]>(`/organizations/${address}/processes`).catch(handleError)
+  /** @deprecated Paginated; the API answers `{ bundles, pagination }`, not a bare array. */
+  async listBundles(
+    address: string,
+    params: { page?: number; limit?: number } = {},
+  ): Promise<OrganizationBundlesResponse> {
+    return this.fetch<OrganizationBundlesResponse>(`/organizations/${address}/processes`, {
+      params,
+    }).catch(handleError)
   }
 
   async listProcessDrafts(address: string): Promise<OrganizationProcessDraftsResponse> {
     return this.fetch<OrganizationProcessDraftsResponse>(
       `/organizations/${address}/processes/drafts`,
     ).catch(handleError)
-  }
-
-  async listJobs(address: string): Promise<JobsResponse> {
-    return this.fetch<JobsResponse>(`/organizations/${address}/jobs`).catch(handleError)
   }
 
   async getSubscription(address: string): Promise<OrganizationSubscriptionInfo> {
@@ -252,20 +229,33 @@ export class OrganizationsClient {
   }
 
   // ─── API keys (integrator) ─────────────────────────────────────────────────
+  // Admin-only; API keys are integrator-only — the organization at `address`
+  // must be enabled as an integrator (see {@link getIntegratorInfo}).
 
+  /** Returns the org's API keys' metadata (never the secret). Admin-only. */
   async listApiKeys(address: string): Promise<ListApiKeysResponse> {
-    return this.fetch<ListApiKeysResponse>(`/organizations/${address}/apikeys`).catch(handleError)
+    return this.fetch<ListApiKeysResponse>(`/integrator/organizations/${address}/apikeys`).catch(
+      handleError,
+    )
   }
 
+  /**
+   * Creates an API key for the organization at `address`. The org must be
+   * enabled as an integrator. Valid scopes are a subset of: `quota:read`,
+   * `managed:read`, `managed:write`, `voting:write`, `members:write`. The
+   * response's `secret` (prefixed `vsk_`) is the plaintext key, returned only
+   * once — it cannot be retrieved again.
+   */
   async createApiKey(address: string, body: CreateApiKeyRequest): Promise<CreateApiKeyResponse> {
-    return this.fetch<CreateApiKeyResponse>(`/organizations/${address}/apikeys`, {
+    return this.fetch<CreateApiKeyResponse>(`/integrator/organizations/${address}/apikeys`, {
       method: 'POST',
       body,
     }).catch(handleError)
   }
 
+  /** Permanently revokes the given API key. Admin-only. */
   async revokeApiKey(address: string, keyId: string): Promise<void> {
-    return this.fetch<void>(`/organizations/${address}/apikeys/${keyId}`, {
+    return this.fetch<void>(`/integrator/organizations/${address}/apikeys/${keyId}`, {
       method: 'DELETE',
     }).catch(handleError)
   }

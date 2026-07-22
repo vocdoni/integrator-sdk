@@ -41,6 +41,12 @@ client.bundle       // BundleClient — legacy voter CSP surface (/process/bundl
 client.jobs         // JobsClient
 ```
 
+Plus one method on the client itself: `client.info()` (`GET /info`, public) →
+`{ chainId, version, goVersion }`. Careful: that `chainId` is the service's
+CURRENT Vochain chain id, not necessarily the one a given process's votes sign
+against — per-process `chainId` only exists on the Bearer-authed process read
+(see GAPS.md).
+
 ---
 
 ## ProcessesCspClient (`client.processes`)
@@ -103,6 +109,10 @@ const { weight } = await client.processes.weight(processId, { authToken })
 // Consumed sign info — per-question address/nullifier/timestamp for the
 // questions the voter already cast (others omitted)
 const { consumed } = await client.processes.signInfo(processId, { authToken })
+
+// Public single-participant read — BACKEND PLACEHOLDER: validates the ids but
+// currently always resolves null (participant info not yet surfaced).
+const participant = await client.processes.getParticipant(processId, participantId)
 ```
 
 **Census type detection** — check `census.twoFaFields` (on the public question
@@ -256,6 +266,10 @@ if (jobId) await client.jobs.waitFor(jobId)
 // Admin: publish-readiness dry-run (GET /processes/{id}/validation).
 const { valid, errors } = await client.elections.validate(mongoId)
 
+// Admin: validate a census spec before wiring it to a process
+// (POST /processes/census/validation; resolves an OK string, 400s with detail).
+await client.elections.validateCensus({ orgAddress, census: { authFields: ['memberNumber'] } })
+
 // Drafts: update(id, draft) PUTs the same shape as create and resolves void
 // (re-get() for the stored shape; 409 once published). delete(id) removes it.
 // signInfo(id, { authToken }) → { consumed: [{ questionId, nullifier, … }] },
@@ -281,28 +295,50 @@ const { id: censusId } = await client.census.create({ orgAddress, authFields: ['
 await client.census.publishGroup(censusId, groupId, { authFields: ['memberNumber'], weighted: false })
 
 // Organizations: managed orgs, members, groups, and reads.
-const org = await client.organizations.createManaged({ type: 'company', website })
-const { jobId } = await client.organizations.addMembers(org.address, members) // async
-await client.organizations.waitForMembersJob(org.address, jobId)
+const org = await client.organizations.createManaged({ name: 'Acme', type: 'company', website })
+const { jobId } = await client.organizations.addMembers(org.address, members, { async: true })
+if (jobId) await client.jobs.waitFor(jobId) // progress in job.result.added/total/progress
 const { groups } = await client.organizations.listGroups(org.address)         // auto "All members" group
+
+// Integrator quota/usage (also callable with a scoped API key, scope quota:read).
+const { enabled, limits, usage } = await client.organizations.getIntegratorInfo()
+// limits — { maxManagedOrgs, maxManagedProcesses, maxVotes, maxSMS, maxEmails } (0 = unlimited;
+//           omitted entirely when enabled is false)
+// usage  — { managedOrgs, managedProcesses, sentVotes, sentSMS, sentEmails }
+
+// API keys (integrator-only, /integrator/organizations/{addr}/apikeys routes):
+const key = await client.organizations.createApiKey(org.address, {
+  label: 'ci', scopes: ['quota:read', 'managed:write'],
+})
+// key.secret — the vsk_-prefixed plaintext, returned ONCE and never retrievable again
+// listApiKeys(addr) returns metadata only; revokeApiKey(addr, keyId) disables permanently.
 ```
 
-`OrganizationsClient` also covers groups CRUD, meta, api keys, subscription, and
-list-reads (censuses/processes/drafts/jobs). See `packages/api-client/src/{census,organizations}.ts`
+`OrganizationsClient` also covers groups CRUD, meta, subscription, and
+list-reads (censuses/bundles/drafts). See `packages/api-client/src/{census,organizations}.ts`
 for the full set — the live `integration/full-flow.itest.ts` drives the whole flow end to end.
+Note `listBundles` now returns `{ bundles, pagination }` and takes `{ page?, limit? }`
+(the route is deprecated backend-side along with the bundle model).
 
 ---
 
 ## JobsClient (`client.jobs`)
 
-Async transaction outcomes — vote relays, publishes, status changes all return a `jobId`.
+Async outcomes, unified: vote relays, publishes, status changes AND member/census
+imports all return a `jobId` polled here (the old
+`organizations.listJobs`/`getMembersJob`/`waitForMembersJob` methods and their
+`/organizations/{addr}/…` routes are gone).
 
 ```ts
 // One-shot status check
 const job = await client.jobs.get(jobId)
 // job.status  — 'pending' | 'completed' | 'failed'
-// job.type    — 'relay_vote' | 'publish_process' | 'set_process_status' | ...
+// job.type    — 'relay_vote' | 'publish_process' | 'set_process_status'
+//               | 'set_process_census' | 'org_members' | 'census_participants'
+//               | 'publish_voting_process'
 // job.result?.voteID — vote nullifier (relay_vote jobs)
+// job.result?.added/total/progress — import counters (org_members / census_participants jobs)
+// job.errors — error detail lines (e.g. "line 3: invalid email" on imports)
 
 // Poll until terminal state
 const job = await client.jobs.waitFor(jobId, {
@@ -313,9 +349,15 @@ const job = await client.jobs.waitFor(jobId, {
 })
 // throws JobFailedError if job.status === 'failed'
 // throws Error on timeout, or on job.type mismatch when expectType is set
+
+// Admin: paginated org job history (GET /jobs — orgAddress is required)
+const { jobs, pagination } = await client.jobs.list({
+  orgAddress, type: 'org_members', page: 1, limit: 10,
+})
 ```
 
-`JobFailedError` carries the full `JobStatusResponse` on `error.job`.
+`JobFailedError` carries the full `JobStatusResponse` on `error.job`; its message
+joins `job.errors` when present.
 
 ---
 
