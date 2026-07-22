@@ -41,8 +41,7 @@ import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 import { encodeQuestionBallot } from '@vocdoni/ballot'
 
 const API_URL = 'https://saas-api.vocdoni.net'
-const BUNDLE_ID = '<your-bundle-id>'
-const ELECTION_MONGO_ID = '<election-mongo-id>'
+const PROCESS_ID = '<process-mongo-id>' // the id elections.get() takes
 const VOTER = { memberNumber: '42' }
 
 // ─── Shared setup + auth (identical to single-choice-vote.ts) ────────────────
@@ -50,20 +49,21 @@ const VOTER = { memberNumber: '42' }
 const client = new VocdoniApiClient({ apiUrl: API_URL })
 const voting = new VotingClient({ client })
 
-const bundle = await client.bundle.get(BUNDLE_ID)
-if (!bundle.chainId) throw new Error('Bundle has no chainId')
-
 // elections.get() returns a VotingProcessResponse: one process, many questions.
-// Each question is its own on-chain Vochain process (question.upstreamId).
-const election = await client.elections.get(ELECTION_MONGO_ID)
+// Each question is its own on-chain Vochain process (question.upstreamId), and
+// the chainId the votes sign against is on the process read.
+const election = await client.elections.get(PROCESS_ID)
+if (!election.chainId) throw new Error('Process has no chainId (not published yet?)')
 
-const res0 = await client.bundle.authStep0(BUNDLE_ID, VOTER)
+const res0 = await client.processes.authStep0(PROCESS_ID, VOTER)
 if (!res0.authToken) throw new Error('Auth step 0 did not return a token')
 const authToken = res0.authToken
 // (add authStep1 here for 2FA censuses — see single-choice-vote.ts)
 
-const { belongs } = await client.bundle.check(BUNDLE_ID, { authToken })
-if (!belongs) throw new Error('Voter is not in this census')
+// Membership + per-question eligibility in one call.
+const check = await client.processes.check(PROCESS_ID, { authToken })
+if (!check.belongsToProcess) throw new Error('Voter is not in this census')
+const statusByQuestion = new Map(check.questions.map((q) => [q.questionId, q]))
 
 // ─── Per-question selections ──────────────────────────────────────────────
 // Replace this with however your UI collects the voter's picks. Each entry is
@@ -109,17 +109,16 @@ for (const question of election.questions) {
   // question.ballotProtocol.maxTotalCost  — caps total approvals/weight, if set
   // question.typeSetup?.minChoices/maxChoices — UI-facing pick bounds, if set
 
-  // hasVoted is reported per question when `electionId` is passed to check().
-  const { hasVoted } = await client.bundle.check(BUNDLE_ID, { authToken, electionId: processId })
-  if (hasVoted) {
-    console.log(`Already voted on question ${question.id} — skipping`)
+  const status = statusByQuestion.get(question.id)
+  if (!status?.canVote || status.hasVoted) {
+    console.log(`Cannot vote on question ${question.id} (ineligible or already voted) — skipping`)
     continue
   }
 
   const signer = new EphemeralSigner()
-  const { signature, weight } = await client.bundle.sign(BUNDLE_ID, {
+  const { signature, weight } = await client.processes.sign(PROCESS_ID, {
     authToken,
-    electionId: processId,
+    electionId: processId, // the QUESTION's vochain id (upstreamId), not PROCESS_ID
     payload: signer.address,
   })
   if (!signature) throw new Error(`CSP did not return a signature for question ${question.id}`)
@@ -131,7 +130,7 @@ for (const question of election.questions) {
 
   const jobId = await voting.vote({
     processId,
-    chainId: bundle.chainId,
+    chainId: election.chainId,
     choices,
     signer,
     cspSignature: signature,

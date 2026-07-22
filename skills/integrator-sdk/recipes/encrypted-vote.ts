@@ -9,16 +9,14 @@
  * buildVoteTransaction (or VotingClient.vote). Everything else — auth, sign,
  * relay, job polling — is identical.
  *
+ * Key sourcing: `question.encryptionKeys` — on the process read
+ * (elections.get) and on the public single-question read
+ * (processes.getQuestion). The keykeepers publish the keys asynchronously
+ * right after publish, and the field is ABSENT (not an empty array) until
+ * then — treat absence as "not yet published" and poll.
+ *
  * choices format: same as single-choice-vote.ts or multichoice-vote.ts; the
  * encryption is transparent to the choices encoding.
- *
- * ⚠ STATUS: blocked on a backend change. `GET /processes/{id}` (the new
- * per-question model) does not expose the questions' encryption public keys
- * yet — they are only served by the legacy `GET /process/{id}` route. The
- * sealing path below (`encryptionKeys` → NaCl SealedBox) is implemented and
- * tested in @vocdoni/api-voting; once the backend adds the keys to the
- * process read, replace the key-sourcing step (step 2) with the real field.
- * Tracked in GAPS.md.
  *
  * Prerequisites:
  *   pnpm add @vocdoni/api-client @vocdoni/api-types @vocdoni/api-voting
@@ -29,8 +27,7 @@ import type { EncryptionKey } from '@vocdoni/api-types'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 
 const API_URL = 'https://saas-api.vocdoni.net'
-const BUNDLE_ID = '<your-bundle-id>'
-const ELECTION_MONGO_ID = '<election-mongo-id>'
+const PROCESS_ID = '<process-mongo-id>' // the id elections.get() takes
 const VOTER = { memberNumber: '42' }
 
 // ─── Setup ───────────────────────────────────────────────────────────────────
@@ -38,16 +35,13 @@ const VOTER = { memberNumber: '42' }
 const client = new VocdoniApiClient({ apiUrl: API_URL })
 const voting = new VotingClient({ client })
 
-// ─── 1. Bundle info → chainId ────────────────────────────────────────────────
-
-const bundle = await client.bundle.get(BUNDLE_ID)
-if (!bundle.chainId) throw new Error('Bundle has no chainId')
-
-// ─── 2. Process info → find the secret question ──────────────────────────────
+// ─── 1. Process info → chainId + the secret question ─────────────────────────
 // Each question maps to its own upstream Vochain process (question.upstreamId),
-// and encryption keys are per upstream process.
+// and encryption keys are per question/upstream process.
 
-const election = await client.elections.get(ELECTION_MONGO_ID)
+const election = await client.elections.get(PROCESS_ID)
+if (!election.chainId) throw new Error('Process has no chainId (not published yet?)')
+
 const question = election.questions.find((q) => q.secretUntilTheEnd)
 if (!question) {
   throw new Error('No secretUntilTheEnd question — use single-choice-vote.ts instead')
@@ -55,18 +49,12 @@ if (!question) {
 const processId = question.upstreamId
 if (!processId) throw new Error('Question has no upstreamId (process not yet published?)')
 
-// TODO(encrypted): the new-model process read does not expose the questions'
-// encryption public keys yet (backend change pending — see the STATUS note in
-// the header). When it lands, source them from the question here. The keys are
-// required to seal the ballot; the vote is rejected on-chain without them.
-const encryptionKeys: EncryptionKey[] = []
-if (encryptionKeys.length === 0) {
-  throw new Error(
-    'Encryption keys are not available on GET /processes/{id} yet — ' +
-      'this recipe is blocked on a backend change (see header STATUS note).',
-  )
-}
+// ─── 2. Encryption keys — poll the public question read until published ──────
+// Right after publish the keykeepers may not have published the keys yet; the
+// field is absent (not an empty array) until they do. The public question read
+// needs no API key, so a voter UI can poll it directly.
 
+const encryptionKeys = await pollEncryptionKeys(PROCESS_ID, question.id)
 console.log(
   `Encryption keys: ${encryptionKeys.length} key(s), ` +
     `index(es) ${encryptionKeys.map((k) => k.index).join(', ')}`,
@@ -76,26 +64,25 @@ console.log(
 
 // ─── 3. Auth ─────────────────────────────────────────────────────────────────
 
-const res0 = await client.bundle.authStep0(BUNDLE_ID, VOTER)
+const res0 = await client.processes.authStep0(PROCESS_ID, VOTER)
 if (!res0.authToken) throw new Error('Auth step 0 did not return a token')
 const authToken = res0.authToken
 // For 2FA censuses, also call authStep1 — see single-choice-vote.ts.
 
-// ─── 4. Check membership ─────────────────────────────────────────────────────
+// ─── 4. Check membership + eligibility ───────────────────────────────────────
 
-const { belongs, hasVoted } = await client.bundle.check(BUNDLE_ID, {
-  authToken,
-  electionId: processId,
-})
-if (!belongs) throw new Error('Voter is not in this census')
-if (hasVoted) throw new Error('Voter has already voted in this election')
+const check = await client.processes.check(PROCESS_ID, { authToken })
+if (!check.belongsToProcess) throw new Error('Voter is not in this census')
+const status = check.questions.find((q) => q.questionId === question.id)
+if (!status?.canVote) throw new Error('Voter is not eligible for this question')
+if (status.hasVoted) throw new Error('Voter has already voted in this election')
 
 // ─── 5. CSP sign ─────────────────────────────────────────────────────────────
 
 const signer = new EphemeralSigner()
-const { signature, weight } = await client.bundle.sign(BUNDLE_ID, {
+const { signature, weight } = await client.processes.sign(PROCESS_ID, {
   authToken,
-  electionId: processId,
+  electionId: processId, // the QUESTION's vochain id (upstreamId)
   payload: signer.address,
 })
 if (!signature) throw new Error('CSP did not return a signature')
@@ -113,7 +100,7 @@ if (!signature) throw new Error('CSP did not return a signature')
 
 const jobId = await voting.vote({
   processId,
-  chainId: bundle.chainId,
+  chainId: election.chainId,
   choices: [0], // ← voter's choice(s); same format as unencrypted elections
   signer,
   cspSignature: signature,
@@ -132,3 +119,21 @@ console.log('Encrypted vote cast — nullifier:', job.result?.voteID)
 //   - results (string[][] histogram) stays empty until decryption completes
 // After the process ends, the Vochain decrypts all sealed ballots on-chain
 // and the per-question results become available via getResults().
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+async function pollEncryptionKeys(
+  procId: string,
+  questionId: string,
+  { intervalMs = 2_000, timeoutMs = 60_000 } = {},
+): Promise<EncryptionKey[]> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const q = await client.processes.getQuestion(procId, questionId)
+    if (q.encryptionKeys?.length) return q.encryptionKeys
+    if (Date.now() > deadline) {
+      throw new Error('Timed out waiting for the keykeepers to publish the encryption keys')
+    }
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+}

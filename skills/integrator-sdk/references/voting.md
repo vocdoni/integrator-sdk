@@ -53,12 +53,12 @@ await client.elections.vote({ txPayload })
 |---|---|---|---|
 | `processId` | `string` | yes | On-chain (Vochain) hex id for ONE question — `question.upstreamId` from `VotingProcessResponse.questions[i]`, not the process's Mongo `id` |
 | `choices` | `number[]` | yes | Ballot values for that one question — see "Choices format" below |
-| `chainId` | `string` | yes | From `bundle.chainId` — there is no per-process or per-question `chainId` |
+| `chainId` | `string` | yes | From `election.chainId` (process read; legacy flows: `bundle.chainId`) — there is no per-question `chainId` |
 | `signer` | `EphemeralSigner` | yes | Fresh per-vote ephemeral keypair |
-| `cspSignature` | `string` | yes | Hex signature from `bundle.sign()` |
-| `cspWeight` | `string` | no | Hex census weight from `bundle.sign()`; omit if absent |
+| `cspSignature` | `string` | yes | Hex signature from `processes.sign()` (legacy flows: `bundle.sign()`) |
+| `cspWeight` | `string` | no | Hex census weight from the same sign response; omit if absent |
 | `encryptionKeys` | `EncryptionKey[]` | no | Required when `question.secretUntilTheEnd` is `true`; see "Encrypted elections" below for how keys are sourced |
-| `proofType` | `ProofCA_Type` | no | Defaults to `ECDSA_PIDSALTED` (correct for all SaaS bundle processes) |
+| `proofType` | `ProofCA_Type` | no | Defaults to `ECDSA_PIDSALTED` (correct for all SaaS CSP processes) |
 
 ---
 
@@ -70,7 +70,7 @@ Generates a fresh secp256k1 keypair per vote. The CSP signs its Ethereum address
 import { EphemeralSigner } from '@vocdoni/api-voting'
 
 const signer = new EphemeralSigner()
-signer.address    // '0x...' — pass to bundle.sign() as `payload`
+signer.address    // '0x...' — pass to processes.sign() (or bundle.sign()) as `payload`
 signer.publicKey  // Uint8Array (65 bytes, uncompressed)
 signer.privateKey // Uint8Array (32 bytes) — ephemeral, safe to discard after the vote
 ```
@@ -152,28 +152,28 @@ you pass `encryptionKeys`; you don't call `BallotEncryptor` directly.
 const election = await client.elections.get(electionMongoId)
 const question = election.questions[0]
 // question.secretUntilTheEnd === true
-
-const bundle = await client.bundle.get(bundleId)
+// question.encryptionKeys — the keys; may be absent right after publish (see below)
 
 const txPayload = buildVoteTransaction({
   processId: question.upstreamId!,
   choices: [0],
-  chainId: bundle.chainId!,
+  chainId: election.chainId!,
   signer,
   cspSignature: signature,
   cspWeight: weight,
-  encryptionKeys, // ← triggers NaCl sealing; Array<{ index: number; key: string }>
+  encryptionKeys: question.encryptionKeys!, // ← triggers NaCl sealing; Array<{ index: number; key: string }>
 })
 ```
 
 When multiple keys are present they are applied in ascending `index` order (innermost first), matching how the Vochain unseals them.
 
-> **Key sourcing:** the exact field that exposes a question's per-question
-> encryption public keys is still being finalized on this branch — check
-> `@vocdoni/api-types` (`VotingProcessQuestion`) for the current shape before
-> wiring this up. Once available, expect the keykeepers to publish keys
-> asynchronously right after publish (poll until populated — see
-> `integration/full-flow.itest.ts`).
+> **Key sourcing:** `encryptionKeys` lives on the question — both on the process
+> read (`elections.get(id).questions[i].encryptionKeys`) and on the public
+> single-question read (`processes.getQuestion(id, qId).encryptionKeys`). The
+> keykeepers publish keys asynchronously right after publish, and the field is
+> **absent** (not an empty array) until then — treat absence as "not yet
+> published" and poll before building the ballot. See
+> `recipes/encrypted-vote.ts`.
 
 ---
 
@@ -196,5 +196,5 @@ const opened = BallotEncryptor.open(sealed, recipientPk, recipientSk)
 ## Cross-references
 
 - [[integrator-sdk]] — overview and vote flow sequence
-- [[client]] — `BundleClient` (auth, check, sign), `JobsClient` (waitFor), `ElectionsClient` (vote relay)
+- [[client]] — `ProcessesCspClient` (auth, check, sign — bundle-less), `BundleClient` (legacy), `JobsClient` (waitFor), `ElectionsClient` (vote relay)
 - [[react]] — `useElection().vote()` automates this entire flow in React

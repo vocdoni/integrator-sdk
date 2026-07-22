@@ -393,6 +393,13 @@ export interface VotingProcessQuestion {
   secretUntilTheEnd: boolean
   status: QuestionStatus
   metadata?: Record<string, unknown>
+  /**
+   * On-chain vote-encryption public keys — only for `secretUntilTheEnd`
+   * questions. Absent (not an empty array) until the keykeepers publish the
+   * keys; treat absence as "not yet published" and poll before building an
+   * encrypted ballot.
+   */
+  encryptionKeys?: EncryptionKey[]
 }
 
 /**
@@ -508,6 +515,13 @@ export interface PublicQuestionResponse {
   secretUntilTheEnd: boolean
   status: QuestionStatus
   metadata?: Record<string, unknown>
+  /**
+   * On-chain vote-encryption public keys — only for `secretUntilTheEnd`
+   * questions. The field is absent (not an empty array) until the keykeepers
+   * publish the keys, so treat absence as "not yet published" and poll before
+   * building an encrypted ballot.
+   */
+  encryptionKeys?: EncryptionKey[]
 }
 
 /** Per-question entry in `GET /processes/{id}/results`. */
@@ -672,10 +686,11 @@ export interface Bundle {
   census?: CensusInfo
 }
 
-// ─── Bundle CSP auth ────────────────────────────────────────────────────────────
-// The CSP / two-factor voter-auth flow is hosted by the SaaS backend under
-// /process/bundle/{bundleId}/*. A single verified authToken is reused across
-// every process in the bundle.
+// ─── CSP voter auth ─────────────────────────────────────────────────────────────
+// The CSP / two-factor voter-auth flow is hosted by the SaaS backend both under
+// the legacy /process/bundle/{bundleId}/* routes and the new process-scoped
+// /processes/{processId}/* routes. The wire shapes are shared: a single verified
+// authToken is reused across every election of the bundle/process.
 // Note: `weight` is wire-encoded as a hex string (e.g. "2a" === 42).
 
 /** Auth step 0/1 bodies are free-form (they vary by census auth type). */
@@ -686,7 +701,7 @@ export interface Bundle {
  * are ignored. For auth-only censuses (no 2FA) step 0 already returns a verified
  * token.
  */
-export interface BundleAuthRequest {
+export interface AuthRequest {
   name?: string
   surname?: string
   memberNumber?: string
@@ -697,11 +712,17 @@ export interface BundleAuthRequest {
 }
 
 /** Auth step 1 — confirm the 2FA challenge. Not used by auth-only censuses. */
-export interface BundleAuthChallengeRequest {
+export interface AuthChallengeRequest {
   authToken: string
   /** Challenge solution(s); the OTP is `authData[0]`. */
   authData: string[]
 }
+
+/** @deprecated Alias of {@link AuthRequest} — the shape is not bundle-specific. */
+export type BundleAuthRequest = AuthRequest
+
+/** @deprecated Alias of {@link AuthChallengeRequest} — the shape is not bundle-specific. */
+export type BundleAuthChallengeRequest = AuthChallengeRequest
 
 /** Shared response shape of the auth, resend and sign endpoints. */
 export interface AuthResponse {
@@ -727,6 +748,31 @@ export interface CheckMembershipRequest {
 export interface CheckMembershipResponse {
   belongs: boolean
   hasVoted: boolean
+  /** Hex-encoded census weight. */
+  weight?: string
+}
+
+/** One question's eligibility/vote status in {@link ProcessCheckResponse}. */
+export interface ProcessQuestionStatus {
+  questionId: string
+  /** Vochain election id of the question (64-hex). */
+  upstreamId?: string
+  /** Whether the voter is eligible for this question (eligibility subset). */
+  canVote: boolean
+  /** Whether the voter has already consumed this question's election. */
+  hasVoted: boolean
+}
+
+/**
+ * Response of `POST /processes/{id}/check` — the voter's status for a voting
+ * process: census membership, weight, and per-question eligibility/vote status.
+ * Ineligibility is reported as `belongsToProcess: false` with HTTP 200, not an
+ * error. Differs from the bundle {@link CheckMembershipResponse}, which is a
+ * single belongs/hasVoted pair.
+ */
+export interface ProcessCheckResponse {
+  belongsToProcess: boolean
+  questions: ProcessQuestionStatus[]
   /** Hex-encoded census weight. */
   weight?: string
 }

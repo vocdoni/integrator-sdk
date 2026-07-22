@@ -2,6 +2,14 @@
 
 Two packages that work together. `react-providers` is the headless logic layer (context + hooks); `react-components` is the unstyled UI layer built on top of it.
 
+> ⚠️ **Voter flow still bundle-based.** The React providers (`BundleProvider` +
+> `ElectionProvider`) drive voter auth through the LEGACY bundle CSP routes
+> (`client.bundle`) and require a bundle id. The bundle-less, process-scoped
+> voter flow (`client.processes` — see [[client]]) is not wired into the React
+> layer yet; for a new-model process without a bundle, use the api-client
+> directly (see `recipes/single-choice-vote.ts`) until the provider migration
+> lands (tracked in `GAPS.md`).
+
 ```bash
 pnpm add @vocdoni/react-providers @vocdoni/react-components
 # peer deps:

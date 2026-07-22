@@ -32,19 +32,86 @@ const client = new VocdoniApiClient({
 Sub-clients accessed as properties:
 
 ```ts
-client.elections    // ElectionsClient
+client.elections    // ElectionsClient — ADMIN surface of /processes (create, publish, census, status)
+client.processes    // ProcessesCspClient — VOTER CSP surface of /processes (auth, check, sign)
 client.organizations // OrganizationsClient
 client.census       // CensusClient
 client.auth         // AuthClient
-client.bundle       // BundleClient
+client.bundle       // BundleClient — legacy voter CSP surface (/process/bundle/{bundleId}/*)
 client.jobs         // JobsClient
 ```
 
 ---
 
-## BundleClient (`client.bundle`)
+## ProcessesCspClient (`client.processes`)
 
-Manages the voter-facing CSP / two-factor auth flow for a bundle of processes. A bundle groups processes sharing a census; the voter authenticates once and reuses the token.
+The voter-facing CSP / two-factor auth flow, anchored directly to a voting
+process — the `/processes` replacement of the legacy bundle flow (no bundle
+involved). All routes are public: the voter is identified by the CSP
+`authToken`, never by an API key.
+
+Ids to keep straight: `processId` is the process's **Mongo id** (what
+`elections.get` takes — the bundle routes 404 on it), and `electionId` in
+`sign()` is the **question's** on-chain Vochain id (`question.upstreamId`).
+
+```ts
+// Read the process (chainId, census auth config, questions with upstreamIds)
+const election = await client.elections.get(processId)
+
+// Public single-question read — no API key. Includes choices, ballotProtocol,
+// census auth config and (for secretUntilTheEnd questions) encryptionKeys.
+const question = await client.processes.getQuestion(processId, questionId)
+// question.encryptionKeys — ABSENT until the keykeepers publish the keys;
+//                           poll until present before building an encrypted ballot
+
+// Auth step 0 — identify the voter.
+// Pass all fields the census requires (see election.census.authFields)
+const res0 = await client.processes.authStep0(processId, {
+  memberNumber: '42',      // or: name, surname, birthDate, nationalId, email, phone
+})
+// res0.authToken — verified immediately if election.census.twoFaFields is empty (auth-only)
+//               — pending verification otherwise (proceed to step 1)
+
+// Auth step 1 — confirm the 2FA OTP (skip for auth-only censuses)
+const res1 = await client.processes.authStep1(processId, {
+  authToken: res0.authToken!,
+  authData: ['123456'],    // OTP as first element
+})
+
+// Resend challenge
+await client.processes.resend(processId, { authToken, email: 'voter@example.com' })
+
+// Voter status — census membership, weight and PER-QUESTION eligibility in one
+// call (unlike bundle.check, which is one belongs/hasVoted pair per request).
+// Ineligibility is belongsToProcess=false with HTTP 200, not an error.
+const { belongsToProcess, questions, weight } = await client.processes.check(processId, { authToken })
+// questions[i] — { questionId, upstreamId, canVote, hasVoted }
+
+// Get CSP signature over an ephemeral voter address, per question.
+// A question's signing slot is consumed on success — it cannot be signed twice.
+const { signature, weight } = await client.processes.sign(processId, {
+  authToken,
+  electionId: question.upstreamId!, // the QUESTION's vochain id, NOT the processId
+  payload: signer.address,          // hex Ethereum address from EphemeralSigner
+})
+
+// Voter's census weight
+const { weight } = await client.processes.weight(processId, { authToken })
+
+// Consumed sign info — per-question address/nullifier/timestamp for the
+// questions the voter already cast (others omitted)
+const { consumed } = await client.processes.signInfo(processId, { authToken })
+```
+
+**Census type detection** — check `election.census.twoFaFields`:
+- Empty or absent → auth-only census; step 0 returns a verified token, skip step 1.
+- Non-empty → 2FA census; step 0 returns a pending token, confirm with step 1.
+
+---
+
+## BundleClient (`client.bundle`) — legacy
+
+Manages the voter-facing CSP / two-factor auth flow for a **bundle** of processes — the legacy model where an organizer groups processes sharing a census and voters authenticate against the bundle id. New deployments should use the process-scoped flow above (`client.processes`); keep using this client only for existing bundle-based setups. Note bundle ids and process Mongo ids are different id spaces — each set of routes 404s on the other's ids.
 
 ```ts
 // Fetch public bundle info (chainId, processes, census config)
@@ -112,10 +179,12 @@ const election = await client.elections.get(mongoId)
 //                            "type" is inferred from authFields/twoFaFields (every
 //                            new-model census is CSP-backed).
 // election.questions       — VotingProcessQuestion[]
-//   question.upstreamId        — vochain hex id (voting, bundle check/sign)
+//   question.upstreamId        — vochain hex id (voting; the `electionId` of CSP check/sign)
 //   question.ballotProtocol    — { maxCount, maxValue, uniqueValues, ... }
 //   question.secretUntilTheEnd — boolean
 //   question.status            — QuestionStatus
+//   question.encryptionKeys    — vote-encryption public keys (secretUntilTheEnd only;
+//                                absent until the keykeepers publish — poll)
 // election.chainId         — vochain chain id votes are signed against (omitempty;
 //                            same value as bundle.chainId).
 
@@ -253,7 +322,7 @@ The **normal SaaS user** auth flow: a signed-up user logs in with email/password
 to get a JWT, then drives the SDK under their own organization (create processes,
 etc.). This is distinct from the **integrator** flow (a `vsk_…` API key passed as
 the client's `authToken`, used to manage orgs), and from the **voter** CSP flow
-(`BundleClient`).
+(`ProcessesCspClient`, or `BundleClient` for legacy bundles).
 
 ```ts
 const session = await client.auth.login('user@example.com', 'secret')
@@ -303,7 +372,7 @@ interface PublishedVotingProcessResponse extends VotingProcessBase {
 
 interface VotingProcessQuestion {
   id: string
-  upstreamId?: string                 // on-chain vochain hex id (voting, bundle check/sign)
+  upstreamId?: string                 // on-chain vochain hex id (voting; `electionId` of CSP check/sign)
   title: MultiLangString
   choices: Choice[]                   // { title, value }
   ballotProtocol: BallotProtocol
@@ -312,6 +381,14 @@ interface VotingProcessQuestion {
   typeSetup?: QuestionTypeSetup       // { minChoices, maxChoices, uniqueChoices }
   secretUntilTheEnd: boolean
   status: QuestionStatus              // 'UPCOMING' | 'ONGOING' | 'ENDED' | 'CANCELED' | 'PAUSED' | 'RESULTS' | 'PROCESS_UNKNOWN'
+  encryptionKeys?: EncryptionKey[]    // secretUntilTheEnd only; ABSENT until keykeepers publish — poll
+}
+
+// Voter status for a process (client.processes.check)
+interface ProcessCheckResponse {
+  belongsToProcess: boolean
+  questions: ProcessQuestionStatus[]  // { questionId, upstreamId?, canVote, hasVoted }
+  weight?: string                     // hex census weight
 }
 
 interface BallotProtocol {

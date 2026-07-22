@@ -214,4 +214,51 @@ export const handlers = [
   http.post(`${BASE}/process/bundle/:bundleId/weight`, () =>
     HttpResponse.json({ weight: MOCK_WEIGHT_HEX }),
   ),
+
+  // ─── Process-scoped CSP voter routes (bundle-less flow) ──────────────────────
+  http.post(`${BASE}/processes/:processId/auth/0`, () =>
+    HttpResponse.json({ authToken: 'csp-step0-token' }),
+  ),
+
+  http.post(`${BASE}/processes/:processId/auth/1`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>
+    return HttpResponse.json({
+      authToken: `confirmed-${body.authToken ?? ''}`,
+      weight: MOCK_WEIGHT_HEX,
+    })
+  }),
+
+  http.post(`${BASE}/processes/:processId/auth/resend`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>
+    return HttpResponse.json({ authToken: body.authToken ?? 'csp-step0-token' })
+  }),
+
+  http.post(`${BASE}/processes/:processId/check`, () =>
+    HttpResponse.json({
+      belongsToProcess: true,
+      weight: MOCK_WEIGHT_HEX,
+      questions: mockProcess.questions.map((q) => ({
+        questionId: q.id,
+        upstreamId: q.upstreamId,
+        canVote: true,
+        hasVoted: false,
+      })),
+    }),
+  ),
+
+  http.post(`${BASE}/processes/:processId/sign`, () =>
+    HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX }),
+  ),
+
+  http.post(`${BASE}/processes/:processId/weight`, () =>
+    HttpResponse.json({ weight: MOCK_WEIGHT_HEX }),
+  ),
+
+  http.get(`${BASE}/processes/:processId/questions/:questionId`, ({ params }) =>
+    HttpResponse.json({
+      ...mockProcess.questions[0],
+      id: params.questionId as string,
+      parentProcessId: params.processId as string,
+    }),
+  ),
 ]

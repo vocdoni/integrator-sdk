@@ -33,25 +33,33 @@ A monorepo of TypeScript packages that replaces the `@vocdoni/sdk` with a SaaS-f
 
 ## The vote flow in one minute
 
-Every vote follows the same six steps regardless of election type:
+Every vote follows the same steps regardless of election type. All a voter app
+needs is the process's Mongo id — no bundle:
 
 ```
-0. GET /processes/{id}                       → VotingProcessResponse (questions[], status per question)
-   GET /processes/{id}/results               → VotingProcessResultsResponse (optional, for results view)
-1. GET /process/bundle/{bundleId}            → bundle info (chainId, census type, process ids)
-2. POST /process/bundle/{bundleId}/auth/0    → auth step 0 (identify the voter)
-   POST /process/bundle/{bundleId}/auth/1    → auth step 1 (confirm 2FA — skip if auth-only census)
-3. POST /process/bundle/{bundleId}/check     → confirm membership + hasVoted
-   [repeat steps 4–6 for each question in questions[]]
-4. POST /process/bundle/{bundleId}/sign      → CSP signs voter's ephemeral address for question.upstreamId
+1. GET  /processes/{id}                      → VotingProcessResponse (questions[], chainId, census auth config)
+   GET  /processes/{id}/results              → VotingProcessResultsResponse (optional, for results view)
+   GET  /processes/{id}/questions/{qId}      → public single-question read (choices, ballotProtocol, encryptionKeys)
+2. POST /processes/{id}/auth/0               → auth step 0 (identify the voter)
+   POST /processes/{id}/auth/1               → auth step 1 (confirm 2FA — skip if auth-only census)
+3. POST /processes/{id}/check                → belongsToProcess + per-question canVote/hasVoted
+   [repeat steps 4–6 for each votable question in questions[]]
+4. POST /processes/{id}/sign                 → CSP signs voter's ephemeral address for question.upstreamId
 5. buildVoteTransaction(...)                 → build + sign the protobuf tx locally
 6. POST /vote                                → relay tx → jobId
    GET  /jobs/{jobId}                        → poll until completed → voteID (nullifier)
 ```
 
-Steps 1–4 are handled by `@vocdoni/api-client` (`BundleClient`).
+Steps 1–4 are handled by `@vocdoni/api-client` (`client.elections` for the reads,
+`client.processes` — `ProcessesCspClient` — for the voter CSP routes).
 Steps 5–6 are handled by `@vocdoni/api-voting` (`VotingClient` or `buildVoteTransaction` directly).
-In React, `BundleProvider` + `ElectionProvider` automate the entire flow.
+In React, `BundleProvider` + `ElectionProvider` automate the flow (still on the
+legacy bundle routes — see below).
+
+**Legacy bundle flow:** organizer-created bundles group processes sharing a
+census; the same auth/check/sign steps live under `/process/bundle/{bundleId}/*`
+and are wrapped by `BundleClient` (`client.bundle`). Use it only for existing
+bundle deployments — the new `/processes` model needs no bundle.
 
 ## Quick-start (vanilla TS)
 
@@ -62,25 +70,27 @@ import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 const client = new VocdoniApiClient({ apiUrl: 'https://saas-api.vocdoni.net' })
 const voting = new VotingClient({ client })
 
-// 1. Bundle info → chainId
-const bundle = await client.bundle.get(bundleId)
+// 1. Process read → questions (with their Vochain ids) + chainId
+const election = await client.elections.get(processId) // Mongo id
+const question = election.questions[0]
 
-// 2. Auth (auth-only census — no 2FA step)
-const { authToken } = await client.bundle.authStep0(bundleId, { memberNumber: '42' })
+// 2. Auth (auth-only census — no 2FA step; else follow with authStep1)
+const { authToken } = await client.processes.authStep0(processId, { memberNumber: '42' })
 
-// 3. Check membership
-const { belongs, hasVoted } = await client.bundle.check(bundleId, { authToken, electionId: processId })
-if (!belongs || hasVoted) throw new Error('Cannot vote')
+// 3. Check — per-question eligibility in one call
+const { belongsToProcess, questions } = await client.processes.check(processId, { authToken })
+const q = questions.find((s) => s.questionId === question.id)
+if (!belongsToProcess || !q?.canVote || q.hasVoted) throw new Error('Cannot vote')
 
-// 4. CSP sign
+// 4. CSP sign — electionId is the QUESTION's on-chain id (upstreamId)
 const signer = new EphemeralSigner()
-const { signature, weight } = await client.bundle.sign(bundleId, {
-  authToken, electionId: processId, payload: signer.address,
+const { signature, weight } = await client.processes.sign(processId, {
+  authToken, electionId: question.upstreamId!, payload: signer.address,
 })
 
 // 5–6. Build tx, relay, poll for nullifier
 const jobId = await voting.vote({
-  processId, chainId: bundle.chainId!, choices: [0],
+  processId: question.upstreamId!, chainId: election.chainId!, choices: [0],
   signer, cspSignature: signature, cspWeight: weight,
 })
 const job = await client.jobs.waitFor(jobId)
@@ -89,7 +99,8 @@ console.log('nullifier:', job.result?.voteID)
 
 ## Mental model
 
-- **Bundles group processes that share a census.** A voter authenticates once against the bundle and reuses the verified `authToken` to check and sign across every process in the bundle.
+- **The voter's auth token is anchored to the process (new model).** `client.processes` authenticates the voter directly against the voting process; one verified `authToken` covers check/sign for every question. Bundles — organizer-created groups of processes sharing a census, authenticated via `client.bundle` — are the legacy equivalent and are not part of the new `/processes` model.
+- **Admin vs voter surface.** `client.elections` is the ADMIN side of `/processes/{id}` (create, publish, census, status — API-key/JWT authed); `client.processes` is the VOTER side (auth/check/sign/weight — public, token-identified).
 - **One process, many questions.** `GET /processes/{id}` returns a `VotingProcessResponse` with a `questions[]` array. Each question is a separate on-chain Vochain election (`question.upstreamId` is its Vochain hex id). Voting casts one Vochain transaction per question.
 - **Process status is computed.** `computeProcessStatus(questions)` derives the top-level status from all question statuses. Any question `ONGOING` → `ONGOING`; all `ENDED`/`RESULTS` → `ENDED`. Statuses: `ONGOING`, `PAUSED`, `ENDED`, `CANCELED`, `UPCOMING`, `RESULTS`, `PROCESS_UNKNOWN`.
 - **Ballot encoding is per-question.** Use `encodeQuestionBallot(question, answers)` from `@vocdoni/ballot` to produce each question's `number[]`, then pass `number[][]` to `vote()`.

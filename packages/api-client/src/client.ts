@@ -6,6 +6,7 @@ import { CensusClient } from './census'
 import { ElectionsClient } from './elections'
 import { JobsClient } from './jobs'
 import { OrganizationsClient } from './organizations'
+import { ProcessesCspClient } from './processes'
 
 async function resolveToken(
   authToken: ApiClientConfig['authToken'],
@@ -17,10 +18,14 @@ async function resolveToken(
 }
 
 export class VocdoniApiClient {
+  /** Admin surface of `/processes` (create, publish, census, status). */
   readonly elections: ElectionsClient
+  /** Voter CSP surface of `/processes` (auth, check, sign, weight). */
+  readonly processes: ProcessesCspClient
   readonly organizations: OrganizationsClient
   readonly census: CensusClient
   readonly auth: AuthClient
+  /** Legacy voter CSP surface (`/process/bundle/{bundleId}/*`). */
   readonly bundle: BundleClient
   readonly jobs: JobsClient
 
@@ -42,6 +47,7 @@ export class VocdoniApiClient {
     })
 
     this.elections = new ElectionsClient(fetcher)
+    this.processes = new ProcessesCspClient(fetcher)
     this.organizations = new OrganizationsClient(fetcher)
     this.census = new CensusClient(fetcher)
     this.auth = new AuthClient(fetcher)
