@@ -1,9 +1,8 @@
 ---
 '@vocdoni/api-types': major
-'@vocdoni/react-components': minor
 ---
 
-Align process types with the real backend contract and make confirm dialogs work out of the box.
+Align process types with the real backend contract.
 
 **Breaking changes (`@vocdoni/api-types`):**
 
@@ -26,10 +25,3 @@ Align process types with the real backend contract and make confirm dialogs work
 - Question `type`/`typeSetup`/`ballotProtocol` contract documented: each question
   needs a named `type` or a raw `ballotProtocol` (the latter wins when both are
   given); `'multichoice'` requires `typeSetup`, `'singlechoice'` ignores it.
-
-**New features (`@vocdoni/react-components`):**
-
-- `QuestionsFormProvider`, `ActionCancel` and `ActionEnd` now mount their own
-  `ConfirmProvider` when none is present, so they no longer crash without a
-  manually-mounted provider. New `EnsureConfirmProvider` export (idempotent —
-  an app-provided `ConfirmProvider` still takes precedence).
