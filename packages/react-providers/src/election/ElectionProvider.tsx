@@ -132,6 +132,17 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
       if (!chainId) {
         throw new Error('Missing chainId — the process read did not provide one; cannot cast a vote')
       }
+      // Fail before consuming any one-shot CSP signature: a missing ballot at
+      // question k would otherwise cast questions 0..k-1 and leave the voter
+      // half-voted (and `?? []` would silently cast an empty ballot).
+      if (election.questions.length === 0) {
+        throw new Error('Process has no questions to vote on')
+      }
+      if (encodedBallots.length !== election.questions.length) {
+        throw new Error(
+          `Expected one encoded ballot per question (${election.questions.length}), got ${encodedBallots.length}`,
+        )
+      }
 
       let firstVoteId: string | null = null
 
@@ -155,7 +166,7 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
         const votingClient = new VotingClient({ client })
         const jobId = await votingClient.vote({
           processId: upstreamId,
-          choices: encodedBallots[i] ?? [],
+          choices: encodedBallots[i],
           chainId,
           signer,
           cspSignature: signature,

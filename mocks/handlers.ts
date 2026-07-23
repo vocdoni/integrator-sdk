@@ -96,12 +96,10 @@ export const handlers = [
       questions: mockProcess.questions.map((q) => ({
         questionId: q.id,
         upstreamId: q.upstreamId,
-        status: q.status,
         voteCount: 0,
-        startDate: mockProcess.startDate,
-        endDate: mockProcess.endDate,
+        maxVoters: 0,
         finalResults: false,
-        results: null,
+        // `results` (the tally matrix) is omitted, as the backend does until a tally exists.
       })),
     }),
   ),

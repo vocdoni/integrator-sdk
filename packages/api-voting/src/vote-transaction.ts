@@ -75,7 +75,7 @@ export function buildVoteTransaction(opts: BuildVoteTransactionOptions): string 
     encryptionKeyIndexes: keyIndexes,
   })
 
-  const tx = Tx.encode({ payload: { $case: 'vote', vote } }).finish()
+  const tx = asLocalBytes(Tx.encode({ payload: { $case: 'vote', vote } }).finish())
 
   // EIP-191 personal_sign over the human-readable VOTE message, exactly as the
   // Vochain validates it (keccak256 of the raw tx fills the {hash} field).
@@ -85,6 +85,16 @@ export function buildVoteTransaction(opts: BuildVoteTransactionOptions): string 
     .replace('{chainId}', chainId)
   const signature = signer.signMessage(utf8ToBytes(message))
 
-  const signedTx = SignedTx.encode({ tx, signature: fromHex(signature) }).finish()
+  const signedTx = asLocalBytes(SignedTx.encode({ tx, signature: fromHex(signature) }).finish())
   return toHex(signedTx)
 }
+
+/**
+ * protobufjs's `Writer.finish()` returns a `Buffer` whenever a global one is
+ * reachable (since the protobufjs bundled in @vocdoni/proto 1.15.13). Inside a
+ * jsdom/VM test realm that Buffer is not an `instanceof` of the local
+ * `Uint8Array`, which noble's strict byte checks (`keccak_256`, `toHex`)
+ * reject — pass same-realm bytes through, copy foreign ones.
+ */
+const asLocalBytes = (bytes: Uint8Array): Uint8Array =>
+  bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes as ArrayLike<number>)

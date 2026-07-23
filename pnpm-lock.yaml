@@ -105,8 +105,8 @@ importers:
         specifier: workspace:*
         version: link:../api-types
       '@vocdoni/proto':
-        specifier: 1.15.12
-        version: 1.15.12
+        specifier: 1.15.13
+        version: 1.15.13
       tweetnacl:
         specifier: ^1.0.3
         version: 1.0.3
@@ -133,8 +133,8 @@ importers:
         specifier: workspace:*
         version: link:../api-voting
       '@vocdoni/proto':
-        specifier: 1.15.12
-        version: 1.15.12
+        specifier: 1.15.13
+        version: 1.15.13
       circomlibjs:
         specifier: ^0.1.7
         version: 0.1.7
@@ -1188,8 +1188,8 @@ packages:
   '@vitest/utils@3.2.6':
     resolution: {integrity: sha512-lI23nIs4bnT3T8NIoh+vFaz5s2/DdP0Jgt2jxwgWljvwn82cLJtyi/If+fjFyoLMGIOz0U/fKvWE0d4jsNQEfg==}
 
-  '@vocdoni/proto@1.15.12':
-    resolution: {integrity: sha512-VXgxJQN8eq8As9T5bN8uW+PVLahLQu2tjQMGbVnVvKIP2Hm3wPsqFj7rndgIDNbRHl3YJawjASdPo4VBLjEcNQ==}
+  '@vocdoni/proto@1.15.13':
+    resolution: {integrity: sha512-kuTnQd2Nr6hooAv6eApQNqMDZt8JA3QiM1F42X4pW2hPe7uha7HgyMk2zaBTvZVX7E3kd5E9JbGMq51QmFWACw==}
 
   aes-js@3.0.0:
     resolution: {integrity: sha512-H7wUZRn8WpTq9jocdxQ2c8x2sKo9ZVmzfRE13GiNJXfp7NcKYEdvl3vspKjXox6RIG2VtaRe4JFvxG4rqp2Zuw==}
@@ -3606,7 +3606,7 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 2.0.0
 
-  '@vocdoni/proto@1.15.12':
+  '@vocdoni/proto@1.15.13':
     dependencies:
       long: 5.3.2
       protobufjs: 7.6.4
@@ -4429,7 +4429,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.1
-      '@types/node': 25.9.3
+      '@types/node': 22.20.0
       long: 5.3.2
 
   punycode@2.3.1: {}

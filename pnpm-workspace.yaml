@@ -14,3 +14,6 @@ allowBuilds:
   esbuild: true
   msw: true
   protobufjs: false
+
+minimumReleaseAgeExclude:
+  - '@vocdoni/proto@1.15.13'

@@ -133,6 +133,19 @@ describe('ElectionProvider', () => {
     await expect(result.current.election.vote([[0]])).rejects.toThrow('Missing chainId')
   })
 
+  it('refuses to vote with a ballot-count mismatch — before consuming any CSP sign', async () => {
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    // No ballots at all, and fewer ballots than questions: both must fail fast
+    // (a silent `?? []` here would cast an empty ballot and half-vote the process).
+    await expect(result.current.election.vote([])).rejects.toThrow('Expected one encoded ballot per question')
+    expect(result.current.election.hasVoted).toBe(false)
+    expect(result.current.election.voteId).toBeNull()
+  })
+
   it('resolves per-question results from the results endpoint', async () => {
     const { result } = renderHook(useVoter, { wrapper })
     await waitFor(() => expect(result.current.election.results).not.toBeNull())
