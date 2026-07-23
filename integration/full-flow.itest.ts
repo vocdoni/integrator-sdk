@@ -347,6 +347,9 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
               cspSignature: sign.signature!,
               cspWeight: sign.weight,
               encryptionKeys: question!.secretUntilTheEnd ? question!.encryptionKeys : undefined,
+              // Exercise the VoteEnvelope.memo field (proto 1.15.13) live: the
+              // chain must accept envelopes that carry it.
+              memo: `itest member ${memberNumber} (${p.label})`,
             })
             const job = await voterClient.jobs.waitFor(jobId, { timeoutMs: 90000, intervalMs: 2000 })
             expect(job.status, `vote relay failed (${p.label})`).toBe('completed')

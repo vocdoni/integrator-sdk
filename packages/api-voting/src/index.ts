@@ -3,6 +3,7 @@ export { BallotEncryptor } from './ballot-encryptor'
 export { buildVotePackage, type VotePackageOptions, type VotePackageResult } from './vote-package'
 export {
   buildVoteTransaction,
+  MAX_MEMO_BYTES,
   type BuildVoteTransactionOptions,
 } from './vote-transaction'
 export {

@@ -27,7 +27,18 @@ export interface BuildVoteTransactionOptions {
   encryptionKeys?: EncryptionKey[]
   /** CSP proof type. Defaults to ECDSA_PIDSALTED (the SaaS CSP signer). */
   proofType?: ProofCA_Type
+  /**
+   * Optional free-text note attached to the vote (e.g. an open "Other"
+   * answer). The chain caps it at {@link MAX_MEMO_BYTES} UTF-8 bytes —
+   * validated here, since the protocol deliberately leaves it to the app
+   * layer. Goes out as-is (cleartext) even on secretUntilTheEnd elections:
+   * it lives on the envelope, not inside the (encrypted) vote package.
+   */
+  memo?: string
 }
+
+/** Chain-level cap on `VoteEnvelope.memo`, in UTF-8 bytes (not characters). */
+export const MAX_MEMO_BYTES = 256
 
 /**
  * Builds and signs a Vochain vote transaction carrying a CSP (CA) proof, and
@@ -47,7 +58,16 @@ export function buildVoteTransaction(opts: BuildVoteTransactionOptions): string 
     cspWeight,
     encryptionKeys,
     proofType = ProofCA_Type.ECDSA_PIDSALTED,
+    memo,
   } = opts
+
+  let memoBytes: Uint8Array | undefined
+  if (memo !== undefined) {
+    memoBytes = utf8ToBytes(memo)
+    if (memoBytes.length > MAX_MEMO_BYTES) {
+      throw new Error(`Vote memo is ${memoBytes.length} UTF-8 bytes; the chain caps it at ${MAX_MEMO_BYTES}`)
+    }
+  }
 
   const processIdBytes = fromHex(processId)
   const { votePackage, keyIndexes } = buildVotePackage({ choices, encryptionKeys })
@@ -73,6 +93,7 @@ export function buildVoteTransaction(opts: BuildVoteTransactionOptions): string 
     nonce: randomBytes(32),
     votePackage,
     encryptionKeyIndexes: keyIndexes,
+    memo: memoBytes,
   })
 
   const tx = asLocalBytes(Tx.encode({ payload: { $case: 'vote', vote } }).finish())

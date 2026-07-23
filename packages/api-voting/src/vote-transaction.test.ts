@@ -101,4 +101,23 @@ describe('buildVoteTransaction', () => {
     const pkg = JSON.parse(new TextDecoder().decode(opened))
     expect(pkg.votes).toEqual([2])
   })
+
+  it('carries the memo as UTF-8 envelope bytes, absent by default', () => {
+    const base = { processId: PROCESS_ID, choices: [1], chainId: CHAIN_ID, signer, cspSignature: CSP_SIG }
+
+    const { vote: without } = decodeVote(buildVoteTransaction(base))
+    expect(without.memo).toBeUndefined()
+
+    const { vote: withMemo } = decodeVote(buildVoteTransaction({ ...base, memo: 'Other: neither ★' }))
+    expect(new TextDecoder().decode(withMemo.memo!)).toBe('Other: neither ★')
+  })
+
+  it('rejects a memo over 256 UTF-8 bytes — bytes, not characters', () => {
+    const base = { processId: PROCESS_ID, choices: [1], chainId: CHAIN_ID, signer, cspSignature: CSP_SIG }
+
+    // 100 characters, but '€' is 3 UTF-8 bytes → 300 bytes.
+    expect(() => buildVoteTransaction({ ...base, memo: '€'.repeat(100) })).toThrow('caps it at 256')
+    // 256 single-byte characters is exactly at the cap.
+    expect(() => buildVoteTransaction({ ...base, memo: 'a'.repeat(256) })).not.toThrow()
+  })
 })
