@@ -1182,10 +1182,9 @@ export interface DeleteManagedOrganizationResponse {
  * the Vocdoni chain id.
  *
  * `chainId` here is the service's CURRENT Vochain chain id — NOT necessarily
- * the chain id a given process's votes must sign against (that one only
- * exists on the Bearer-authed process read; a process published before a
- * chain migration signs against its own, older chain id — see GAPS.md
- * "No public chainId source").
+ * the chain id a given process's votes must sign against: a process published
+ * before a chain migration signs against its own, older chain id. Always read
+ * `chainId` off the (public) process read itself.
  */
 export interface InfoResponse {
   chainId: string
