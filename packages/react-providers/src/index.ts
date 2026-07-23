@@ -36,6 +36,7 @@ export {
 // ─── Election ─────────────────────────────────────────────────────────────────
 export {
   ElectionProvider,
+  PartialVoteError,
   useElection,
   type ElectionContextValue,
   type ElectionProviderProps,

@@ -4,7 +4,7 @@ import type {
   VotingProcessResponse,
   VotingProcessResultsResponse,
 } from '@vocdoni/api-types'
-import { EphemeralSigner, MAX_MEMO_BYTES, VotingClient } from '@vocdoni/api-voting'
+import { buildVoteTransaction, EphemeralSigner, MAX_MEMO_BYTES } from '@vocdoni/api-voting'
 import { useQuery } from '@tanstack/react-query'
 import {
   createContext,
@@ -47,7 +47,14 @@ export interface ElectionContextValue {
    * ballots (`number[][]`, one entry per question) and optional per-question
    * memos (free-text notes, e.g. an open "Other" answer — max 256 UTF-8 bytes
    * each, and ⚠️ always cleartext on the envelope, even for secret questions).
-   * Returns the first vote id.
+   * Returns the first vote id cast by this call.
+   *
+   * Casting is phased so a failure can't half-vote silently: every question is
+   * validated and CSP-signed and every transaction built BEFORE anything is
+   * relayed. Questions the voter already voted (per a fresh check) are skipped,
+   * so calling `vote()` again after a failure resumes the remaining questions.
+   * When some questions land and others fail, throws {@link PartialVoteError}
+   * naming both sets.
    */
   vote(encodedBallots: number[][], memos?: (string | undefined)[]): Promise<string>
   voteId: string | null
@@ -60,6 +67,27 @@ export interface ElectionProviderProps {
   children: ReactNode
   /** Election ID (the voting process Mongo ObjectID) — fetches the election on mount. */
   id: string
+}
+
+/**
+ * Thrown by `vote()` when some questions' votes landed on chain and others
+ * failed. The voter is partially voted: calling `vote()` again with the same
+ * ballots resumes — already-voted questions are skipped — so the UI should
+ * offer a retry, not treat the whole cast as lost.
+ */
+export class PartialVoteError extends Error {
+  constructor(
+    /** Questions whose vote landed, with the vote id (nullifier) of each. */
+    readonly succeeded: Array<{ questionId: string; voteId: string }>,
+    /** Questions whose vote failed, with the error that failed each one. */
+    readonly failed: Array<{ questionId: string; error: unknown }>,
+  ) {
+    super(
+      `Vote partially failed: ${succeeded.length} question(s) cast, ${failed.length} failed ` +
+        `(${failed.map((f) => f.questionId).join(', ')}); call vote() again to retry the failed ones`,
+    )
+    this.name = 'PartialVoteError'
+  }
 }
 
 const ElectionContext = createContext<ElectionContextValue | undefined>(undefined)
@@ -157,48 +185,104 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
         }
       }
 
-      let firstVoteId: string | null = null
-
+      // Pre-flight EVERY question before anything is consumed or relayed, so a
+      // problem at question k can never leave questions 0..k-1 cast on chain.
+      // Secret questions must never go out in cleartext: the keykeepers publish
+      // the encryption keys asynchronously after publish, so keys may
+      // legitimately be absent for a while — refuse rather than cast an
+      // unencrypted ballot.
       for (const [i, question] of election.questions.entries()) {
-        const upstreamId = question.upstreamId
-        if (!upstreamId) throw new Error(`Question ${i} has no upstreamId; process may not be published yet`)
-
-        // Secret questions must never go out in cleartext. The keykeepers
-        // publish the encryption keys asynchronously after publish, so keys may
-        // legitimately be absent for a while — refuse (before consuming the
-        // one-shot CSP sign) rather than cast an unencrypted ballot.
+        if (!question.upstreamId) {
+          throw new Error(`Question ${i} has no upstreamId; process may not be published yet`)
+        }
         if (question.secretUntilTheEnd && !question.encryptionKeys?.length) {
           throw new Error(
             `Question ${i} ("${question.id}") is secret but its encryption keys are not published yet; retry once the keykeepers publish them`,
           )
         }
-
-        const signer = new EphemeralSigner()
-        const { signature, weight } = await process.sign(upstreamId, signer.address)
-
-        const votingClient = new VotingClient({ client })
-        const jobId = await votingClient.vote({
-          processId: upstreamId,
-          choices: encodedBallots[i],
-          chainId,
-          signer,
-          cspSignature: signature,
-          cspWeight: weight,
-          encryptionKeys: question.secretUntilTheEnd ? question.encryptionKeys : undefined,
-          memo: memos?.[i],
-        })
-
-        const job = await client.jobs.waitFor(jobId)
-        const resultVoteId = job.result?.voteID ?? jobId
-        if (firstVoteId === null) firstVoteId = resultVoteId
       }
 
-      const resultVoteId = firstVoteId ?? ''
-      setVoteId(resultVoteId)
+      // Resume: refresh the per-question voted state so a retry after a partial
+      // failure skips the questions already on chain instead of dying on a
+      // double-vote. Falls back to the last known state if the check is down.
+      let voted: Set<string>
+      try {
+        const checked = await process.check()
+        setIsInCensus(checked.belongsToProcess)
+        setVoterQuestions(checked.questions)
+        voted = new Set(checked.questions.filter((q) => q.hasVoted).map((q) => q.questionId))
+      } catch {
+        voted = new Set(voterQuestions.filter((q) => q.hasVoted).map((q) => q.questionId))
+      }
+      const pending = election.questions
+        .map((question, i) => ({ question, i }))
+        .filter(({ question }) => !voted.has(question.id))
+      if (pending.length === 0) {
+        throw new Error('Every question of this process has already been voted')
+      }
+
+      // The backend has no batch relay (one POST /vote per signed envelope), so
+      // batch client-side instead: consume every one-shot CSP signature and
+      // build every transaction BEFORE relaying anything. A failure in these
+      // phases aborts with zero votes on chain.
+      const signed: Array<{ question: (typeof election.questions)[number]; i: number; txPayload: string }> = []
+      for (const { question, i } of pending) {
+        const signer = new EphemeralSigner()
+        const { signature, weight } = await process.sign(question.upstreamId!, signer.address)
+        signed.push({
+          question,
+          i,
+          txPayload: buildVoteTransaction({
+            processId: question.upstreamId!,
+            choices: encodedBallots[i],
+            chainId,
+            signer,
+            cspSignature: signature,
+            cspWeight: weight,
+            encryptionKeys: question.secretUntilTheEnd ? question.encryptionKeys : undefined,
+            memo: memos?.[i],
+          }),
+        })
+      }
+
+      // Relay every transaction and await its job. A failed question does not
+      // abort the rest — the remaining signatures are already consumed, so
+      // casting what we can and reporting the rest maximizes progress.
+      const succeeded: Array<{ questionId: string; voteId: string }> = []
+      const failed: Array<{ questionId: string; error: unknown }> = []
+      for (const { question, txPayload } of signed) {
+        try {
+          const { jobId } = await client.elections.vote({ txPayload })
+          const job = await client.jobs.waitFor(jobId)
+          succeeded.push({ questionId: question.id, voteId: job.result?.voteID ?? jobId })
+        } catch (err) {
+          failed.push({ questionId: question.id, error: err })
+        }
+      }
+
+      if (failed.length > 0) {
+        // Truthful partial state: reflect what actually landed on chain, so
+        // `voterQuestions`/`hasVoted` don't claim "not voted" for cast votes.
+        try {
+          const checked = await process.check()
+          setVoterQuestions(checked.questions)
+          setHasVoted(checked.questions.length > 0 && checked.questions.every((q) => q.hasVoted))
+        } catch {
+          const landed = new Set(succeeded.map((s) => s.questionId))
+          setVoterQuestions((qs) => qs.map((q) => (landed.has(q.questionId) ? { ...q, hasVoted: true } : q)))
+        }
+        throw new PartialVoteError(succeeded, failed)
+      }
+
+      setVoterQuestions((qs) => qs.map((q) => ({ ...q, hasVoted: true })))
       setHasVoted(true)
+      // The first cast question's vote id (on a resumed call, the first of the
+      // questions cast by THIS call).
+      const resultVoteId = succeeded[0]?.voteId ?? ''
+      setVoteId(resultVoteId)
       return resultVoteId
     },
-    [election, process, chainId, client],
+    [election, process, chainId, client, voterQuestions],
   )
 
   const clearVoter = useCallback(() => {

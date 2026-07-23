@@ -7,7 +7,7 @@ import { MOCK_CSP_SIGNATURE, MOCK_WEIGHT_HEX, mockProcess } from '../../../../mo
 import { server } from '../../../../mocks/server'
 import { ProcessProvider, useProcess } from '../process/ProcessProvider'
 import { TestProvider } from '../test-utils'
-import { ElectionProvider, useElection } from './ElectionProvider'
+import { ElectionProvider, PartialVoteError, useElection } from './ElectionProvider'
 
 function wrapper({ children }: { children: React.ReactNode }) {
   return (
@@ -350,6 +350,191 @@ describe('ElectionProvider', () => {
     expect(txPayloads[0]).toContain(PLAIN_PACKAGE_MARKER)
     // …the secret question's package is sealed — no cleartext JSON in the wire.
     expect(txPayloads[1]).not.toContain(PLAIN_PACKAGE_MARKER)
+  })
+
+  it('pre-flights every question before consuming any CSP sign (no partial cast)', async () => {
+    // Question 1 is secret without published keys. The old per-question loop
+    // would cast question 0 first and only then hit the guard, half-voting the
+    // process; the pre-flight must fire before ANY sign or relay.
+    let signCalls = 0
+    let voteCalls = 0
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) =>
+        HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          questions: [
+            { ...mockProcess.questions[0], id: 'q-0', upstreamId: 'aa'.repeat(32) },
+            {
+              ...mockProcess.questions[0],
+              id: 'q-1',
+              upstreamId: 'bb'.repeat(32),
+              secretUntilTheEnd: true,
+            },
+          ],
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign`, () => {
+        signCalls++
+        return HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX })
+      }),
+      http.post(`http://localhost/vote`, () => {
+        voteCalls++
+        return HttpResponse.json({ jobId: 'job-0' }, { status: 202 })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    await expect(result.current.election.vote([[0], [1]])).rejects.toThrow(
+      /encryption keys are not published yet/,
+    )
+    expect(signCalls).toBe(0)
+    expect(voteCalls).toBe(0)
+    expect(result.current.election.hasVoted).toBe(false)
+  })
+
+  it('consumes every CSP sign before relaying anything — a sign failure casts zero votes', async () => {
+    let signCalls = 0
+    let voteCalls = 0
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) =>
+        HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          questions: [
+            { ...mockProcess.questions[0], id: 'q-0', upstreamId: 'aa'.repeat(32) },
+            { ...mockProcess.questions[0], id: 'q-1', upstreamId: 'bb'.repeat(32) },
+          ],
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign`, () => {
+        signCalls++
+        // First sign succeeds, second fails: with the old interleaved loop the
+        // first question would already be on chain by now.
+        if (signCalls === 1) {
+          return HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX })
+        }
+        return HttpResponse.json({ error: 'csp down' }, { status: 500 })
+      }),
+      http.post(`http://localhost/vote`, () => {
+        voteCalls++
+        return HttpResponse.json({ jobId: 'job-0' }, { status: 202 })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    await expect(result.current.election.vote([[0], [1]])).rejects.toThrow()
+    expect(signCalls).toBe(2)
+    // Nothing was relayed: the failure aborted with zero votes on chain.
+    expect(voteCalls).toBe(0)
+    expect(result.current.election.hasVoted).toBe(false)
+  })
+
+  it('resumes a half-voted process: skips questions the check reports as voted', async () => {
+    const UPSTREAM_A = 'aa'.repeat(32)
+    const UPSTREAM_B = 'bb'.repeat(32)
+    const signBodies: Array<{ electionId: string }> = []
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) =>
+        HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          questions: [
+            { ...mockProcess.questions[0], id: 'q-0', upstreamId: UPSTREAM_A },
+            { ...mockProcess.questions[0], id: 'q-1', upstreamId: UPSTREAM_B },
+          ],
+        }),
+      ),
+      // The voter already voted q-0 (e.g. a previous vote() died after casting it).
+      http.post(`http://localhost/processes/:processId/check`, () =>
+        HttpResponse.json({
+          belongsToProcess: true,
+          weight: MOCK_WEIGHT_HEX,
+          questions: [
+            { questionId: 'q-0', upstreamId: UPSTREAM_A, canVote: false, hasVoted: true },
+            { questionId: 'q-1', upstreamId: UPSTREAM_B, canVote: true, hasVoted: false },
+          ],
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign`, async ({ request }) => {
+        signBodies.push((await request.json()) as { electionId: string })
+        return HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isInCensus).toBe(true))
+
+    let voteId = ''
+    await act(async () => {
+      voteId = await result.current.election.vote([[0], [1]])
+    })
+
+    // Only q-1 was signed and cast; the resumed call completes the process.
+    expect(signBodies.map((b) => b.electionId)).toEqual([UPSTREAM_B])
+    expect(voteId).toMatch(/^nullifier-job-/)
+    expect(result.current.election.hasVoted).toBe(true)
+  })
+
+  it('surfaces a PartialVoteError naming cast and failed questions', async () => {
+    const UPSTREAM_A = 'aa'.repeat(32)
+    const UPSTREAM_B = 'bb'.repeat(32)
+    let voteCalls = 0
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) =>
+        HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          questions: [
+            { ...mockProcess.questions[0], id: 'q-0', upstreamId: UPSTREAM_A },
+            { ...mockProcess.questions[0], id: 'q-1', upstreamId: UPSTREAM_B },
+          ],
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign`, () =>
+        HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX }),
+      ),
+      http.post(`http://localhost/vote`, () => {
+        voteCalls++
+        // q-0 relays fine; q-1's relay is rejected.
+        if (voteCalls === 1) return HttpResponse.json({ jobId: 'job-0' }, { status: 202 })
+        return HttpResponse.json({ error: 'tx queue full' }, { status: 503 })
+      }),
+      http.get(`http://localhost/jobs/:jobId`, ({ params }) =>
+        HttpResponse.json({
+          jobId: params.jobId as string,
+          status: 'completed',
+          type: 'relay_vote',
+          result: { voteID: `nullifier-${params.jobId}` },
+        }),
+      ),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    let thrown: unknown
+    await act(async () => {
+      thrown = await result.current.election.vote([[0], [1]]).catch((err) => err)
+    })
+
+    expect(thrown).toBeInstanceOf(PartialVoteError)
+    const partial = thrown as PartialVoteError
+    expect(partial.succeeded).toEqual([{ questionId: 'q-0', voteId: 'nullifier-job-0' }])
+    expect(partial.failed).toHaveLength(1)
+    expect(partial.failed[0].questionId).toBe('q-1')
   })
 
   it('clearVoter resets connection and vote state', async () => {
