@@ -1,5 +1,6 @@
 import type { VotingProcessQuestion } from '@vocdoni/api-types'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
+import { decodeQuestionResults, encodeQuestionBallot } from '@vocdoni/ballot'
 import { apiKey, makeAdminClient, makeClient } from './helpers'
 
 // End-to-end organizer→voter flow, SaaS-only, driven entirely through the SDK
@@ -49,8 +50,18 @@ interface ProcessSpec {
    */
   questions: VotingProcessQuestion[]
   secret: boolean
-  /** Vote package choices cast on every question of this process. */
+  /**
+   * Raw voter selections (choice values) cast on every question of this
+   * process — encoded into the wire ballot with `encodeQuestionBallot`.
+   */
   choices: number[]
+  /**
+   * Expected decoded tally per choice (in choice order) after every voter has
+   * cast `choices` — asserted via `decodeQuestionResults` for non-secret
+   * processes. Guards the whole encode→scrutinize→decode chain: a ballot the
+   * chain silently discards, or a decoder misreading the histogram, fails here.
+   */
+  tally: number[]
 }
 
 suite('full election lifecycle (live — creates an org, processes and votes)', () => {
@@ -114,12 +125,14 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       // endDate is required; omitting startDate makes each election start
       // immediately on publish, so the voters below can cast right away.
       const endDate = new Date(Date.now() + 2 * 60 * 60_000).toISOString()
-      const drafts: Array<{ label: string; secret: boolean; choices: number[]; body: Parameters<typeof admin.elections.create>[0] }> = [
+      const drafts: Array<{ label: string; secret: boolean; choices: number[]; tally: number[]; body: Parameters<typeof admin.elections.create>[0] }> = [
         {
           label: 'single-choice',
           secret: false,
           // singlechoice ballot: one value — the chosen option ("Yes" = 1).
           choices: [1],
+          // 4 voters all pick "Yes": No = 0, Yes = 4.
+          tally: [0, VOTERS.length],
           body: {
             orgAddress,
             census: { authFields: ['memberNumber'], groupId },
@@ -141,10 +154,11 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         {
           label: 'multi-choice',
           secret: false,
-          // multichoice ballot: one picked option index per slot (maxChoices
-          // slots) — pick "A" (0) and "C" (2), filling both slots so no
-          // abstain padding is needed.
+          // Selections "A" (0) and "C" (2); encodeQuestionBallot turns them into
+          // the dense 0/1 vector [1, 0, 1] the derived protocol expects.
           choices: [0, 2],
+          // 4 voters all pick A and C: A = 4, B = 0, C = 4.
+          tally: [VOTERS.length, 0, VOTERS.length],
           body: {
             orgAddress,
             census: { authFields: ['memberNumber'], groupId },
@@ -159,7 +173,13 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
                   { title: 'C', value: 2 },
                 ],
                 type: 'multichoice',
-                typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: true },
+                // uniqueChoices MUST stay false: the backend propagates it into
+                // the on-chain UniqueChoices, and the scrutinizer applies
+                // uniqueness to the raw 0/1 fields of the derived dense layout —
+                // with it set, every multi-pick ballot is silently discarded at
+                // tally (saas-backend derivation bug; the tally assertion below
+                // would catch it).
+                typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: false },
               },
             ],
           },
@@ -168,6 +188,8 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           label: 'secret single-choice',
           secret: true,
           choices: [1],
+          // Hidden until the encryption keys are revealed — never asserted live.
+          tally: [],
           body: {
             orgAddress,
             census: { authFields: ['memberNumber'], groupId },
@@ -284,6 +306,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           questions: info.questions,
           secret: d.secret,
           choices: d.choices,
+          tally: d.tally,
         })
       }
 
@@ -341,7 +364,9 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
 
             const jobId = await voting.vote({
               processId: status.upstreamId!,
-              choices: p.choices,
+              // Encode the raw selections into the question's wire ballot —
+              // the same codec path react-components voters go through.
+              choices: encodeQuestionBallot(question!, p.choices),
               chainId: chainId!,
               signer,
               cspSignature: sign.signature!,
@@ -389,6 +414,18 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           expect(q.maxVoters, `${p.label} maxVoters is not the census size`).toBe(MEMBER_COUNT)
           if (!p.secret) {
             expect(q.results?.length, `${p.label} has no live tally matrix`).toBeGreaterThan(0)
+            // Decode the histogram and check the actual per-choice tallies.
+            // voteCount alone is NOT enough: it counts envelopes, and the chain
+            // accepts envelopes whose ballot the scrutinizer later discards
+            // (e.g. a codec/protocol mismatch) — only the decoded tally proves
+            // the votes were counted.
+            const question = p.questions.find((pq) => pq.id === q.questionId)
+            expect(question, `${p.label} results carry unknown question ${q.questionId}`).toBeTruthy()
+            const decoded = decodeQuestionResults(question!, q.results!)
+            expect(
+              decoded.map((c) => c.votes),
+              `${p.label} decoded tally mismatch`,
+            ).toEqual(p.tally)
           }
         }
         // The same live tally rides the public single reads (process + question).
