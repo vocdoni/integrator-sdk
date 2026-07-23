@@ -109,11 +109,11 @@ const { weight } = await client.processes.weight(processId, { authToken })
 // Consumed sign info — per-question address/nullifier/timestamp for the
 // questions the voter already cast (others omitted)
 const { consumed } = await client.processes.signInfo(processId, { authToken })
-
-// Public single-participant read — BACKEND PLACEHOLDER: validates the ids but
-// currently always resolves null (participant info not yet surfaced).
-const participant = await client.processes.getParticipant(processId, participantId)
 ```
+
+(The backend also exposes `GET /processes/{id}/participants/{participantId}`,
+but it is a documented placeholder that always returns `null`, so the SDK does
+not wrap it — voters check their own status via `check()`/`signInfo()`.)
 
 **Census type detection** — check `census.twoFaFields` (on the public question
 read's `question.census`, or on the integrator backend's process read):

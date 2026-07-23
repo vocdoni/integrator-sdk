@@ -945,18 +945,6 @@ export interface ProcessParticipantsResponse {
 }
 
 /**
- * Response of `GET /processes/{processId}/participants/{participantId}` — a
- * public voter-facing participant lookup, mirroring the bundle equivalent
- * (`BundleClient.getParticipant`). No API key needed.
- *
- * PLACEHOLDER: the backend validates the process (published only) and the
- * participant id but currently always returns `null` — participant election
- * info is not yet surfaced (the bundle equivalent is likewise a stub, pending
- * the CSP indexer lookup).
- */
-export type ProcessParticipantResponse = null
-
-/**
  * Response of `PUT /processes/{id}/census` — the number of members added to
  * the census synchronously, plus the async job id that raises each published
  * election's `maxCensusSize` on-chain (absent when no on-chain update was

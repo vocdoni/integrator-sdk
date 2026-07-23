@@ -36,7 +36,5 @@ New:
 - `client.info()` — public `GET /info` (`{ chainId, version, goVersion }`;
   the chainId is the service's current chain, not a per-process value).
 - `elections.validateCensus(...)` — `POST /processes/census/validation`.
-- `processes.getParticipant(processId, participantId)` — public read, typed
-  `null` while the backend endpoint is a documented placeholder.
 - `organizations.addMembers(..., { async: true })` — opt into background
   import, returning a `jobId` for `jobs.waitFor`.

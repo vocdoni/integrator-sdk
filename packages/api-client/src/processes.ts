@@ -6,7 +6,6 @@ import type {
   CheckMembershipRequest,
   ConsumedAddressRequest,
   ProcessCheckResponse,
-  ProcessParticipantResponse,
   ProcessSignInfoResponse,
   PublicQuestionResponse,
   SignRequest,
@@ -125,18 +124,4 @@ export class ProcessesCspClient {
     ).catch(handleError)
   }
 
-  /**
-   * Public participant info for a published voting process, mirroring the
-   * bundle participant endpoint ({@link BundleClient.getParticipant}). No API
-   * key needed.
-   *
-   * PLACEHOLDER: the backend currently returns `null` unconditionally once
-   * the process and participant id are validated — participant election info
-   * is not yet surfaced.
-   */
-  async getParticipant(processId: string, participantId: string): Promise<ProcessParticipantResponse> {
-    return this.fetch<ProcessParticipantResponse>(
-      `/processes/${processId}/participants/${participantId}`,
-    ).catch(handleError)
-  }
 }
