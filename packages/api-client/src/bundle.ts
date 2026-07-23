@@ -10,7 +10,6 @@ import type {
   CheckMembershipResponse,
   CreateProcessBundleRequest,
   CreateProcessBundleResponse,
-  OrgMember,
   SignRequest,
   UserWeightRequest,
   UserWeightResponse,
@@ -111,11 +110,6 @@ export class BundleClient {
       method: 'POST',
       body,
     }).catch(handleError)
-  }
-
-  /** Public info for a single participant of the bundle. */
-  async getParticipant(bundleId: string, participantId: string): Promise<OrgMember> {
-    return this.fetch<OrgMember>(`/process/bundle/${bundleId}/${participantId}`).catch(handleError)
   }
 
   /** Look up participants by a member field and report whether they have voted. */
