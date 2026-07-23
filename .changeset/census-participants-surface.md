@@ -5,7 +5,7 @@
 
 Census surface aligned with the backend's "no census identity" design: the
 process read already carries everything clients need, and the new
-process-scoped admin routes replace the bundle-based census workarounds.
+process-scoped admin routes replace the legacy census workarounds.
 
 **`@vocdoni/api-types`:**
 
@@ -13,7 +13,7 @@ process-scoped admin routes replace the bundle-based census workarounds.
   processes it equals the on-chain `maxCensusSize`). `groupId`/`memberIds`
   documented as create/update inputs that are not returned on reads.
 - `VotingProcessBase.chainId` — the Vochain chain id votes are signed against
-  (previously only available via `Bundle.chainId`).
+  (previously unavailable on process reads).
 - New `ProcessParticipantsResponse` / `ProcessParticipantEntry` /
   `ProcessParticipantQuestionVote` / `ProcessParticipantLookupField` /
   `UpdateProcessCensusResponse` types.

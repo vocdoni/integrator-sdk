@@ -45,7 +45,9 @@ export const mockProcess = {
   startDate: '2024-01-01T00:00:00Z',
   endDate: '2024-12-31T23:59:59Z',
   published: true,
-  census: {},
+  chainId: 'test',
+  // 2FA census (twoFaFields populated) → exercises the auth0 → auth1 flow.
+  census: { authFields: ['memberNumber'], twoFaFields: ['phone'] },
   questions: [
     {
       id: 'q-0',

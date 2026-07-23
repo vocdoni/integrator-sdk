@@ -1,6 +1,6 @@
 ---
 name: integrator-sdk
-description: Use this skill whenever working with the Vocdoni Integrator SDK packages — @vocdoni/api-client, @vocdoni/api-voting, @vocdoni/react-providers, or @vocdoni/react-components. Triggers on imports from any of those packages, mentions of VocdoniApiClient, VotingClient, BundleProvider, ElectionProvider, CSP auth flow, vote relay, encrypted ballots (secretUntilTheEnd), or any task like "cast a vote", "set up voting in React", "build the vote transaction", "poll a job". The SDK talks exclusively to the Vocdoni SaaS API — no direct blockchain access.
+description: Use this skill whenever working with the Vocdoni Integrator SDK packages — @vocdoni/api-client, @vocdoni/api-voting, @vocdoni/react-providers, or @vocdoni/react-components. Triggers on imports from any of those packages, mentions of VocdoniApiClient, VotingClient, ProcessProvider, ElectionProvider, CSP auth flow, vote relay, encrypted ballots (secretUntilTheEnd), or any task like "cast a vote", "set up voting in React", "build the vote transaction", "poll a job". The SDK talks exclusively to the Vocdoni SaaS API — no direct blockchain access.
 ---
 
 # Vocdoni Integrator SDK
@@ -59,13 +59,11 @@ Steps 1–4 are handled by `@vocdoni/api-client` (`client.elections.get` /
 `getResults` for the public reads; `client.processes` — `ProcessesCspClient` —
 for the CSP auth/check/sign routes).
 Steps 5–6 are handled by `@vocdoni/api-voting` (`VotingClient` or `buildVoteTransaction` directly).
-In React, `BundleProvider` + `ElectionProvider` automate the flow (still on the
-legacy bundle routes — see below).
+In React, `ProcessProvider` + `ElectionProvider` automate the flow.
 
-**Legacy bundle flow:** organizer-created bundles group processes sharing a
-census; the same auth/check/sign steps live under `/process/bundle/{bundleId}/*`
-and are wrapped by `BundleClient` (`client.bundle`). Use it only for existing
-bundle deployments — the new `/processes` model needs no bundle.
+There is no bundle flow anymore: the legacy `/process/bundle/*` routes were
+removed from the backend along with `BundleClient` — everything is
+process-scoped.
 
 ## Quick-start (vanilla TS)
 
@@ -111,7 +109,7 @@ console.log('nullifier:', job.result?.voteID)
 
 ## Mental model
 
-- **The voter's auth token is anchored to the process (new model).** `client.processes` authenticates the voter directly against the voting process; one verified `authToken` covers check/sign for every question. Bundles — organizer-created groups of processes sharing a census, authenticated via `client.bundle` — are the legacy equivalent and are not part of the new `/processes` model.
+- **The voter's auth token is anchored to the process.** `client.processes` authenticates the voter directly against the voting process; one verified `authToken` covers check/sign for every question.
 - **Reads are public, writes are authed, drafts are gated.** `client.elections` reads (`get`, `list`, `getResults`) work on a token-less client for **published** processes — a draft 404s (single read) or is filtered out (list) unless the caller is an org manager/admin or a scoped API key, and the PII `eligibleMemberIds` lists are stripped for non-managers. Everything that mutates (`create`, `publish`, `setStatus`, census writes) stays API-key/JWT authed. `client.processes` is the voter-side CSP surface (auth/check/sign/weight/getQuestion — token-identified).
 - **`chainId` comes from the public process read.** Vote signatures are chain-id-bound; read the process's own `chainId` off `client.elections.get(processId)`. Do NOT use `client.info().chainId` — that is the service's *current* chain id, wrong for processes published before a chain migration.
 - **Results are live and public.** Published questions carry a live `results` (`QuestionResults`: `voteCount`, `maxVoters`, `finalResults`, tally matrix) on the single reads and on `GET /processes/{id}/results` — `finalResults` distinguishes live from final, and a `secretUntilTheEnd` tally matrix stays empty until the keys are revealed. List items never resolve results (poll a single read instead).

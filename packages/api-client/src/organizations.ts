@@ -12,7 +12,6 @@ import type {
   ListApiKeysResponse,
   ManagedOrganizationsResponse,
   Organization,
-  OrganizationBundlesResponse,
   OrganizationCensusesResponse,
   OrganizationGroup,
   OrganizationGroupsResponse,
@@ -178,16 +177,6 @@ export class OrganizationsClient {
     return this.fetch<OrganizationCensusesResponse>(`/organizations/${address}/censuses`).catch(
       handleError,
     )
-  }
-
-  /** @deprecated Paginated; the API answers `{ bundles, pagination }`, not a bare array. */
-  async listBundles(
-    address: string,
-    params: { page?: number; limit?: number } = {},
-  ): Promise<OrganizationBundlesResponse> {
-    return this.fetch<OrganizationBundlesResponse>(`/organizations/${address}/processes`, {
-      params,
-    }).catch(handleError)
   }
 
   async listProcessDrafts(address: string): Promise<OrganizationProcessDraftsResponse> {

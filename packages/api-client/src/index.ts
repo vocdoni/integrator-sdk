@@ -7,7 +7,6 @@ export {
   processVoteCount,
   computeProcessStatus,
 } from './election-status'
-export { BundleClient, type CreatedBundle } from './bundle'
 export { CensusClient } from './census'
 export { VocdoniApiClient } from './client'
 export { ElectionsClient } from './elections'

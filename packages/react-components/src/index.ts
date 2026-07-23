@@ -80,8 +80,17 @@ export {
 } from '@vocdoni/react-providers'
 
 export {
+  ProcessProvider,
+  processQueryKeys,
+  useProcess,
+  useProcessOptional,
+  type ProcessContextValue,
+  type ProcessProviderProps,
+  type ProcessSignResult,
+} from '@vocdoni/react-providers'
+
+export {
   ElectionProvider,
-  electionQueryKeys,
   useElection,
   type ElectionContextValue,
   type ElectionProviderProps,

@@ -2,7 +2,6 @@ import type { ApiClientConfig, InfoResponse } from '@vocdoni/api-types'
 import { up } from 'up-fetch'
 import type { UpFetch } from 'up-fetch'
 import { AuthClient } from './auth'
-import { BundleClient } from './bundle'
 import { CensusClient } from './census'
 import { ElectionsClient } from './elections'
 import { handleError } from './errors'
@@ -27,8 +26,6 @@ export class VocdoniApiClient {
   readonly organizations: OrganizationsClient
   readonly census: CensusClient
   readonly auth: AuthClient
-  /** Legacy voter CSP surface (`/process/bundle/{bundleId}/*`). */
-  readonly bundle: BundleClient
   readonly jobs: JobsClient
   private readonly fetch: UpFetch
 
@@ -55,7 +52,6 @@ export class VocdoniApiClient {
     this.organizations = new OrganizationsClient(fetcher)
     this.census = new CensusClient(fetcher)
     this.auth = new AuthClient(fetcher)
-    this.bundle = new BundleClient(fetcher)
     this.jobs = new JobsClient(fetcher)
   }
 

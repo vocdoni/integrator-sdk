@@ -140,7 +140,7 @@ export interface Census {
 }
 
 /**
- * The richer SaaS census-management shape carried by a process (and its bundle).
+ * The richer SaaS census-management shape carried by a process.
  * Distinct from the voting-time {@link Census}: this describes how voters
  * authenticate (`authFields` / `twoFaFields`) and the census `type`, which is
  * what a login form needs. An empty/absent `twoFaFields` means an auth-only
@@ -521,7 +521,7 @@ export interface VotingProcessBase {
   /**
    * Vochain chain id votes must be signed against — vote signatures are
    * chain-id-bound (a mismatch makes the on-chain signer recovery diverge).
-   * Same value as `Bundle.chainId`; serialized with `omitempty`.
+   * Serialized with `omitempty`.
    */
   chainId?: string
 }
@@ -743,28 +743,10 @@ export interface EnqueuedResponse {
   jobId: string
 }
 
-// ─── Bundle ─────────────────────────────────────────────────────────────────────
-// A bundle groups processes that share a census. The voter authenticates against
-// the bundle once and votes on its processes; the bundle also carries the Vochain
-// chain id the votes are signed against.
-
-export interface Bundle {
-  id: string
-  /** Vochain chain id the bundle's processes live on (used to sign votes). */
-  chainId?: string
-  /** On-chain process ids included in the bundle. */
-  processes: string[]
-  /** Owner organization address (hex). */
-  orgAddress?: string
-  /** Census-management info shared by the bundle's processes — see {@link CensusInfo}. */
-  census?: CensusInfo
-}
-
 // ─── CSP voter auth ─────────────────────────────────────────────────────────────
-// The CSP / two-factor voter-auth flow is hosted by the SaaS backend both under
-// the legacy /process/bundle/{bundleId}/* routes and the new process-scoped
-// /processes/{processId}/* routes. The wire shapes are shared: a single verified
-// authToken is reused across every election of the bundle/process.
+// The CSP / two-factor voter-auth flow lives on the process-scoped
+// /processes/{processId}/* routes: a single verified authToken is reused across
+// every election (question) of the process.
 // Note: `weight` is wire-encoded as a hex string (e.g. "2a" === 42).
 
 /** Auth step 0/1 bodies are free-form (they vary by census auth type). */
@@ -792,11 +774,6 @@ export interface AuthChallengeRequest {
   authData: string[]
 }
 
-/** @deprecated Alias of {@link AuthRequest} — the shape is not bundle-specific. */
-export type BundleAuthRequest = AuthRequest
-
-/** @deprecated Alias of {@link AuthChallengeRequest} — the shape is not bundle-specific. */
-export type BundleAuthChallengeRequest = AuthChallengeRequest
 
 /** Shared response shape of the auth, resend and sign endpoints. */
 export interface AuthResponse {
@@ -813,17 +790,11 @@ export interface AuthResendRequest {
   phone?: string
 }
 
+/** Body of `POST /processes/{id}/check` (`handlers.CheckMembershipRequest`). */
 export interface CheckMembershipRequest {
   authToken: string
-  /** When provided, the response also reports hasVoted for that process. */
+  /** Optional Vochain election id filter; the check reports all questions without it. */
   electionId?: string
-}
-
-export interface CheckMembershipResponse {
-  belongs: boolean
-  hasVoted: boolean
-  /** Hex-encoded census weight. */
-  weight?: string
 }
 
 /** One question's eligibility/vote status in {@link ProcessCheckResponse}. */
@@ -841,8 +812,7 @@ export interface ProcessQuestionStatus {
  * Response of `POST /processes/{id}/check` — the voter's status for a voting
  * process: census membership, weight, and per-question eligibility/vote status.
  * Ineligibility is reported as `belongsToProcess: false` with HTTP 200, not an
- * error. Differs from the bundle {@link CheckMembershipResponse}, which is a
- * single belongs/hasVoted pair.
+ * error.
  */
 export interface ProcessCheckResponse {
   belongsToProcess: boolean
@@ -1085,42 +1055,6 @@ export interface ValidateGroupRequest {
   twoFaFields?: OrgMemberTwoFaField[]
 }
 
-// ─── Process bundle creation ────────────────────────────────────────────────────
-
-export interface CreateProcessBundleRequest {
-  censusId: string
-  /** On-chain process ids (hex) to include in the bundle. */
-  processes: string[]
-}
-
-/** Response of `POST /process/bundle`. The bundle id is the last segment of `uri`. */
-export interface CreateProcessBundleResponse {
-  uri: string
-  root: string
-}
-
-/** Body of `POST /process/bundle/{bundleId}/participants/check`. */
-export interface BundleParticipantsCheckRequest {
-  /** Member field to match on, e.g. "memberNumber". */
-  fieldName: string
-  value: string
-  /** On-chain process id (hex). */
-  processID: string
-}
-
-export interface BundleParticipantEntry {
-  memberId: string
-  name?: string
-  surname?: string
-  email?: string
-  memberNumber?: string
-  hasVoted: boolean
-}
-
-export interface BundleParticipantsCheckResponse {
-  participants: BundleParticipantEntry[]
-}
-
 // ─── API keys (integrator) ──────────────────────────────────────────────────────
 
 export interface CreateApiKeyRequest {
@@ -1229,24 +1163,6 @@ export interface OrganizationSubscriptionInfo {
   subscriptionDetails: SubscriptionDetails
   usage: SubscriptionUsage
   plan: SubscriptionPlan
-}
-
-/** A process bundle owned by an organization (`GET /organizations/{address}/processes`). */
-export interface OrganizationBundle {
-  bundleId: string
-  primaryProcessId: string
-  processes: string[]
-}
-
-/**
- * Response of `GET /organizations/{address}/processes` (deprecated) — a
- * paginated list of the organization's bundles. Wraps the previously bare
- * `OrganizationBundle[]` the endpoint returned before backend pagination
- * landed (`apicommon.ListOrganizationBundles`).
- */
-export interface OrganizationBundlesResponse {
-  bundles: OrganizationBundle[]
-  pagination: Pagination
 }
 
 /** `GET /organizations/{address}/processes/drafts`. `processes` are raw process docs. */

@@ -37,7 +37,6 @@ client.processes    // ProcessesCspClient — VOTER CSP surface of /processes (a
 client.organizations // OrganizationsClient
 client.census       // CensusClient
 client.auth         // AuthClient
-client.bundle       // BundleClient — legacy voter CSP surface (/process/bundle/{bundleId}/*)
 client.jobs         // JobsClient
 ```
 
@@ -52,12 +51,11 @@ against — always prefer the process's own `chainId` from the (public)
 ## ProcessesCspClient (`client.processes`)
 
 The voter-facing CSP / two-factor auth flow, anchored directly to a voting
-process — the `/processes` replacement of the legacy bundle flow (no bundle
-involved). All routes are public: the voter is identified by the CSP
+process. All routes are public: the voter is identified by the CSP
 `authToken`, never by an API key.
 
 Ids to keep straight: `processId` is the process's **Mongo id** (what
-`elections.get` takes — the bundle routes 404 on it), and `electionId` in
+`elections.get` takes), and `electionId` in
 `sign()` is the **question's** on-chain Vochain id (`question.upstreamId`).
 
 Note the full process read (`client.elections.get`) is **public** for
@@ -90,8 +88,7 @@ const res1 = await client.processes.authStep1(processId, {
 await client.processes.resend(processId, { authToken, email: 'voter@example.com' })
 
 // Voter status — census membership, weight and PER-QUESTION eligibility in one
-// call (unlike bundle.check, which is one belongs/hasVoted pair per request).
-// Ineligibility is belongsToProcess=false with HTTP 200, not an error.
+// call. Ineligibility is belongsToProcess=false with HTTP 200, not an error.
 const { belongsToProcess, questions, weight } = await client.processes.check(processId, { authToken })
 // questions[i] — { questionId, upstreamId, canVote, hasVoted }
 
@@ -117,60 +114,6 @@ not wrap it — voters check their own status via `check()`/`signInfo()`.)
 
 **Census type detection** — check `census.twoFaFields` (on the public question
 read's `question.census`, or on the integrator backend's process read):
-- Empty or absent → auth-only census; step 0 returns a verified token, skip step 1.
-- Non-empty → 2FA census; step 0 returns a pending token, confirm with step 1.
-
----
-
-## BundleClient (`client.bundle`) — legacy
-
-Manages the voter-facing CSP / two-factor auth flow for a **bundle** of processes — the legacy model where an organizer groups processes sharing a census and voters authenticate against the bundle id. New deployments should use the process-scoped flow above (`client.processes`); keep using this client only for existing bundle-based setups. Note bundle ids and process Mongo ids are different id spaces — each set of routes 404s on the other's ids.
-
-```ts
-// Fetch public bundle info (chainId, processes, census config)
-const bundle = await client.bundle.get(bundleId)
-// bundle.chainId    — Vochain chain id (pass to buildVoteTransaction)
-// bundle.processes  — on-chain process ids
-// bundle.census     — { type, authFields, twoFaFields, ... }
-
-// Auth step 0 — identify the voter
-// Pass all fields the census requires (see bundle.census.authFields)
-const res0 = await client.bundle.authStep0(bundleId, {
-  memberNumber: '42',      // or: name, surname, birthDate, nationalId, email, phone
-})
-// res0.authToken — verified immediately if bundle.census.twoFaFields is empty (auth-only census)
-//               — pending verification otherwise (proceed to step 1)
-
-// Auth step 1 — confirm the 2FA OTP (skip for auth-only censuses)
-const res1 = await client.bundle.authStep1(bundleId, {
-  authToken: res0.authToken!,
-  authData: ['123456'],    // OTP as first element
-})
-// res1.authToken — the now-verified token
-
-// Resend challenge
-await client.bundle.resend(bundleId, { authToken, email: 'voter@example.com' })
-
-// Check census membership (and whether the voter already voted for a process)
-const { belongs, hasVoted, weight } = await client.bundle.check(bundleId, {
-  authToken,
-  electionId: processId,   // vochain id (question.upstreamId); omit for bundle-level check
-})
-
-// Get CSP signature over an ephemeral voter address
-const { signature, weight } = await client.bundle.sign(bundleId, {
-  authToken,
-  electionId: processId,   // vochain id
-  payload: signer.address, // hex Ethereum address from EphemeralSigner
-})
-// signature — hex CSP signature; pass to buildVoteTransaction as cspSignature
-// weight    — hex census weight; pass as cspWeight (may be undefined)
-
-// Voter's census weight without a specific process
-const { weight } = await client.bundle.weight(bundleId, { authToken })
-```
-
-**Census type detection** — check `bundle.census.twoFaFields`:
 - Empty or absent → auth-only census; step 0 returns a verified token, skip step 1.
 - Non-empty → 2FA census; step 0 returns a pending token, confirm with step 1.
 
@@ -211,8 +154,7 @@ const election = await client.elections.get(mongoId)
 //                                finalResults, results?: string[][] }) — single reads
 //                                only; a secret question's matrix stays empty until
 //                                the keys are revealed
-// election.chainId         — vochain chain id votes are signed against (omitempty;
-//                            same value as bundle.chainId).
+// election.chainId         — vochain chain id votes are signed against (omitempty).
 
 // List processes
 const { processes, pagination } = await client.elections.list({ orgAddress, page, limit, status })
@@ -328,10 +270,8 @@ const key = await client.organizations.createApiKey(org.address, {
 ```
 
 `OrganizationsClient` also covers groups CRUD, meta, subscription, and
-list-reads (censuses/bundles/drafts). See `packages/api-client/src/{census,organizations}.ts`
+list-reads (censuses/drafts). See `packages/api-client/src/{census,organizations}.ts`
 for the full set — the live `integration/full-flow.itest.ts` drives the whole flow end to end.
-Note `listBundles` now returns `{ bundles, pagination }` and takes `{ page?, limit? }`
-(the route is deprecated backend-side along with the bundle model).
 
 ---
 
@@ -380,7 +320,7 @@ The **normal SaaS user** auth flow: a signed-up user logs in with email/password
 to get a JWT, then drives the SDK under their own organization (create processes,
 etc.). This is distinct from the **integrator** flow (a `vsk_…` API key passed as
 the client's `authToken`, used to manage orgs), and from the **voter** CSP flow
-(`ProcessesCspClient`, or `BundleClient` for legacy bundles).
+(`ProcessesCspClient`).
 
 ```ts
 const session = await client.auth.login('user@example.com', 'secret')
@@ -401,7 +341,7 @@ const { addresses } = await client.auth.addresses()
 ## Key types from @vocdoni/api-types
 
 ```ts
-import type { VotingProcessResponse, VotingProcessQuestion, BallotProtocol, Bundle } from '@vocdoni/api-types'
+import type { VotingProcessResponse, VotingProcessQuestion, BallotProtocol } from '@vocdoni/api-types'
 
 // Discriminated union on `published`: drafts may lack both dates; published
 // processes always carry endDate (startDate backfill merged in saas-backend#586;
@@ -467,13 +407,6 @@ interface BallotProtocol {
   maxVoteOverwrites: number
   costExponent: number
   costFromWeight: boolean
-}
-
-interface Bundle {
-  id: string
-  chainId?: string
-  processes: string[]          // on-chain process ids
-  census?: CensusInfo
 }
 
 interface CensusInfo {

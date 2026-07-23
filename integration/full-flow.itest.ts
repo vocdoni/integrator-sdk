@@ -17,15 +17,12 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 //      — with the PII `eligibleMemberIds` stripped for non-managers; plus the
 //      public single-question read (choices/ballotProtocol/upstreamId, and the
 //      secret question's encryption keys) and the public process list
-//   6. bundles every question's on-chain process and has 3 members vote on all
-//      of them via the LEGACY bundle CSP flow (chainId from the bundle info);
-//      the secret question's ballots are sealed with its encryption keys
-//   7. asserts a distinct vote nullifier per (member, question)
-//   8. has a 4th member vote every process via the NEW process-scoped CSP flow
-//      (client.processes: authStep0 → check → sign), with chainId read straight
-//      off the PUBLIC process read — no integrator handoff needed since
-//      saas-backend#599
-//   9. reads the live per-question tallies (QuestionResults, saas-backend#596/
+//   6. has 4 members vote on every question of every process via the
+//      process-scoped CSP flow (client.processes: authStep0 → check → sign —
+//      the only voter flow; the bundle routes are gone), chainId read straight
+//      off the PUBLIC process read; the secret question's ballots are sealed
+//      with its encryption keys, and each vote resolves a distinct nullifier
+//   7. reads the live per-question tallies (QuestionResults, saas-backend#596/
 //      #599) publicly and checks the vote counts
 //
 // This is deliberately the ONLY integration suite: anything needing a live
@@ -40,7 +37,7 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 const suite = apiKey ? describe : describe.skip
 
 const MEMBER_COUNT = 100
-const VOTERS = ['1', '2', '3']
+const VOTERS = ['1', '2', '3', '4']
 
 interface ProcessSpec {
   label: string
@@ -61,7 +58,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
     'runs the whole organizer→voter flow and resolves a nullifier per vote',
     async () => {
       const admin = makeAdminClient()
-      const voterClient = makeClient() // public endpoints (bundle auth, vote, jobs)
+      const voterClient = makeClient() // public endpoints (process reads, CSP auth, vote, jobs)
       const voting = new VotingClient({ client: voterClient }) // builds, signs & relays votes
       const step = (msg: string) => console.info(`[full-flow] ${msg}`)
 
@@ -192,6 +189,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       ]
 
       const processes: ProcessSpec[] = []
+      let chainId: string | undefined
       for (const d of drafts) {
         const draftId = await admin.elections.create(d.body)
         step(`5. draft created — ${d.label} (${draftId})`)
@@ -208,8 +206,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         expect(published.status, `${d.label} not published`).toBeTruthy()
 
         // Re-fetch the merged process: each question now carries its on-chain
-        // Vochain process id as `upstreamId` (chainId lives on the bundle, not
-        // here).
+        // Vochain process id as `upstreamId`.
         let info = await admin.elections.get(draftId)
         expect(info.questions.length, `${d.label} has no questions`).toBeGreaterThan(0)
         for (const q of info.questions) {
@@ -267,6 +264,10 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         const pubInfo = await voterClient.elections.get(draftId)
         expect(pubInfo.published, `${d.label} public read is not published`).toBe(true)
         expect(pubInfo.chainId, `${d.label} public read has no chainId`).toBeTruthy()
+        // All processes must live on the same chain; the votes below sign
+        // against this value — sourced from the public read, no auth involved.
+        if (chainId) expect(pubInfo.chainId, 'chainId differs across processes').toBe(chainId)
+        chainId = pubInfo.chainId!
         expect(pubInfo.census.size, `${d.label} public read has no census size`).toBe(MEMBER_COUNT)
         expect(
           pubInfo.census.totalWeight,
@@ -300,135 +301,74 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       }
       step(`5. public process list verified — ${publicList.processes.length} published`)
 
-      // 6. One bundle holding every question's on-chain process. The bundle is
-      // also where the Vochain chainId (which the vote signature depends on)
-      // comes from.
-      const bundle = await admin.bundle.create({
-        censusId,
-        processes: processes.flatMap((p) => p.questions.map((q) => q.upstreamId!)),
-      })
-      const bundleId = bundle.bundleId
-      expect(bundleId, 'bundle has no id').toBeTruthy()
-      const bundleInfo = await voterClient.bundle.get(bundleId)
-      expect(bundleInfo.chainId, 'bundle has no chainId').toBeTruthy()
-      const chainId = bundleInfo.chainId!
-      const questionCount = processes.reduce((n, p) => n + p.questions.length, 0)
-      step(`6. bundle created — ${bundleId} (${questionCount} on-chain processes, chain ${chainId})`)
-
-      // 7. Each of 3 members votes on every question of every process.
+      // 6. Every member votes on every process through the process-scoped CSP
+      // flow (client.processes — the ONLY voter flow since the backend dropped
+      // the bundle routes). The auth token is anchored to the process (one
+      // authStep0 per member+process), the check reports every question's
+      // eligibility at once, and chainId comes straight off the PUBLIC process
+      // read (saas-backend#599) — the fully-public voter path.
       const nullifiers = new Set<string>()
+      const questionCount = processes.reduce((n, p) => n + p.questions.length, 0)
       for (const memberNumber of VOTERS) {
-        const step0 = await voterClient.bundle.authStep0(bundleId, { memberNumber })
-        const authToken = step0.authToken
-        expect(authToken, `auth failed for member ${memberNumber}`).toBeTruthy()
-        step(`7. member ${memberNumber} authenticated`)
-
         for (const p of processes) {
-          for (const question of p.questions) {
-            const processId = question.upstreamId!
-            const membership = await voterClient.bundle.check(bundleId, {
-              authToken: authToken!,
-              electionId: processId,
-            })
-            expect(membership.belongs, `member ${memberNumber} not in census`).toBe(true)
+          const auth = await voterClient.processes.authStep0(p.draftId, { memberNumber })
+          expect(auth.authToken, `auth failed (member ${memberNumber}, ${p.label})`).toBeTruthy()
 
+          const check = await voterClient.processes.check(p.draftId, { authToken: auth.authToken! })
+          expect(check.belongsToProcess, `member ${memberNumber} not in census (${p.label})`).toBe(
+            true,
+          )
+
+          for (const status of check.questions) {
+            expect(status.canVote, `member ${memberNumber} cannot vote (${p.label})`).toBe(true)
+            expect(status.hasVoted, `member ${memberNumber} already voted (${p.label})`).toBe(false)
+            expect(status.upstreamId, `check misses upstreamId (${p.label})`).toMatch(
+              /^[0-9a-f]{64}$/i,
+            )
+            const question = p.questions.find((q) => q.id === status.questionId)
+            expect(question, `check reported unknown question ${status.questionId}`).toBeTruthy()
+
+            // CSP sign over a fresh ephemeral address, then build + seal (for
+            // secret questions) + relay through the public VotingClient, and
+            // poll the relay job for the vote nullifier.
             const signer = new EphemeralSigner()
-            const sign = await voterClient.bundle.sign(bundleId, {
-              authToken: authToken!,
-              electionId: processId,
+            const sign = await voterClient.processes.sign(p.draftId, {
+              authToken: auth.authToken!,
+              electionId: status.upstreamId!,
               payload: signer.address,
             })
             expect(sign.signature, `no CSP signature (${p.label})`).toBeTruthy()
 
-            // Build + sign + relay through the public VotingClient — the path an
-            // integrator uses. It returns the relay job id to poll for the
-            // nullifier. Secret questions pass their per-question encryption
-            // keys, which seals the ballot (NaCl SealedBox) before relay.
             const jobId = await voting.vote({
-              processId,
+              processId: status.upstreamId!,
               choices: p.choices,
-              chainId,
+              chainId: chainId!,
               signer,
               cspSignature: sign.signature!,
               cspWeight: sign.weight,
-              encryptionKeys: question.secretUntilTheEnd ? question.encryptionKeys : undefined,
+              encryptionKeys: question!.secretUntilTheEnd ? question!.encryptionKeys : undefined,
             })
-            const job = await voterClient.jobs.waitFor(jobId, {
-              timeoutMs: 90000,
-              intervalMs: 2000,
-            })
+            const job = await voterClient.jobs.waitFor(jobId, { timeoutMs: 90000, intervalMs: 2000 })
             expect(job.status, `vote relay failed (${p.label})`).toBe('completed')
             const nullifier = job.result?.voteID
             expect(nullifier, `no nullifier (${p.label}, member ${memberNumber})`).toBeTruthy()
             expect(nullifiers.has(nullifier!), 'duplicate nullifier').toBe(false)
             nullifiers.add(nullifier!)
-            step(`7. vote emitted — member ${memberNumber} on ${p.label} → ${nullifier!.slice(0, 12)}…`)
+            step(`6. vote emitted — member ${memberNumber} on ${p.label} → ${nullifier!.slice(0, 12)}…`)
           }
         }
       }
 
-      // 8. The bundle-less voter path (client.processes — ProcessesCspClient):
-      // member 4 votes every process through the process-scoped CSP flow. The
-      // auth token is anchored to the process (one per process), and chainId
-      // comes straight off the PUBLIC process read — the fully-public voter
-      // flow saas-backend#599 enables (no integrator handoff).
-      const PROCESS_FLOW_VOTER = '4'
-      for (const p of processes) {
-        const procInfo = await voterClient.elections.get(p.draftId)
-        expect(procInfo.chainId, `${p.label} has no chainId on the public read`).toBe(chainId)
+      expect(nullifiers.size).toBe(VOTERS.length * questionCount)
 
-        const auth = await voterClient.processes.authStep0(p.draftId, {
-          memberNumber: PROCESS_FLOW_VOTER,
-        })
-        expect(auth.authToken, `process auth failed (${p.label})`).toBeTruthy()
-
-        const check = await voterClient.processes.check(p.draftId, { authToken: auth.authToken! })
-        expect(check.belongsToProcess, `member 4 not in process census (${p.label})`).toBe(true)
-
-        for (const status of check.questions) {
-          expect(status.canVote, `member 4 cannot vote (${p.label})`).toBe(true)
-          expect(status.hasVoted, `member 4 already voted (${p.label})`).toBe(false)
-          expect(status.upstreamId, `check misses upstreamId (${p.label})`).toMatch(/^[0-9a-f]{64}$/i)
-          const question = p.questions.find((q) => q.id === status.questionId)
-          expect(question, `check reported unknown question ${status.questionId}`).toBeTruthy()
-
-          const signer = new EphemeralSigner()
-          const sign = await voterClient.processes.sign(p.draftId, {
-            authToken: auth.authToken!,
-            electionId: status.upstreamId!,
-            payload: signer.address,
-          })
-          expect(sign.signature, `no CSP signature via process flow (${p.label})`).toBeTruthy()
-
-          const jobId = await voting.vote({
-            processId: status.upstreamId!,
-            choices: p.choices,
-            chainId,
-            signer,
-            cspSignature: sign.signature!,
-            cspWeight: sign.weight,
-            encryptionKeys: question!.secretUntilTheEnd ? question!.encryptionKeys : undefined,
-          })
-          const job = await voterClient.jobs.waitFor(jobId, { timeoutMs: 90000, intervalMs: 2000 })
-          expect(job.status, `process-flow vote relay failed (${p.label})`).toBe('completed')
-          const nullifier = job.result?.voteID
-          expect(nullifier, `no nullifier (process flow, ${p.label})`).toBeTruthy()
-          expect(nullifiers.has(nullifier!), 'duplicate nullifier (process flow)').toBe(false)
-          nullifiers.add(nullifier!)
-          step(`8. process-flow vote — member 4 on ${p.label} → ${nullifier!.slice(0, 12)}…`)
-        }
-      }
-
-      expect(nullifiers.size).toBe((VOTERS.length + 1) * questionCount)
-
-      // 9. Live results (saas-backend#596 + #599): tallies are public and live —
+      // 7. Live results (saas-backend#596 + #599): tallies are public and live —
       // no RESULTS status needed. Poll `GET /processes/{id}/results` until every
-      // question's voteCount reflects all 4 voters (the chain indexer may lag a
+      // question's voteCount reflects every voter (the chain indexer may lag a
       // few blocks behind the relay jobs), then check the tally shape: live
       // (finalResults=false), maxVoters = census size, and a decodable matrix
       // for cleartext questions — a secret question's matrix stays hidden until
       // the encryption keys are revealed at the end.
-      const VOTES_PER_QUESTION = VOTERS.length + 1
+      const VOTES_PER_QUESTION = VOTERS.length
       for (const p of processes) {
         let results = await voterClient.elections.getResults(p.draftId)
         const deadline = Date.now() + 120000
@@ -455,7 +395,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             VOTES_PER_QUESTION,
           )
         }
-        step(`9. live results verified — ${p.label} (${VOTES_PER_QUESTION} votes per question)`)
+        step(`7. live results verified — ${p.label} (${VOTES_PER_QUESTION} votes per question)`)
       }
 
       step(`done — ${nullifiers.size} votes cast across ${questionCount} on-chain processes`)

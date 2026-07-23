@@ -53,9 +53,9 @@ await client.elections.vote({ txPayload })
 |---|---|---|---|
 | `processId` | `string` | yes | On-chain (Vochain) hex id for ONE question — `question.upstreamId` from `VotingProcessResponse.questions[i]`, not the process's Mongo `id` |
 | `choices` | `number[]` | yes | Ballot values for that one question — see "Choices format" below |
-| `chainId` | `string` | yes | From `election.chainId` on the public process read (`client.elections.get` — published processes need no auth; legacy flows: public `bundle.chainId`). There is no per-question `chainId`, and `client.info().chainId` is NOT a substitute (it's the service's current chain, not the process's) |
+| `chainId` | `string` | yes | From `election.chainId` on the public process read (`client.elections.get` — published processes need no auth). There is no per-question `chainId`, and `client.info().chainId` is NOT a substitute (it's the service's current chain, not the process's) |
 | `signer` | `EphemeralSigner` | yes | Fresh per-vote ephemeral keypair |
-| `cspSignature` | `string` | yes | Hex signature from `processes.sign()` (legacy flows: `bundle.sign()`) |
+| `cspSignature` | `string` | yes | Hex signature from `processes.sign()` |
 | `cspWeight` | `string` | no | Hex census weight from the same sign response; omit if absent |
 | `encryptionKeys` | `EncryptionKey[]` | no | Required when `question.secretUntilTheEnd` is `true`; see "Encrypted elections" below for how keys are sourced |
 | `proofType` | `ProofCA_Type` | no | Defaults to `ECDSA_PIDSALTED` (correct for all SaaS CSP processes) |
@@ -70,7 +70,7 @@ Generates a fresh secp256k1 keypair per vote. The CSP signs its Ethereum address
 import { EphemeralSigner } from '@vocdoni/api-voting'
 
 const signer = new EphemeralSigner()
-signer.address    // '0x...' — pass to processes.sign() (or bundle.sign()) as `payload`
+signer.address    // '0x...' — pass to processes.sign() as `payload`
 signer.publicKey  // Uint8Array (65 bytes, uncompressed)
 signer.privateKey // Uint8Array (32 bytes) — ephemeral, safe to discard after the vote
 ```
@@ -198,5 +198,5 @@ const opened = BallotEncryptor.open(sealed, recipientPk, recipientSk)
 ## Cross-references
 
 - [[integrator-sdk]] — overview and vote flow sequence
-- [[client]] — `ProcessesCspClient` (auth, check, sign — bundle-less), `BundleClient` (legacy), `JobsClient` (waitFor), `ElectionsClient` (vote relay)
+- [[client]] — `ProcessesCspClient` (auth, check, sign), `JobsClient` (waitFor), `ElectionsClient` (vote relay)
 - [[react]] — `useElection().vote()` automates this entire flow in React

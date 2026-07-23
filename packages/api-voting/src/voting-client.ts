@@ -24,7 +24,7 @@ export interface VotingClientOptions {
  *
  * The client is injected once at construction; `vote()` knows it relays through
  * `client.elections.vote`. The CSP signature (and weight) must already have been
- * obtained from the bundle sign endpoint; relaying returns an async job id whose
+ * obtained from the CSP sign endpoint; relaying returns an async job id whose
  * completion yields the vote nullifier (poll GET /jobs/{jobId}).
  */
 export class VotingClient {

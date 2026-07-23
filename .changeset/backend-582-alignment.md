@@ -21,8 +21,6 @@ backend anyway):
 - `JobStatusResponse.error` (string) is now `errors?: string[]`;
   `JobFailedError` joins them into its message. `JobType` gains
   `set_process_census` and `publish_voting_process`.
-- `organizations.listBundles` returns the paginated
-  `{ bundles, pagination }` wrapper and accepts `{ page?, limit? }`.
 - Integrator quota types match the backend again: `IntegratorLimits` is
   `{ maxManagedOrgs, maxManagedProcesses, maxVotes, maxSMS, maxEmails }`
   (0 = unlimited), `IntegratorUsage` is

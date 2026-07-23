@@ -22,9 +22,9 @@ describe('admin / integrator client methods', () => {
         }),
       )
 
-      const org = await client.organizations.createManaged({ type: 'company', meta: { name: 'Acme Corp' } })
+      const org = await client.organizations.createManaged({ name: 'Acme Corp', type: 'company' })
       expect(org.address).toBe(ORG)
-      expect(body).toEqual({ type: 'company', meta: { name: 'Acme Corp' } })
+      expect(body).toEqual({ name: 'Acme Corp', type: 'company' })
     })
   })
 
@@ -344,25 +344,6 @@ describe('admin / integrator client methods', () => {
     })
   })
 
-  describe('bundle.create', () => {
-    it('POSTs the census + processes and parses the bundle id from the uri', async () => {
-      let body: unknown
-      server.use(
-        http.post(`${BASE_URL}/process/bundle`, async ({ request }) => {
-          body = await request.json()
-          return HttpResponse.json({
-            uri: `${BASE_URL}/process/bundle/bundle-xyz`,
-            root: '0xroot',
-          })
-        }),
-      )
-
-      const res = await client.bundle.create({ censusId: 'c1', processes: ['0xa', '0xb'] })
-      expect(res.bundleId).toBe('bundle-xyz')
-      expect(res.root).toBe('0xroot')
-      expect(body).toEqual({ censusId: 'c1', processes: ['0xa', '0xb'] })
-    })
-  })
 })
 
 
@@ -527,28 +508,6 @@ describe('workstream C: new methods and list fixes', () => {
       await expect(
         client.elections.validateCensus({ orgAddress: ORG, census: { groupId: 'g1' } }),
       ).rejects.toThrow('invalid census')
-    })
-  })
-
-  describe('organizations.listBundles', () => {
-    it('sends page/limit query params and parses the { bundles, pagination } wrapper', async () => {
-      let query: URLSearchParams | undefined
-      server.use(
-        http.get(`${BASE_URL}/organizations/${ORG}/processes`, ({ request }) => {
-          query = new URL(request.url).searchParams
-          return HttpResponse.json({
-            bundles: [{ bundleId: 'b-1', primaryProcessId: '0xa', processes: ['0xa'] }],
-            pagination: { totalItems: 1, previousPage: null, currentPage: 1, nextPage: null, lastPage: 1 },
-          })
-        }),
-      )
-
-      const res = await client.organizations.listBundles(ORG, { page: 2, limit: 5 })
-      expect(query?.get('page')).toBe('2')
-      expect(query?.get('limit')).toBe('5')
-      expect(res.bundles).toHaveLength(1)
-      expect(res.bundles[0].bundleId).toBe('b-1')
-      expect(res.pagination.totalItems).toBe(1)
     })
   })
 

@@ -19,13 +19,13 @@ export interface BuildVoteTransactionOptions {
   chainId: string
   /** Ephemeral signer whose address was signed by the CSP. */
   signer: EphemeralSigner
-  /** CSP signature (hex) returned by the bundle sign endpoint. */
+  /** CSP signature (hex) returned by the process sign endpoint. */
   cspSignature: string
   /** Hex-encoded census weight returned alongside the CSP signature. */
   cspWeight?: string
   /** Election encryption keys, for secretUntilTheEnd elections. */
   encryptionKeys?: EncryptionKey[]
-  /** CSP proof type. Defaults to ECDSA_PIDSALTED (the SaaS bundle signer). */
+  /** CSP proof type. Defaults to ECDSA_PIDSALTED (the SaaS CSP signer). */
   proofType?: ProofCA_Type
 }
 

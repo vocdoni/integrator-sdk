@@ -22,20 +22,20 @@ export {
   type OrganizationProviderProps,
 } from './organization/OrganizationProvider'
 
-// ─── Bundle ───────────────────────────────────────────────────────────────────
+// ─── Process (CSP voter session) ──────────────────────────────────────────────
 export {
-  BundleProvider,
-  useBundle,
-  useBundleOptional,
-  type BundleContextValue,
-  type BundleProviderProps,
-  type BundleSignResult,
-} from './bundle/BundleProvider'
+  ProcessProvider,
+  processQueryKeys,
+  useProcess,
+  useProcessOptional,
+  type ProcessContextValue,
+  type ProcessProviderProps,
+  type ProcessSignResult,
+} from './process/ProcessProvider'
 
 // ─── Election ─────────────────────────────────────────────────────────────────
 export {
   ElectionProvider,
-  electionQueryKeys,
   useElection,
   type ElectionContextValue,
   type ElectionProviderProps,

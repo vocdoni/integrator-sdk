@@ -28,8 +28,8 @@ The providers compose from the top down, each one exposing a matching hook:
 - **`OrganizationProvider`** / `useOrganization` — the current organization and its data.
 - **`ElectionProvider`** / `useElection` and **`ActionsProvider`** / `useActions` — a single
   election plus the actions (vote, etc.) available on it.
-- **`BundleProvider`** / `useBundle` — the voter-facing CSP auth flow for a bundle of
-  processes.
+- **`ProcessProvider`** / `useProcess` — the voter-facing CSP auth flow for a voting
+  process.
 
 If you also want ready-made UI, use [`@vocdoni/react-components`](../react-components), which
 re-exports everything here.

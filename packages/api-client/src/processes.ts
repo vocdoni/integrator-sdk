@@ -18,9 +18,7 @@ import { handleError } from './errors'
 /**
  * Voter-side client for the process-scoped CSP routes
  * (`/processes/{processId}/auth|check|sign|weight|sign-info` and the public
- * question read). This is the `/processes` replacement of the legacy
- * {@link BundleClient} flow — no bundle is involved; the auth token is anchored
- * directly to the voting process.
+ * question read). The auth token is anchored directly to the voting process.
  *
  * Not to be confused with `client.elections` ({@link ElectionsClient}), which
  * wraps the ADMIN side of the same `/processes/{id}` resource (create, publish,
@@ -28,8 +26,7 @@ import { handleError } from './errors'
  * public: the voter is identified by the CSP `authToken`, never by an API key.
  *
  * Ids to keep straight:
- * - `processId` is the process's Mongo ObjectID (the id `elections.get` takes),
- *   NOT a bundle id — the bundle routes 404 on it and vice versa.
+ * - `processId` is the process's Mongo ObjectID (the id `elections.get` takes).
  * - `electionId` in {@link sign} is the QUESTION's on-chain Vochain election id
  *   (`question.upstreamId` from the process read), not the process id.
  *

@@ -21,8 +21,7 @@
  * is public for published processes (drafts 404 to non-managers) and provides
  * everything the voter app needs — the chainId vote signatures are bound to,
  * the census auth shape, and the questions. The CSP flow lives on
- * `client.processes` (ProcessesCspClient). The legacy bundle equivalent
- * (`client.bundle`) only applies to organizer-created bundles.
+ * `client.processes` (ProcessesCspClient).
  *
  * Prerequisites:
  *   pnpm add @vocdoni/api-client @vocdoni/api-voting @vocdoni/ballot
@@ -76,10 +75,8 @@ if (CENSUS_HAS_2FA) {
 }
 
 // ─── 2. Check — membership + per-question eligibility in ONE call ────────────
-// Unlike the legacy bundle check (one belongs/hasVoted pair per request), the
-// process check reports every question at once — including each question's id
-// and its on-chain Vochain id (upstreamId), so no authed process read is needed
-// to discover them.
+// The process check reports every question at once — including each question's
+// id and its on-chain Vochain id (upstreamId).
 
 const check = await client.processes.check(PROCESS_ID, { authToken })
 if (!check.belongsToProcess) throw new Error('Voter is not in this census')
