@@ -1,6 +1,6 @@
 import type { BallotProtocol, Choice, Election, Question } from '@vocdoni/api-types'
 import { BallotType, type DecodedResults, type DecodedQuestionResults } from './types.js'
-import { inferBallotType, inferQuestionBallotType } from './infer.js'
+import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
 
 /**
  * Decode a raw Vocdoni results matrix into per-question / per-choice tallies.
@@ -96,7 +96,18 @@ export function decodeQuestionResults(
   question: { ballotProtocol?: BallotProtocol; type?: string; choices: Choice[] },
   results: string[][]
 ): DecodedQuestionResults {
-  const ballotType = inferQuestionBallotType(question)
+  let ballotType = inferQuestionBallotType(question)
+  // A named multichoice question with a dense protocol keeps the MultiChoice
+  // *label* (for UI purposes), but its results matrix is the dense per-choice
+  // [notSelected, selected] histogram — decode it as approval, not pick-slot.
+  // Public reads of named-type questions may omit the protocol entirely; the
+  // named type always derives the dense layout, so decode dense then too.
+  if (
+    ballotType === BallotType.MultiChoice &&
+    (!question.ballotProtocol || isDenseBallotProtocol(question.ballotProtocol))
+  ) {
+    ballotType = BallotType.Approval
+  }
   const fakeQuestion: Question = { title: { default: '' }, choices: question.choices }
   return decodeQuestion(ballotType, fakeQuestion, 0, results)
 }

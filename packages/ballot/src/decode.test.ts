@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Election } from '@vocdoni/api-types'
-import { decodeResults } from './decode.js'
+import { decodeQuestionResults, decodeResults } from './decode.js'
 
 const vt =(partial: Partial<Election['voteType']>): Election['voteType'] => ({
   maxCount: 1,
@@ -230,5 +230,68 @@ describe('decodeResults', () => {
       expect(decoded).toHaveLength(2)
       expect(decoded.every((q) => q.every((c) => c.votes === 0))).toBe(true)
     })
+  })
+})
+
+describe('decodeQuestionResults', () => {
+  const bp = (overrides: Record<string, number | boolean> = {}) => ({
+    maxCount: 1,
+    maxValue: 1,
+    maxVoteOverwrites: 0,
+    maxTotalCost: 0,
+    costExponent: 1,
+    uniqueValues: false,
+    costFromWeight: false,
+    ...overrides,
+  })
+  const choices = Array.from({ length: 3 }, (_, j) => ({ title: { default: `C${j}` }, value: j }))
+
+  it('decodes a dense named-multichoice matrix per choice, not as pick-slots', () => {
+    // Dense layout: one row per choice, [notSelected, selected]. 4 voters:
+    // A picked by 1, B by 0, C by 2. The pick-slot decoder would instead sum
+    // histogram columns by choice value and invent an abstain bucket.
+    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: true })
+    const decoded = decodeQuestionResults(
+      { ballotProtocol: dense, type: 'multichoice', choices },
+      [
+        ['3', '1'],
+        ['4', '0'],
+        ['2', '2'],
+      ]
+    )
+    expect(decoded).toEqual([
+      { choice: 0, votes: 1, percentage: (1 / 3) * 100 },
+      { choice: 1, votes: 0, percentage: 0 },
+      { choice: 2, votes: 2, percentage: (2 / 3) * 100 },
+    ])
+  })
+
+  it('decodes a protocol-less named multichoice question as dense', () => {
+    // Public reads of named-type questions may omit the derived protocol —
+    // the named type still implies the dense per-choice layout.
+    const decoded = decodeQuestionResults({ type: 'multichoice', choices }, [
+      ['3', '1'],
+      ['4', '0'],
+      ['2', '2'],
+    ])
+    expect(decoded.map((c) => c.votes)).toEqual([1, 0, 2])
+  })
+
+  it('still decodes pick-slot protocols by choice-value columns', () => {
+    // Legacy pick-slot: 2 slots over 3 choices, abstain sentinels at values >= 3.
+    const pickSlot = bp({ maxCount: 2, maxValue: 4, maxTotalCost: 0, uniqueValues: true })
+    const decoded = decodeQuestionResults(
+      { ballotProtocol: pickSlot, type: 'multichoice', choices },
+      [
+        ['2', '0', '1', '0', '0'],
+        ['0', '1', '1', '1', '0'],
+      ]
+    )
+    expect(decoded).toEqual([
+      { choice: 0, votes: 2, percentage: (2 / 6) * 100 },
+      { choice: 1, votes: 1, percentage: (1 / 6) * 100 },
+      { choice: 2, votes: 2, percentage: (2 / 6) * 100 },
+      { choice: 'abstain', votes: 1, percentage: (1 / 6) * 100 },
+    ])
   })
 })

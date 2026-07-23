@@ -65,15 +65,18 @@ describe('inferBallotType', () => {
       })
     })
 
-    describe('Approval (maxValue === 1 && !uniqueChoices)', () => {
+    describe('Approval (maxValue === 1)', () => {
       it('infers approval when maxValue === 1 and uniqueChoices === false', () => {
         const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: false })
         expect(inferBallotType(election)).toBe(BallotType.Approval)
       })
 
-      it('does not infer approval when uniqueChoices === true', () => {
+      it('infers approval when maxValue === 1 even with uniqueChoices === true', () => {
+        // maxValue === 1 is always the dense 0/1 layout — a pick-slot layout needs
+        // maxValue >= numChoices - 1 to address every choice. uniqueChoices does not
+        // change the wire format.
         const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: true })
-        expect(inferBallotType(election)).toBe(BallotType.MultiChoice)
+        expect(inferBallotType(election)).toBe(BallotType.Approval)
       })
     })
 
@@ -83,8 +86,8 @@ describe('inferBallotType', () => {
         expect(inferBallotType(election)).toBe(BallotType.MultiChoice)
       })
 
-      it('infers multichoice when uniqueChoices === true and maxValue === 1', () => {
-        const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: true })
+      it('infers multichoice for pick-slot shapes regardless of uniqueChoices', () => {
+        const election = createElection({ maxCount: 2, maxValue: 4, uniqueChoices: true })
         expect(inferBallotType(election)).toBe(BallotType.MultiChoice)
       })
 
@@ -142,6 +145,29 @@ describe('inferQuestionBallotType', () => {
     expect(
       inferQuestionBallotType({ ballotProtocol: bp(), type: 'multichoice' })
     ).toBe(BallotType.SingleChoice)
+  })
+
+  describe('dense protocols (maxValue === 1, maxCount > 1)', () => {
+    // The backend derives this shape for the named multichoice type: one 0/1 field
+    // per choice, maxTotalCost bounding the picks. The named type keeps its semantic
+    // MultiChoice label; anything else is approval. uniqueValues never changes the
+    // inferred type — the wire layout is dense either way.
+    const dense = (uniqueValues: boolean) =>
+      bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues })
+
+    it('keeps the MultiChoice label for named multichoice questions', () => {
+      expect(
+        inferQuestionBallotType({ ballotProtocol: dense(true), type: 'multichoice' })
+      ).toBe(BallotType.MultiChoice)
+      expect(
+        inferQuestionBallotType({ ballotProtocol: dense(false), type: 'multichoice' })
+      ).toBe(BallotType.MultiChoice)
+    })
+
+    it('infers approval for dense protocols without the multichoice type', () => {
+      expect(inferQuestionBallotType({ ballotProtocol: dense(false) })).toBe(BallotType.Approval)
+      expect(inferQuestionBallotType({ ballotProtocol: dense(true) })).toBe(BallotType.Approval)
+    })
   })
 
   it('falls back to the named type when ballotProtocol is missing', () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Election } from '@vocdoni/api-types'
-import { multichoiceReservesAbstain } from './abstain.js'
+import { multichoiceReservesAbstain, questionSelectionRange } from './abstain.js'
 
 const vt = (partial: Partial<Election['voteType']>): Election['voteType'] => ({
   maxCount: 1,
@@ -42,5 +42,77 @@ describe('multichoiceReservesAbstain', () => {
     // numChoices 3, uniqueChoices true, maxCount 3 → needed = 3 - 1 + 3 = 5
     expect(multichoiceReservesAbstain({ voteType: vt({ maxCount: 3, maxValue: 5, uniqueChoices: true }), questions: question(3) })).toBe(true)
     expect(multichoiceReservesAbstain({ voteType: vt({ maxCount: 3, maxValue: 4, uniqueChoices: true }), questions: question(3) })).toBe(false)
+  })
+})
+
+describe('questionSelectionRange', () => {
+  const bp = (overrides: Record<string, number | boolean> = {}) => ({
+    maxCount: 1,
+    maxValue: 1,
+    maxVoteOverwrites: 0,
+    maxTotalCost: 0,
+    costExponent: 1,
+    uniqueValues: false,
+    costFromWeight: false,
+    ...overrides,
+  })
+  const choices = Array.from({ length: 3 }, (_, j) => ({ title: { default: `C${j}` }, value: j }))
+
+  it('dense multichoice: max is maxTotalCost, min defaults to 1', () => {
+    // Backend derivation for the named type: maxCount = numChoices, maxValue = 1,
+    // maxTotalCost = maxChoices. maxCount is NOT the pick bound here.
+    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: true })
+    expect(questionSelectionRange({ ballotProtocol: dense, type: 'multichoice', choices })).toEqual({
+      min: 1,
+      max: 2,
+    })
+  })
+
+  it('dense multichoice: min comes from typeSetup.minChoices when present', () => {
+    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 3, uniqueValues: true })
+    expect(
+      questionSelectionRange({
+        ballotProtocol: dense,
+        type: 'multichoice',
+        typeSetup: { maxChoices: 3, minChoices: 2, uniqueChoices: true },
+        choices,
+      })
+    ).toEqual({ min: 2, max: 3 })
+  })
+
+  it('dense multichoice: works without a ballotProtocol (typeSetup bounds)', () => {
+    // Public reads of named-type questions may omit the derived protocol.
+    expect(
+      questionSelectionRange({
+        type: 'multichoice',
+        typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: false },
+        choices,
+      })
+    ).toEqual({ min: 1, max: 2 })
+    expect(questionSelectionRange({ type: 'multichoice', choices })).toEqual({ min: 1, max: 3 })
+  })
+
+  it('dense multichoice: falls back to numChoices when maxTotalCost is 0', () => {
+    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 0 })
+    expect(questionSelectionRange({ ballotProtocol: dense, type: 'multichoice', choices })).toEqual({
+      min: 1,
+      max: 3,
+    })
+  })
+
+  it('pick-slot multichoice: max is maxCount, min depends on abstain reservation', () => {
+    // Reserves abstain (maxValue 4 >= 3 - 1 + 2): partial picks allowed.
+    const withAbstain = bp({ maxCount: 2, maxValue: 4, uniqueValues: true })
+    expect(questionSelectionRange({ ballotProtocol: withAbstain, choices })).toEqual({ min: 1, max: 2 })
+    // No abstain reservation: must fill every slot.
+    const withoutAbstain = bp({ maxCount: 2, maxValue: 2, uniqueValues: false })
+    expect(questionSelectionRange({ ballotProtocol: withoutAbstain, choices })).toEqual({ min: 2, max: 2 })
+  })
+
+  it('single-choice: exactly one', () => {
+    expect(questionSelectionRange({ ballotProtocol: bp({ maxCount: 1, maxValue: 2 }), choices })).toEqual({
+      min: 1,
+      max: 1,
+    })
   })
 })

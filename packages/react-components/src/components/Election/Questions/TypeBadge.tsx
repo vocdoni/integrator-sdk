@@ -1,5 +1,5 @@
 import type { VotingProcessQuestion } from '@vocdoni/api-types'
-import { BallotType, inferQuestionBallotType } from '@vocdoni/ballot'
+import { BallotType, inferQuestionBallotType, questionSelectionRange } from '@vocdoni/ballot'
 import { ComponentPropsWithoutRef } from 'react'
 import { useComponents } from '../../context/useComponents'
 import { useReactComponentsLocalize } from '../../../i18n/localize'
@@ -22,7 +22,9 @@ export const QuestionsTypeBadge = ({ question: questionProp, ...props }: Questio
     return null
   }
 
-  const maxCount = question.ballotProtocol?.maxCount ?? 1
+  // The pick bound, not ballotProtocol.maxCount — on the dense layout maxCount is
+  // the number of choices, and the bound lives in maxTotalCost.
+  const maxCount = questionSelectionRange(question).max
   const weighted = ''
 
   let title = ''

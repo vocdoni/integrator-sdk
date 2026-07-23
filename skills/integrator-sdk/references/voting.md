@@ -123,6 +123,11 @@ choices: [1, 0, 1, 0]
 
 For approval questions that cap the number of approvals, `ballotProtocol.maxTotalCost = N` enforces the count on-chain.
 
+This is also the layout the backend derives for the named `multichoice`
+question type (`maxTotalCost = typeSetup.maxChoices`). `maxValue = 1` always
+means this binary format — `uniqueValues` does not change the wire layout, and
+`encodeQuestionBallot` encodes it as the dense 0/1 vector either way.
+
 ### Ranked / rated (unique values)
 
 `ballotProtocol.maxCount = numOptions`, `ballotProtocol.maxValue = maxRank`,

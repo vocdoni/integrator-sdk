@@ -1,6 +1,6 @@
-import type { BallotProtocol, Choice, Election, VoteType } from '@vocdoni/api-types'
+import type { BallotProtocol, Choice, Election, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
 import { BallotType } from './types.js'
-import { inferBallotType, inferQuestionBallotType } from './infer.js'
+import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
 
 /**
  * Lowest `maxValue` a multichoice election must reserve so that a partial selection
@@ -51,9 +51,22 @@ export function questionReservesAbstain(question: {
 /** Selection range for a per-question multichoice ballot. */
 export function questionSelectionRange(question: {
   ballotProtocol?: BallotProtocol
+  type?: string
+  typeSetup?: QuestionTypeSetup
   choices: Choice[]
 }): { min: number; max: number } {
-  const max = question.ballotProtocol?.maxCount ?? 1
+  const bp = question.ballotProtocol
+  // Dense layout (named multichoice, protocol optionally omitted on public
+  // reads): maxCount is the number of choices, not the pick bound — picks are
+  // bounded by maxTotalCost (maxChoices at creation), and a partial selection
+  // is always encodable (unpicked choices are just 0 fields, no sentinel
+  // reservation involved).
+  if ((bp && isDenseBallotProtocol(bp)) || (!bp && question.type === 'multichoice')) {
+    const max = bp?.maxTotalCost || question.typeSetup?.maxChoices || question.choices.length
+    const min = Math.min(max, Math.max(1, question.typeSetup?.minChoices ?? 1))
+    return { min, max }
+  }
+  const max = bp?.maxCount ?? 1
   const min = questionReservesAbstain(question) ? 1 : max
   return { min, max }
 }

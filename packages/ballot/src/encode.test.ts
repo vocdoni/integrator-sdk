@@ -278,11 +278,55 @@ describe('encodeQuestionBallot', () => {
     })
   })
 
-  it('throws for a multichoice named type without a ballotProtocol', () => {
-    // Type-only questions can be classified but not encoded: the slot count and
-    // abstain reservation live in the protocol.
-    expect(() => encodeQuestionBallot({ type: 'multichoice', choices }, [0, 1])).toThrow(
-      /no ballotProtocol/
-    )
+  it('encodes a multichoice named type without a ballotProtocol as dense', () => {
+    // Public reads of named-type questions may omit the derived protocol; the
+    // named type fully determines the dense layout, with the pick bound coming
+    // from typeSetup.
+    expect(encodeQuestionBallot({ type: 'multichoice', choices }, [0, 2])).toEqual([1, 0, 1])
+    expect(
+      encodeQuestionBallot(
+        { type: 'multichoice', typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: false }, choices },
+        [1]
+      )
+    ).toEqual([0, 1, 0])
+    expect(() =>
+      encodeQuestionBallot(
+        { type: 'multichoice', typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: false }, choices },
+        [0, 1, 2]
+      )
+    ).toThrow(/at most 2/)
+  })
+
+  describe('dense multichoice (the backend derivation for the named type)', () => {
+    // Named multichoice derives maxCount = numChoices, maxValue = 1, and
+    // maxTotalCost = maxChoices — a dense 0/1 field per choice. Pick-slot values
+    // (choice values + abstain sentinels) would exceed maxValue and get silently
+    // discarded by the chain at tally.
+    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: true })
+
+    it('encodes picks as a dense 0/1 vector, not pick-slots', () => {
+      expect(
+        encodeQuestionBallot({ ballotProtocol: dense, type: 'multichoice', choices }, [0, 2])
+      ).toEqual([1, 0, 1])
+    })
+
+    it('encodes a partial selection without abstain sentinels', () => {
+      expect(
+        encodeQuestionBallot({ ballotProtocol: dense, type: 'multichoice', choices }, [1])
+      ).toEqual([0, 1, 0])
+    })
+
+    it('throws when the selection exceeds maxTotalCost', () => {
+      expect(() =>
+        encodeQuestionBallot({ ballotProtocol: dense, type: 'multichoice', choices }, [0, 1, 2])
+      ).toThrow(/at most 2/)
+    })
+
+    it('encodes dense for uniqueValues === false the same way', () => {
+      const repeatable = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: false })
+      expect(
+        encodeQuestionBallot({ ballotProtocol: repeatable, type: 'multichoice', choices }, [0, 2])
+      ).toEqual([1, 0, 1])
+    })
   })
 })

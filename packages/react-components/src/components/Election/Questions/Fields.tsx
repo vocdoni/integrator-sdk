@@ -85,7 +85,9 @@ const MultiChoice = ({
   const { control, trigger } = useFormContext()
   const { QuestionsError } = useComponents()
 
-  const maxCount = question.ballotProtocol?.maxCount ?? 1
+  // The pick bound, not ballotProtocol.maxCount — on the dense layout maxCount is
+  // the number of choices, and the bound lives in maxTotalCost.
+  const { max: maxCount } = questionSelectionRange(question)
   const disabled = status !== 'ONGOING' || !isAbleToVote
 
   return (

@@ -9,9 +9,9 @@ import { BallotType } from './types.js'
  * 2. Else if voteType.maxValue === 0 → budget (costExponent === 1) | quadratic (costExponent === 2)
  * 3. Else (single question):
  *    - If voteType.maxCount === 1 → single-choice (pick one of N)
- *    - If voteType.maxValue === 1 && !voteType.uniqueChoices → approval (dense 0/1 per option)
+ *    - If voteType.maxValue === 1 → approval (dense 0/1 per option), regardless of uniqueChoices
  *    - Otherwise → multichoice (maxValue = numChoices-1, list of picks)
- * 
+ *
  * Assumptions:
  * - Approval/multichoice/budget/quadratic are single-question (questions.length === 1)
  * - Multi-question implies single-choice-per-question
@@ -39,10 +39,15 @@ export function inferBallotType(input: Pick<Election, 'questions' | 'voteType'>)
     return BallotType.SingleChoice
   }
 
-  // Rule 3b: approval = dense 0/1 vector when maxValue === 1 and uniqueChoices is false.
+  // Rule 3b: approval = dense 0/1 vector when maxValue === 1, regardless of uniqueChoices.
   // (Encoding confirmed correct vs the vochain scrutinizer — a dense 0/1 vector, NOT the
   // legacy Form.tsx index list, which is buggy for >2 options.)
-  if (voteType.maxValue === 1 && !voteType.uniqueChoices) {
+  // A pick-slot layout needs maxValue >= numChoices - 1 to address every choice, so
+  // maxValue === 1 can only ever be the dense layout. uniqueChoices does not change the
+  // wire format — the scrutinizer applies it to raw field values, which makes it
+  // unsatisfiable for dense multi-pick ballots; that is an election-config bug the
+  // codec cannot route around by switching layouts.
+  if (voteType.maxValue === 1) {
     return BallotType.Approval
   }
 
@@ -52,7 +57,10 @@ export function inferBallotType(input: Pick<Election, 'questions' | 'voteType'>)
 
 /**
  * Infer the ballot type for a single question from its `ballotProtocol`.
- * Mirrors the {@link inferBallotType} decision tree for the per-question model.
+ * Mirrors the {@link inferBallotType} decision tree for the per-question model,
+ * with one addition: a `maxValue === 1` protocol on a named `multichoice` question
+ * keeps the MultiChoice label (the dense wire layout is selected by the codec via
+ * {@link isDenseBallotProtocol}, not by the label).
  *
  * Backend reads always carry a `ballotProtocol` (it is derived from the named
  * type at creation), so the fallback path only applies to partial shapes
@@ -80,6 +88,24 @@ export function inferQuestionBallotType(question: {
     return bp.costExponent === 2 ? BallotType.Quadratic : BallotType.Budget
   }
   if (bp.maxCount === 1) return BallotType.SingleChoice
-  if (bp.maxValue === 1 && !bp.uniqueValues) return BallotType.Approval
+  // maxValue === 1 is always the dense 0/1 wire layout (a pick-slot layout needs
+  // maxValue >= numChoices - 1 to address every choice). The named `multichoice`
+  // type keeps its semantic label — UIs badge it and cap picks as multichoice —
+  // while the codec (encode/decode) selects the dense layout off the protocol
+  // shape. Anything else maxValue === 1 is approval.
+  if (bp.maxValue === 1) {
+    return question.type === 'multichoice' ? BallotType.MultiChoice : BallotType.Approval
+  }
   return BallotType.MultiChoice
+}
+
+/**
+ * True when a question's protocol uses the dense 0/1 wire layout: one ballot field
+ * per choice, each 0 or 1, with `maxTotalCost` bounding the number of picks. This is
+ * what the backend derives for the named `multichoice` type, and what legacy approval
+ * elections use. Pick-slot layouts need `maxValue >= numChoices - 1`, so
+ * `maxValue === 1` (with more than one field) can only be dense.
+ */
+export function isDenseBallotProtocol(bp: Pick<BallotProtocol, 'maxCount' | 'maxValue'>): boolean {
+  return bp.maxValue === 1 && bp.maxCount > 1
 }

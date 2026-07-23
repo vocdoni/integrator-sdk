@@ -1,5 +1,5 @@
 import type { VotingProcessQuestion } from '@vocdoni/api-types'
-import { BallotType, inferQuestionBallotType } from '@vocdoni/ballot'
+import { BallotType, inferQuestionBallotType, questionSelectionRange } from '@vocdoni/ballot'
 import { useComponents } from '../../context/useComponents'
 import { useReactComponentsLocalize } from '../../../i18n/localize'
 import { useQuestionsForm } from './Form'
@@ -17,7 +17,9 @@ export const QuestionTip = ({ question }: { question?: VotingProcessQuestion }) 
 
   const text = t('question_types.multichoice_desc', {
     selected: getValues()[0]?.length,
-    maxcount: question.ballotProtocol?.maxCount ?? 1,
+    // The pick bound, not ballotProtocol.maxCount — on the dense layout maxCount
+    // is the number of choices, and the bound lives in maxTotalCost.
+    maxcount: questionSelectionRange(question).max,
   })
 
   if (!text) return null

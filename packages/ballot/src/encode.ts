@@ -1,6 +1,6 @@
-import type { BallotProtocol, Choice, Election, Question, VoteType } from '@vocdoni/api-types'
+import type { BallotProtocol, Choice, Election, Question, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
 import { BallotType, type BallotSelections } from './types.js'
-import { inferBallotType, inferQuestionBallotType } from './infer.js'
+import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
 import { normalizeSelections } from './selections.js'
 import { requiredAbstainMaxValue } from './abstain.js'
 
@@ -160,7 +160,7 @@ function ballotProtocolToVoteType(bp: BallotProtocol): VoteType {
  * @param selections - The voter's raw selections for this question
  */
 export function encodeQuestionBallot(
-  question: { ballotProtocol?: BallotProtocol; type?: string; choices: Choice[] },
+  question: { ballotProtocol?: BallotProtocol; type?: string; typeSetup?: QuestionTypeSetup; choices: Choice[] },
   selections: number[]
 ): number[] {
   const ballotType = inferQuestionBallotType(question)
@@ -176,14 +176,26 @@ export function encodeQuestionBallot(
     case BallotType.Approval:
       return encodeApproval(fakeQuestion, selections)
 
-    case BallotType.MultiChoice:
-      // Reachable via the named-type fallback in inferQuestionBallotType: the
-      // slot count and abstain reservation live in the protocol, so encoding
-      // is impossible without it.
-      if (!question.ballotProtocol) {
-        throw new Error('multichoice question has no ballotProtocol; cannot encode')
+    case BallotType.MultiChoice: {
+      const bp = question.ballotProtocol
+      // Named multichoice derives the dense layout on chain (one 0/1 field per
+      // choice, maxTotalCost = typeSetup.maxChoices bounding the picks) —
+      // encode dense, not pick-slot. Pick-slot values (choice values, abstain
+      // sentinels >= numChoices) would exceed maxValue = 1 and the chain
+      // silently discards them at tally. Public reads of named-type questions
+      // may omit the protocol entirely; the layout is still fully determined
+      // by the type, with the pick bound read from typeSetup.
+      if (!bp || isDenseBallotProtocol(bp)) {
+        const cap = bp?.maxTotalCost || question.typeSetup?.maxChoices || 0
+        if (cap > 0 && selections.length > cap) {
+          throw new Error(
+            `multichoice: too many selections (${selections.length}); at most ${cap} allowed`
+          )
+        }
+        return encodeApproval(fakeQuestion, selections)
       }
-      return encodeMultiChoice(ballotProtocolToVoteType(question.ballotProtocol), fakeQuestion, selections)
+      return encodeMultiChoice(ballotProtocolToVoteType(bp), fakeQuestion, selections)
+    }
 
     case BallotType.Budget:
     case BallotType.Quadratic:
