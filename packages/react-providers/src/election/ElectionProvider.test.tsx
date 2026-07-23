@@ -1,5 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
+import { SignedTx, Tx } from '@vocdoni/proto/vochain'
+import { fromHex } from '@vocdoni/api-voting'
 import { describe, expect, it } from 'vitest'
 import { MOCK_CSP_SIGNATURE, MOCK_WEIGHT_HEX, mockProcess } from '../../../../mocks/handlers'
 import { server } from '../../../../mocks/server'
@@ -144,6 +146,35 @@ describe('ElectionProvider', () => {
     await expect(result.current.election.vote([])).rejects.toThrow('Expected one encoded ballot per question')
     expect(result.current.election.hasVoted).toBe(false)
     expect(result.current.election.voteId).toBeNull()
+  })
+
+  it('threads per-question memos onto the vote envelopes, validated pre-flight', async () => {
+    const txPayloads: string[] = []
+    server.use(
+      http.post(`http://localhost/vote`, async ({ request }) => {
+        const body = (await request.json()) as { txPayload: string }
+        txPayloads.push(body.txPayload)
+        return HttpResponse.json({ jobId: `job-${txPayloads.length - 1}` }, { status: 202 })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    // An oversized memo dies before any CSP sign is consumed.
+    await expect(result.current.election.vote([[0]], ['€'.repeat(100)])).rejects.toThrow('UTF-8-byte cap')
+    expect(txPayloads).toHaveLength(0)
+
+    await act(async () => {
+      await result.current.election.vote([[0]], ['Other: neither'])
+    })
+    expect(txPayloads).toHaveLength(1)
+    const signedTx = SignedTx.decode(fromHex(txPayloads[0]))
+    const tx = Tx.decode(signedTx.tx)
+    if (tx.payload?.$case !== 'vote') throw new Error('expected a vote payload')
+    expect(new TextDecoder().decode(tx.payload.vote.memo!)).toBe('Other: neither')
   })
 
   it('resolves per-question results from the results endpoint', async () => {

@@ -59,7 +59,16 @@ const QuestionsFormProviderInner = ({ children }: PropsWithChildren<QuestionsFor
       encodeQuestionBallot(q, selections[i] ?? [])
     )
 
-    return baseVote(encodedBallots)
+    // Reserved `memo.{index}` form fields become per-question vote memos
+    // (free-text notes, e.g. an open "Other" answer) — register one as
+    // `memo.0`, `memo.1`, … in the form slot to collect them. ⚠️ Memos ride
+    // the vote envelope in cleartext, even on secret elections.
+    const memos = election.questions.map((_q, i) => {
+      const raw = (values.memo as Record<string, unknown> | undefined)?.[i.toString()]
+      return typeof raw === 'string' && raw !== '' ? raw : undefined
+    })
+
+    return memos.some((m) => m !== undefined) ? baseVote(encodedBallots, memos) : baseVote(encodedBallots)
   }
 
   useEffect(() => {

@@ -158,7 +158,7 @@ const {
 } = useElection()
 ```
 
-`vote(encodedBallots)` takes one pre-encoded `number[]` per question, casts a separate Vochain vote for each, and returns the first nullifier. It does the complete sequence for every question: creates an ephemeral signer → CSP-signs it (`processes.sign`) → builds and relays the tx → polls the job. Throws on any step failure. For `secretUntilTheEnd` questions it seals the ballot with `question.encryptionKeys`; if the keykeepers have not published the keys yet it throws BEFORE consuming the CSP sign (never casts cleartext) — catch and retry later.
+`vote(encodedBallots, memos?)` takes one pre-encoded `number[]` per question (plus optional per-question memo strings — free-text notes like an open "Other" answer, max 256 UTF-8 bytes each, validated pre-flight; ⚠️ memos ride the envelope in cleartext even for secret questions), casts a separate Vochain vote for each, and returns the first nullifier. In `react-components`, registering reserved `memo.{index}` fields (`memo.0`, `memo.1`, …) in the questions form collects memos automatically. It does the complete sequence for every question: creates an ephemeral signer → CSP-signs it (`processes.sign`) → builds and relays the tx → polls the job. Throws on any step failure. For `secretUntilTheEnd` questions it seals the ballot with `question.encryptionKeys`; if the keykeepers have not published the keys yet it throws BEFORE consuming the CSP sign (never casts cleartext) — catch and retry later.
 
 Use `@vocdoni/ballot` to encode ballots before calling `vote()`:
 

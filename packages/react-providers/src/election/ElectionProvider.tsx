@@ -4,7 +4,7 @@ import type {
   VotingProcessResponse,
   VotingProcessResultsResponse,
 } from '@vocdoni/api-types'
-import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
+import { EphemeralSigner, MAX_MEMO_BYTES, VotingClient } from '@vocdoni/api-voting'
 import { useQuery } from '@tanstack/react-query'
 import {
   createContext,
@@ -44,9 +44,12 @@ export interface ElectionContextValue {
 
   /**
    * Cast votes for all questions in the process. Accepts per-question encoded
-   * ballots (`number[][]`, one entry per question). Returns the first vote id.
+   * ballots (`number[][]`, one entry per question) and optional per-question
+   * memos (free-text notes, e.g. an open "Other" answer — max 256 UTF-8 bytes
+   * each, and ⚠️ always cleartext on the envelope, even for secret questions).
+   * Returns the first vote id.
    */
-  vote(encodedBallots: number[][]): Promise<string>
+  vote(encodedBallots: number[][], memos?: (string | undefined)[]): Promise<string>
   voteId: string | null
   isAbleToVote: boolean
   /** Clears the voter session (delegates to the process session when present). */
@@ -126,7 +129,7 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
   }, [process?.connected, election?.id])
 
   const vote = useCallback(
-    async (encodedBallots: number[][]): Promise<string> => {
+    async (encodedBallots: number[][], memos?: (string | undefined)[]): Promise<string> => {
       if (!election) throw new Error('Election not loaded')
       if (!process?.connected) throw new Error('Voter is not authenticated for this process')
       if (!chainId) {
@@ -142,6 +145,16 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
         throw new Error(
           `Expected one encoded ballot per question (${election.questions.length}), got ${encodedBallots.length}`,
         )
+      }
+      if (memos) {
+        if (memos.length > election.questions.length) {
+          throw new Error(`Got ${memos.length} memos for ${election.questions.length} questions`)
+        }
+        for (const [i, memo] of memos.entries()) {
+          if (memo !== undefined && new TextEncoder().encode(memo).length > MAX_MEMO_BYTES) {
+            throw new Error(`Memo for question ${i} exceeds the chain's ${MAX_MEMO_BYTES} UTF-8-byte cap`)
+          }
+        }
       }
 
       let firstVoteId: string | null = null
@@ -172,6 +185,7 @@ export function ElectionProvider({ children, id }: ElectionProviderProps) {
           cspSignature: signature,
           cspWeight: weight,
           encryptionKeys: question.secretUntilTheEnd ? question.encryptionKeys : undefined,
+          memo: memos?.[i],
         })
 
         const job = await client.jobs.waitFor(jobId)

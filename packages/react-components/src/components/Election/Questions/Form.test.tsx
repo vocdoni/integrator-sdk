@@ -91,6 +91,13 @@ describe('QuestionsFormProvider vote payload', () => {
     expect(state.vote).toHaveBeenCalledWith([[1, 4, 4]])
   })
 
+  it('threads reserved memo.{index} fields through as per-question memos', async () => {
+    const { result } = setup(makeProcess({ questions: twoQuestions }))
+    // Only question 0 carries a memo; empty strings are dropped, not sent.
+    await result.current.vote({ '0': '1', '1': '0', memo: { '0': 'Other: neither', '1': '' } })
+    expect(state.vote).toHaveBeenCalledWith([[1], [0]], ['Other: neither', undefined])
+  })
+
   it('does not vote when the confirmation is declined', async () => {
     const { result } = setup(makeProcess({ questions: twoQuestions }), false)
     const out = await result.current.vote({ '0': '1', '1': '0' })
