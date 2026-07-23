@@ -17,15 +17,12 @@
  * reported by the process check and votes on each one with the voter's chosen
  * option index.
  *
- * WHO PROVIDES WHAT: the full process read (`GET /processes/{id}`,
- * `client.elections.get`) is Bearer-authed — it belongs to the INTEGRATOR's
- * backend, not the voter app. The backend does that read server-side and hands
- * the voter app the config constants below (processId, chainId, census auth
- * shape). Everything else the voter needs is public or auth-token-identified:
- * the CSP flow lives on `client.processes` (ProcessesCspClient), and question
- * display data (title, choices, ballotProtocol) comes from the public
- * single-question read `client.processes.getQuestion()`. The legacy bundle
- * equivalent (`client.bundle`) only applies to organizer-created bundles.
+ * The whole flow needs NO API key: the process read (`client.elections.get`)
+ * is public for published processes (drafts 404 to non-managers) and provides
+ * everything the voter app needs — the chainId vote signatures are bound to,
+ * the census auth shape, and the questions. The CSP flow lives on
+ * `client.processes` (ProcessesCspClient). The legacy bundle equivalent
+ * (`client.bundle`) only applies to organizer-created bundles.
  *
  * Prerequisites:
  *   pnpm add @vocdoni/api-client @vocdoni/api-voting @vocdoni/ballot
@@ -35,16 +32,11 @@ import { VocdoniApiClient } from '@vocdoni/api-client'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 import { encodeQuestionBallot } from '@vocdoni/ballot'
 
-// ─── Config — handed to the voter app by the integrator's backend ────────────
-// The backend owns the Bearer-authed process read and passes these through.
-// chainId in particular has NO public route in the new model (see GAPS.md) —
-// it MUST come from the backend's process read (`election.chainId`).
+// ─── Config ──────────────────────────────────────────────────────────────────
 
 const API_URL = 'https://saas-api.vocdoni.net'
-const PROCESS_ID = '<process-mongo-id>' // election.id from the backend's process read
-const CHAIN_ID = '<vochain-chain-id>' // election.chainId — votes are signed against it
+const PROCESS_ID = '<process-mongo-id>' // the SaaS process id (24-hex Mongo ObjectID)
 const VOTER = { memberNumber: '42' } // fields required by election.census.authFields
-const CENSUS_HAS_2FA = false // election.census.twoFaFields non-empty on the backend read
 
 // Voter's chosen option index, keyed by question id. Replace with the voter's
 // real picks (e.g. collected from a UI form).
@@ -56,6 +48,17 @@ const CHOSEN_OPTION_BY_QUESTION: Record<string, number> = {
 
 const client = new VocdoniApiClient({ apiUrl: API_URL })
 const voting = new VotingClient({ client })
+
+// ─── 0. Public process read ──────────────────────────────────────────────────
+// Published processes are public (no auth). This is where the voter app gets
+// the process's own chainId — never use client.info().chainId, which is the
+// service's CURRENT chain id and diverges for processes published before a
+// chain migration.
+
+const election = await client.elections.get(PROCESS_ID)
+if (!election.chainId) throw new Error('Process has no chainId (not published?)')
+const CHAIN_ID = election.chainId
+const CENSUS_HAS_2FA = (election.census.twoFaFields?.length ?? 0) > 0
 
 // ─── 1. Auth (auth-only census — no 2FA step) ────────────────────────────────
 // One auth token is obtained once and reused for every question in the process.
@@ -104,8 +107,8 @@ for (const status of check.questions) {
   }
 
   // Public single-question read — title, choices, ballotProtocol; no API key.
-  // (To render the questions BEFORE authenticating, have your backend hand the
-  // question ids along with the config above — this read is fully public.)
+  // (The same data is already in `election.questions` from step 0 — re-reading
+  // here just demonstrates the single-question route.)
   const question = await client.processes.getQuestion(PROCESS_ID, status.questionId)
   console.log(`Question ${question.id}: ${text(question.title)}`)
   for (const [ci, c] of question.choices.entries()) {

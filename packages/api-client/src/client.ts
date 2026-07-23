@@ -63,10 +63,10 @@ export class VocdoniApiClient {
    * Public service info via `GET /info` — no API key needed.
    *
    * `chainId` here is the service's CURRENT Vochain chain id — NOT
-   * necessarily the chain id a given process's votes must sign against (that
-   * one only exists on the Bearer-authed process read; a process published
-   * before a chain migration signs against its own, older chain id — see
-   * GAPS.md "No public chainId source").
+   * necessarily the chain id a given process's votes must sign against: a
+   * process published before a chain migration signs against its own, older
+   * chain id. Always prefer the process's own `chainId` from the (public)
+   * `elections.get()` read.
    */
   async info(): Promise<InfoResponse> {
     return this.fetch<InfoResponse>('/info').catch(handleError)

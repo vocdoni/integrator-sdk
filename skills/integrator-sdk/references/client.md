@@ -32,7 +32,7 @@ const client = new VocdoniApiClient({
 Sub-clients accessed as properties:
 
 ```ts
-client.elections    // ElectionsClient — ADMIN surface of /processes (create, publish, census, status)
+client.elections    // ElectionsClient — /processes: public reads (get/list/getResults), authed writes
 client.processes    // ProcessesCspClient — VOTER CSP surface of /processes (auth, check, sign)
 client.organizations // OrganizationsClient
 client.census       // CensusClient
@@ -44,8 +44,8 @@ client.jobs         // JobsClient
 Plus one method on the client itself: `client.info()` (`GET /info`, public) →
 `{ chainId, version, goVersion }`. Careful: that `chainId` is the service's
 CURRENT Vochain chain id, not necessarily the one a given process's votes sign
-against — per-process `chainId` only exists on the Bearer-authed process read
-(see GAPS.md).
+against — always prefer the process's own `chainId` from the (public)
+`elections.get()` read.
 
 ---
 
@@ -60,10 +60,10 @@ Ids to keep straight: `processId` is the process's **Mongo id** (what
 `elections.get` takes — the bundle routes 404 on it), and `electionId` in
 `sign()` is the **question's** on-chain Vochain id (`question.upstreamId`).
 
-Note the full process read (`client.elections.get`) is **Bearer-authed** —
-integrator-side only. The voter app receives `processId` and `chainId` from the
-integrator's backend (no public route exposes `chainId` — see GAPS.md) and uses
-only the routes below.
+Note the full process read (`client.elections.get`) is **public** for
+published processes (saas-backend#599; drafts 404 to non-managers, and
+`eligibleMemberIds` is stripped) — the voter app reads `chainId` and the
+questions from it directly, then uses the CSP routes below.
 
 ```ts
 // Public single-question read — no API key. Includes choices, ballotProtocol,
@@ -178,6 +178,12 @@ const { weight } = await client.bundle.weight(bundleId, { authToken })
 
 ## ElectionsClient (`client.elections`)
 
+Reads (`get`, `list`, `getResults`) are **public** for published processes
+(saas-backend#599): drafts 404 on `get` and are filtered from `list` unless the
+caller is an org manager/admin or a scoped API key, and the PII
+`eligibleMemberIds` lists are stripped for non-managers. Writes (create,
+publish, status, census) require the API key / JWT.
+
 ```ts
 // Fetch a process by Mongo id — per-question vochain data lives on questions[]
 const election = await client.elections.get(mongoId)
@@ -186,11 +192,14 @@ const election = await client.elections.get(mongoId)
 //                            Other endpoints (auth/addresses, organizations/{address})
 //                            return the same value 0x-prefixed — normalize before comparing.
 // election.title           — MultiLangString ({ default, [lang]: string })
-// election.census          — CensusSpec ({ weighted, authFields, twoFaFields, size?, ... })
+// election.census          — CensusSpec ({ weighted, authFields, twoFaFields, size?,
+//                            totalWeight?, ... })
 //   census.size            — member count (response-only; omitted when 0). There is
 //                            deliberately NO census type/uri/id over this API: the census
 //                            "type" is inferred from authFields/twoFaFields (every
 //                            new-model census is CSP-backed).
+//   census.totalWeight     — whole-census total voting weight (response-only; equals
+//                            size for a non-weighted census — use it for percentages)
 // election.questions       — VotingProcessQuestion[]
 //   question.upstreamId        — vochain hex id (voting; the `electionId` of CSP check/sign)
 //   question.ballotProtocol    — { maxCount, maxValue, uniqueValues, ... }
@@ -198,16 +207,20 @@ const election = await client.elections.get(mongoId)
 //   question.status            — QuestionStatus
 //   question.encryptionKeys    — vote-encryption public keys (secretUntilTheEnd only;
 //                                absent until the keykeepers publish — poll)
+//   question.results           — live QuestionResults ({ voteCount, maxVoters,
+//                                finalResults, results?: string[][] }) — single reads
+//                                only; a secret question's matrix stays empty until
+//                                the keys are revealed
 // election.chainId         — vochain chain id votes are signed against (omitempty;
 //                            same value as bundle.chainId).
 
 // List processes
 const { processes, pagination } = await client.elections.list({ orgAddress, page, limit, status })
-// List items carry no tallies — vote counts require getResults() per process.
+// List items never resolve question.results (N+1 guard) — use get()/getResults().
 
-// Get per-question results
+// Get per-question results — public, LIVE tallies (finalResults marks live vs final)
 const { questions } = await client.elections.getResults(mongoId)
-// questions[i] — { questionId, upstreamId, status, voteCount, finalResults,
+// questions[i] — { questionId, upstreamId, voteCount, maxVoters, finalResults,
 //                 results?: string[][] (raw histogram; see ballot protocol) }
 
 // Admin: create a draft process → returns the draft id (Mongo hex string).
@@ -427,6 +440,16 @@ interface VotingProcessQuestion {
   secretUntilTheEnd: boolean
   status: QuestionStatus              // 'UPCOMING' | 'ONGOING' | 'ENDED' | 'CANCELED' | 'PAUSED' | 'RESULTS' | 'PROCESS_UNKNOWN'
   encryptionKeys?: EncryptionKey[]    // secretUntilTheEnd only; ABSENT until keykeepers publish — poll
+  results?: QuestionResults           // live tally — single reads only (never on list items)
+}
+
+// Live per-question tally (single reads + getResults; finalResults marks live vs final)
+interface QuestionResults {
+  voteCount?: number
+  maxVoters?: number                  // on-chain maxCensusSize
+  finalResults?: boolean
+  results?: string[][]                // raw histogram; absent until a tally exists (secret
+                                      // questions stay empty until key reveal)
 }
 
 // Voter status for a process (client.processes.check)

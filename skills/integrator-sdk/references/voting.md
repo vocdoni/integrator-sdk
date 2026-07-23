@@ -53,7 +53,7 @@ await client.elections.vote({ txPayload })
 |---|---|---|---|
 | `processId` | `string` | yes | On-chain (Vochain) hex id for ONE question — `question.upstreamId` from `VotingProcessResponse.questions[i]`, not the process's Mongo `id` |
 | `choices` | `number[]` | yes | Ballot values for that one question — see "Choices format" below |
-| `chainId` | `string` | yes | From `election.chainId` on the Bearer-authed process read — integrator-side; the backend hands it to the voter app since no public route exposes it (legacy flows: public `bundle.chainId`). There is no per-question `chainId` |
+| `chainId` | `string` | yes | From `election.chainId` on the public process read (`client.elections.get` — published processes need no auth; legacy flows: public `bundle.chainId`). There is no per-question `chainId`, and `client.info().chainId` is NOT a substitute (it's the service's current chain, not the process's) |
 | `signer` | `EphemeralSigner` | yes | Fresh per-vote ephemeral keypair |
 | `cspSignature` | `string` | yes | Hex signature from `processes.sign()` (legacy flows: `bundle.sign()`) |
 | `cspWeight` | `string` | no | Hex census weight from the same sign response; omit if absent |
@@ -150,7 +150,7 @@ you pass `encryptionKeys`; you don't call `BallotEncryptor` directly.
 
 ```ts
 // Public single-question read — no API key needed, so the voter app can call it.
-// (chainId is NOT here — the integrator's backend hands it over, see GAPS.md.)
+// (chainId is not here — read it off the public process read, elections.get.)
 const question = await client.processes.getQuestion(processMongoId, questionId)
 // question.secretUntilTheEnd === true
 // question.encryptionKeys — the keys; may be absent right after publish (see below)
@@ -158,7 +158,7 @@ const question = await client.processes.getQuestion(processMongoId, questionId)
 const txPayload = buildVoteTransaction({
   processId: question.upstreamId!,
   choices: [0],
-  chainId, // handed to the voter app by the integrator's backend
+  chainId, // from the public process read — elections.get(processMongoId).chainId
   signer,
   cspSignature: signature,
   cspWeight: weight,
@@ -169,9 +169,9 @@ const txPayload = buildVoteTransaction({
 When multiple keys are present they are applied in ascending `index` order (innermost first), matching how the Vochain unseals them.
 
 > **Key sourcing:** `encryptionKeys` lives on the question — on the public
-> single-question read (`processes.getQuestion(id, qId).encryptionKeys`, the
-> voter-side source) and on the Bearer-authed process read
-> (`elections.get(id).questions[i].encryptionKeys`, integrator-side). The
+> process read (`elections.get(id).questions[i].encryptionKeys`) and the
+> public single-question read
+> (`processes.getQuestion(id, qId).encryptionKeys`); no auth for either. The
 > keykeepers publish keys asynchronously right after publish, and the field is
 > **absent** (not an empty array) until then — treat absence as "not yet
 > published" and poll before building the ballot. See

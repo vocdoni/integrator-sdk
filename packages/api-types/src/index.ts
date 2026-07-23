@@ -378,6 +378,30 @@ export interface QuestionTypeSetup {
   uniqueChoices: boolean
 }
 
+/**
+ * A question's on-chain tally, resolved live on read. Present on the single
+ * reads (`GET /processes/{id}`, the public question read) for any published
+ * question — `finalResults` marks live vs final. The inner `results` matrix is
+ * absent until a tally exists (empty while a `secretUntilTheEnd` election is
+ * still encrypted, or before any vote), so poll on an absent/empty matrix.
+ * The list endpoint never resolves it (N+1 avoidance): absence in a LIST item
+ * means "not resolved here", not "no results".
+ */
+export interface QuestionResults {
+  voteCount?: number
+  /** On-chain `maxCensusSize` of the question's election. */
+  maxVoters?: number
+  /** `true` once the on-chain tally is final; `false` while live. */
+  finalResults?: boolean
+  /**
+   * Raw on-chain tally matrix (stringified big integers), one row per ballot
+   * field: a single-choice question has one row indexed by choice value
+   * (0..maxValue, so sparse choice values leave empty buckets); a multi-choice
+   * question has one row per choice, each `[notSelected, selected]`.
+   */
+  results?: string[][]
+}
+
 export interface VotingProcessQuestion {
   id: string
   parentProcessId: string
@@ -385,6 +409,11 @@ export interface VotingProcessQuestion {
   title: MultiLangString
   description?: MultiLangString
   choices: Choice[]
+  /**
+   * Per-question voter restriction (member ids). Only served to org
+   * managers/admins (or a scoped API key) — the now-public process read strips
+   * it for everyone else, so absence does not mean "unrestricted".
+   */
   eligibleMemberIds?: string[]
   ballotProtocol: BallotProtocol
   /**
@@ -404,6 +433,11 @@ export interface VotingProcessQuestion {
    * encrypted ballot.
    */
   encryptionKeys?: EncryptionKey[]
+  /**
+   * Live on-chain tally — resolved only on the single reads for published
+   * questions; see {@link QuestionResults} for the list-endpoint caveat.
+   */
+  results?: QuestionResults
 }
 
 /**
@@ -427,6 +461,12 @@ export interface CensusSpec {
    * whole-census questions. Serialized with `omitempty`, so `0` arrives absent.
    */
   size?: number
+  /**
+   * Whole-census total voting weight (sum of members' weights). Response-only;
+   * equals `size` for a non-weighted census. Needed to turn per-answer weights
+   * into percentages (e.g. results reports). Serialized with `omitempty`.
+   */
+  totalWeight?: number
 }
 
 /** Per-question member eligibility restriction (subset of the process census). */
@@ -455,7 +495,11 @@ export type ValidateProcessCensusResponse = string
 
 /**
  * Fields shared by both variants of {@link VotingProcessResponse}. Returned by
- * `GET /processes/{id}` and as the list items of `GET /processes`.
+ * `GET /processes/{id}` and as the list items of `GET /processes` — both
+ * **public** routes since saas-backend#599, draft-gated: published processes
+ * are readable by anyone (with `eligibleMemberIds` stripped for non-managers);
+ * drafts 404 on the single read and are filtered from the list unless the
+ * caller is an org manager/admin or a scoped API key.
  */
 export interface VotingProcessBase {
   /** Process id, a Mongo ObjectID (24-hex chars) — never a `0x…` hex id. */
@@ -544,18 +588,17 @@ export interface PublicQuestionResponse {
    * building an encrypted ballot.
    */
   encryptionKeys?: EncryptionKey[]
+  /**
+   * Live on-chain tally, present for any published question — see
+   * {@link QuestionResults}.
+   */
+  results?: QuestionResults
 }
 
-/** Per-question entry in `GET /processes/{id}/results`. */
-export interface VotingProcessQuestionResults {
+/** Per-question entry in `GET /processes/{id}/results` — a {@link QuestionResults} plus ids. */
+export interface VotingProcessQuestionResults extends QuestionResults {
   questionId: string
   upstreamId?: string
-  status: QuestionStatus
-  voteCount: number
-  startDate: string
-  endDate: string
-  finalResults: boolean
-  results?: string[][]
 }
 
 /** Response of `GET /processes/{id}/results`. */

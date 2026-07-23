@@ -31,16 +31,23 @@ until that lands, run it manually against dev with an integrator API key.
    `census: { groupId, authFields }` — publish rejects censusless processes) —
    single-choice, multi-choice, and a `secretUntilTheEnd` single-choice whose
    per-question encryption keys are polled after publish. For each, prove the
-   **public voter surface**: the token-less question read (choices,
+   **public voter surface** (saas-backend#599): the draft 404s on the
+   token-less process read before publish; once published the process read is
+   fully public — `chainId`, census `size`/`totalWeight`, questions — with
+   `eligibleMemberIds` stripped; plus the token-less question read (choices,
    `ballotProtocol`/`type`, `upstreamId`, and the secret question's
-   `encryptionKeys`) and the 401 on the protected process read.
+   `encryptionKeys`) and the public process list.
 6. Bundle every question's on-chain process; 3 members vote on every question
    through the **legacy bundle CSP flow** — the secret question's ballots
    sealed with its encryption keys.
 7. A 4th member votes every process through the **process-scoped CSP flow**
-   (`client.processes`: `authStep0` → `check` → `sign`), with `chainId` handed
-   over from the admin's protected process read (the integrator handoff).
+   (`client.processes`: `authStep0` → `check` → `sign`), with `chainId` read
+   straight off the **public** process read — no integrator handoff.
 8. Assert one distinct vote nullifier per (member, question) — 12 in total.
+9. Read the live public tallies (`getResults` + single reads): every question
+   reaches `voteCount = 4` with `finalResults = false`, `maxVoters` = census
+   size, and a tally matrix for cleartext questions (a secret question's
+   matrix stays hidden until key reveal).
 
 ## Configuration
 

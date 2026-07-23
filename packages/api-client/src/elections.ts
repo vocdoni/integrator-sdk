@@ -74,13 +74,19 @@ export class ElectionsClient {
   /**
    * Fetch a voting process by its Mongo ObjectID from `GET /processes/{id}`.
    * Returns the flat multi-question shape ({@link VotingProcessResponse}) with
-   * per-question ballot protocols. The vochain id per question lives on
-   * `questions[i].upstreamId`.
+   * per-question ballot protocols and live per-question `results`. The vochain
+   * id per question lives on `questions[i].upstreamId`.
+   *
+   * **Public** since saas-backend#599, draft-gated: published processes need
+   * no auth (voter apps read `chainId` and the questions from here directly);
+   * an unauthenticated read of a draft 404s — only org managers/admins or a
+   * scoped API key see drafts (and the `eligibleMemberIds` restriction lists).
    */
   async get(id: string): Promise<VotingProcessResponse> {
     return this.fetch<VotingProcessResponse>(`/processes/${id}`).catch(handleError)
   }
 
+  /** Public tallies via `GET /processes/{id}/results` — live per-question {@link QuestionResults} plus ids. */
   async getResults(id: string): Promise<VotingProcessResultsResponse> {
     return this.fetch<VotingProcessResultsResponse>(`/processes/${id}/results`).catch(handleError)
   }
@@ -94,6 +100,13 @@ export class ElectionsClient {
     return this.fetch<ElectionMetadata>(`/process/${id}/metadata`).catch(handleError)
   }
 
+  /**
+   * List an organization's processes via `GET /processes` (public since
+   * saas-backend#599). Unauthenticated callers only see published processes —
+   * drafts require an org manager/admin session or scoped API key. List items
+   * never carry per-question `results` (N+1 avoidance); use {@link get} or
+   * {@link getResults} for tallies.
+   */
   async list({ orgAddress, ...params }: ElectionListParams): Promise<VotingProcessListResponse> {
     return this.fetch<VotingProcessListResponse>('/processes', { params: { orgAddress, ...params } }).catch(handleError)
   }

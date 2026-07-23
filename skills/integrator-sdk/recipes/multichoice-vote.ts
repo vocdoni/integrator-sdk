@@ -40,20 +40,22 @@ import { VocdoniApiClient } from '@vocdoni/api-client'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 import { encodeQuestionBallot } from '@vocdoni/ballot'
 
-// ─── Config — handed to the voter app by the integrator's backend ────────────
-// The full process read (GET /processes/{id}) is Bearer-authed; the backend
-// does it server-side and passes these through. chainId has NO public route in
-// the new model (see GAPS.md).
+// ─── Config ──────────────────────────────────────────────────────────────────
 
 const API_URL = 'https://saas-api.vocdoni.net'
-const PROCESS_ID = '<process-mongo-id>' // election.id from the backend's process read
-const CHAIN_ID = '<vochain-chain-id>' // election.chainId — votes are signed against it
+const PROCESS_ID = '<process-mongo-id>' // the SaaS process id (24-hex Mongo ObjectID)
 const VOTER = { memberNumber: '42' } // fields required by election.census.authFields
 
 // ─── Shared setup + auth (identical to single-choice-vote.ts) ────────────────
 
 const client = new VocdoniApiClient({ apiUrl: API_URL })
 const voting = new VotingClient({ client })
+
+// Public process read (published processes need no auth; drafts 404) — the
+// chainId vote signatures are bound to comes from here, NOT client.info().
+const election = await client.elections.get(PROCESS_ID)
+if (!election.chainId) throw new Error('Process has no chainId (not published?)')
+const CHAIN_ID = election.chainId
 
 const res0 = await client.processes.authStep0(PROCESS_ID, VOTER)
 if (!res0.authToken) throw new Error('Auth step 0 did not return a token')

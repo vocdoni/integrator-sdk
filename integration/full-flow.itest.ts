@@ -11,16 +11,22 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 //   5. creates and publishes 3 processes (single-choice, multi-choice, and a
 //      secretUntilTheEnd single-choice — its per-question encryption keys are
 //      polled after publish, per saas-backend#594) sharing that one group
-//      census, then proves the PUBLIC voter surface for each: the token-less
-//      question read (choices/ballotProtocol/upstreamId, and the secret
-//      question's encryption keys) and the 401 on the protected process read
+//      census, then proves the PUBLIC voter surface for each: drafts 404 on the
+//      token-less process read (draft gating, saas-backend#599) while published
+//      processes are fully public — chainId, questions, census size/totalWeight
+//      — with the PII `eligibleMemberIds` stripped for non-managers; plus the
+//      public single-question read (choices/ballotProtocol/upstreamId, and the
+//      secret question's encryption keys) and the public process list
 //   6. bundles every question's on-chain process and has 3 members vote on all
 //      of them via the LEGACY bundle CSP flow (chainId from the bundle info);
 //      the secret question's ballots are sealed with its encryption keys
 //   7. asserts a distinct vote nullifier per (member, question)
 //   8. has a 4th member vote every process via the NEW process-scoped CSP flow
-//      (client.processes: authStep0 → check → sign), chainId handed over from
-//      the admin's protected process read (the integrator handoff)
+//      (client.processes: authStep0 → check → sign), with chainId read straight
+//      off the PUBLIC process read — no integrator handoff needed since
+//      saas-backend#599
+//   9. reads the live per-question tallies (QuestionResults, saas-backend#596/
+//      #599) publicly and checks the vote counts
 //
 // This is deliberately the ONLY integration suite: anything needing a live
 // backend gets asserted inside this lifecycle (it creates all its own data, so
@@ -189,6 +195,12 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       for (const d of drafts) {
         const draftId = await admin.elections.create(d.body)
         step(`5. draft created — ${d.label} (${draftId})`)
+
+        // Draft gating (saas-backend#599): the process read is public, but a
+        // draft must 404 to anyone who is not an org manager / scoped API key —
+        // deliberately hiding even its existence.
+        await expect(voterClient.elections.get(draftId)).rejects.toMatchObject({ status: 404 })
+
         const published = await admin.elections.publishAndWait(draftId, {
           timeoutMs: 120000,
           intervalMs: 2000,
@@ -248,7 +260,22 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             ).toBeGreaterThan(0)
           }
         }
-        step(`5. public question reads verified — ${d.label}`)
+        // Published processes are PUBLIC (saas-backend#599): a token-less voter
+        // client reads the whole process — including the chainId vote signatures
+        // are bound to, killing the old integrator-handoff requirement — but the
+        // PII eligibleMemberIds restriction lists are stripped for non-managers.
+        const pubInfo = await voterClient.elections.get(draftId)
+        expect(pubInfo.published, `${d.label} public read is not published`).toBe(true)
+        expect(pubInfo.chainId, `${d.label} public read has no chainId`).toBeTruthy()
+        expect(pubInfo.census.size, `${d.label} public read has no census size`).toBe(MEMBER_COUNT)
+        expect(
+          pubInfo.census.totalWeight,
+          `${d.label} totalWeight should equal size for a non-weighted census`,
+        ).toBe(pubInfo.census.size)
+        for (const q of pubInfo.questions) {
+          expect(q.eligibleMemberIds, `${d.label} public read leaks eligibleMemberIds`).toBeUndefined()
+        }
+        step(`5. public process read verified — ${d.label} (chain ${pubInfo.chainId})`)
 
         processes.push({
           label: d.label,
@@ -259,13 +286,19 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         })
       }
 
-      // The merged process read is a PROTECTED route (saas-backend#582) — a
-      // token-less voter client must get a 401, never the full process (that is
-      // why chainId reaches voter apps via the integrator handoff).
-      await expect(voterClient.elections.get(processes[0].draftId)).rejects.toMatchObject({
-        status: 401,
-      })
-      step('5. protected process read verified — voter client 401s')
+      // The process list is public too (saas-backend#599): an anonymous caller
+      // sees the org's published processes (drafts filtered out — none remain
+      // here), and list items never resolve per-question results (N+1 guard).
+      const publicList = await voterClient.elections.list({ orgAddress })
+      expect(publicList.processes.length, 'public list misses published processes').toBe(
+        drafts.length,
+      )
+      for (const item of publicList.processes) {
+        for (const q of item.questions) {
+          expect(q.results, 'list items must not resolve results').toBeUndefined()
+        }
+      }
+      step(`5. public process list verified — ${publicList.processes.length} published`)
 
       // 6. One bundle holding every question's on-chain process. The bundle is
       // also where the Vochain chainId (which the vote signature depends on)
@@ -337,12 +370,12 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       // 8. The bundle-less voter path (client.processes — ProcessesCspClient):
       // member 4 votes every process through the process-scoped CSP flow. The
       // auth token is anchored to the process (one per process), and chainId
-      // reaches the voter via the integrator handoff — modeled here by reading
-      // it off the admin's protected process read.
+      // comes straight off the PUBLIC process read — the fully-public voter
+      // flow saas-backend#599 enables (no integrator handoff).
       const PROCESS_FLOW_VOTER = '4'
       for (const p of processes) {
-        const procInfo = await admin.elections.get(p.draftId)
-        expect(procInfo.chainId, `${p.label} has no chainId on the admin read`).toBe(chainId)
+        const procInfo = await voterClient.elections.get(p.draftId)
+        expect(procInfo.chainId, `${p.label} has no chainId on the public read`).toBe(chainId)
 
         const auth = await voterClient.processes.authStep0(p.draftId, {
           memberNumber: PROCESS_FLOW_VOTER,
@@ -387,6 +420,44 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       }
 
       expect(nullifiers.size).toBe((VOTERS.length + 1) * questionCount)
+
+      // 9. Live results (saas-backend#596 + #599): tallies are public and live —
+      // no RESULTS status needed. Poll `GET /processes/{id}/results` until every
+      // question's voteCount reflects all 4 voters (the chain indexer may lag a
+      // few blocks behind the relay jobs), then check the tally shape: live
+      // (finalResults=false), maxVoters = census size, and a decodable matrix
+      // for cleartext questions — a secret question's matrix stays hidden until
+      // the encryption keys are revealed at the end.
+      const VOTES_PER_QUESTION = VOTERS.length + 1
+      for (const p of processes) {
+        let results = await voterClient.elections.getResults(p.draftId)
+        const deadline = Date.now() + 120000
+        while (
+          results.questions.some((q) => (q.voteCount ?? 0) < VOTES_PER_QUESTION) &&
+          Date.now() < deadline
+        ) {
+          await new Promise((r) => setTimeout(r, 3000))
+          results = await voterClient.elections.getResults(p.draftId)
+        }
+        expect(results.questions.length).toBe(p.questions.length)
+        for (const q of results.questions) {
+          expect(q.voteCount, `${p.label} live voteCount lagging`).toBe(VOTES_PER_QUESTION)
+          expect(q.finalResults, `${p.label} results marked final while live`).toBe(false)
+          expect(q.maxVoters, `${p.label} maxVoters is not the census size`).toBe(MEMBER_COUNT)
+          if (!p.secret) {
+            expect(q.results?.length, `${p.label} has no live tally matrix`).toBeGreaterThan(0)
+          }
+        }
+        // The same live tally rides the public single reads (process + question).
+        const single = await voterClient.elections.get(p.draftId)
+        for (const q of single.questions) {
+          expect(q.results?.voteCount, `${p.label} single read misses live results`).toBe(
+            VOTES_PER_QUESTION,
+          )
+        }
+        step(`9. live results verified — ${p.label} (${VOTES_PER_QUESTION} votes per question)`)
+      }
+
       step(`done — ${nullifiers.size} votes cast across ${questionCount} on-chain processes`)
     },
     600000,
