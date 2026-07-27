@@ -134,6 +134,7 @@ const {
   hasVoted,      // boolean — true once EVERY question is voted (or right after vote())
   isAbleToVote,  // boolean — connected && isInCensus && !hasVoted
   vote,          // (encodedBallots: number[][]) => Promise<string> — per-question ballots
+  voting,        // boolean — true while vote() is in flight (success OR error settles it)
   voteId,        // string | null — nullifier after a successful vote
   clearVoter,    // () => void — clears the auth session and vote state
 } = useElection()

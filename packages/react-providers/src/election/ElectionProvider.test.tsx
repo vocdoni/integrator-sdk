@@ -628,6 +628,49 @@ describe('ElectionProvider', () => {
     expect(result.current.election?.title).toEqual({ default: 'Test Process' })
   })
 
+  it('exposes voting=true while vote() is in flight and false once it settles', async () => {
+    // Slow the relay down so the in-flight state is observable.
+    server.use(
+      http.post(`http://localhost/vote`, async () => {
+        await new Promise((r) => setTimeout(r, 100))
+        return HttpResponse.json({ jobId: 'job-0' }, { status: 202 })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+    expect(result.current.election.voting).toBe(false)
+
+    let pending!: Promise<string>
+    act(() => {
+      pending = result.current.election.vote([[0]])
+    })
+    await waitFor(() => expect(result.current.election.voting).toBe(true))
+
+    await act(async () => {
+      await pending
+    })
+    expect(result.current.election.voting).toBe(false)
+    expect(result.current.election.hasVoted).toBe(true)
+  })
+
+  it('clears voting when vote() throws', async () => {
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    // Ballot-count mismatch rejects in pre-flight — voting must still reset.
+    await act(async () => {
+      await expect(result.current.election.vote([])).rejects.toThrow(
+        'Expected one encoded ballot per question',
+      )
+    })
+    expect(result.current.election.voting).toBe(false)
+  })
+
   it('threads queryOptions and resultsQueryOptions through to react-query', async () => {
     let electionCalls = 0
     let resultsCalls = 0

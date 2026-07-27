@@ -75,6 +75,12 @@ export interface ElectionContextValue extends Omit<ElectionAuthContextValue, 'cl
    * naming both sets.
    */
   vote(encodedBallots: number[][], memos?: (string | undefined)[]): Promise<string>
+  /**
+   * true exactly while a `vote()` call is in flight — from entry until it
+   * settles, whether it resolves or throws. Drive "processing your vote"
+   * overlays and disable submit buttons with it (double-submit guard).
+   */
+  voting: boolean
   voteId: string | null
   isAbleToVote: boolean
   /** Clears the voter's auth session and vote state. */
@@ -200,6 +206,7 @@ export function ElectionProvider({
     : null
 
   const [voteId, setVoteId] = useState<string | null>(null)
+  const [voting, setVoting] = useState(false)
   const [hasVoted, setHasVoted] = useState(false)
   const [isInCensus, setIsInCensus] = useState(false)
   const [voterQuestions, setVoterQuestions] = useState<ProcessQuestionStatus[]>([])
@@ -235,7 +242,7 @@ export function ElectionProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.connected, election?.id])
 
-  const vote = useCallback(
+  const castVotes = useCallback(
     async (encodedBallots: number[][], memos?: (string | undefined)[]): Promise<string> => {
       if (!election) throw new Error('Election not loaded')
       if (!session.connected) throw new Error('Voter is not authenticated for this election')
@@ -364,6 +371,22 @@ export function ElectionProvider({
     [election, session, chainId, client, voterQuestions],
   )
 
+  // Public vote(): the cast wrapped in the in-flight flag, so UIs can show a
+  // "processing your vote" state and guard against double submits. The flag
+  // clears on settle either way — including a PartialVoteError, where the UI
+  // is expected to offer a retry, not stay stuck "processing".
+  const vote = useCallback(
+    async (encodedBallots: number[][], memos?: (string | undefined)[]): Promise<string> => {
+      setVoting(true)
+      try {
+        return await castVotes(encodedBallots, memos)
+      } finally {
+        setVoting(false)
+      }
+    },
+    [castVotes],
+  )
+
   const clearVoter = useCallback(() => {
     setVoteId(null)
     setHasVoted(false)
@@ -392,11 +415,12 @@ export function ElectionProvider({
       voterQuestions,
       hasVoted,
       vote,
+      voting,
       voteId,
       isAbleToVote: session.connected && isInCensus && !hasVoted,
       clearVoter,
     }),
-    [election, status, chainId, results, loading, error, session, isInCensus, voterQuestions, hasVoted, vote, voteId, clearVoter],
+    [election, status, chainId, results, loading, error, session, isInCensus, voterQuestions, hasVoted, vote, voting, voteId, clearVoter],
   )
 
   return (

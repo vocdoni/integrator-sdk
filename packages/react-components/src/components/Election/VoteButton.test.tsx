@@ -8,20 +8,25 @@ const state = vi.hoisted(() => ({
   status: 'ONGOING' as QuestionStatus | null,
   isAbleToVote: false,
   hasVoted: false,
+  voting: false,
 }))
 vi.mock('@vocdoni/react-providers', () => ({ useElection: () => state }))
 
 import { VoteButton } from './VoteButton'
 
-const Slot = ({ disabled, label }: any) => (
-  <button data-testid="vote" disabled={disabled}>
+const Slot = ({ disabled, loading, label }: any) => (
+  <button data-testid="vote" disabled={disabled} data-loading={loading}>
     {label}
   </button>
 )
 const slots = { components: { VoteButton: Slot } }
 
 function setVoter(over: Partial<typeof state>) {
-  Object.assign(state, { election: makeProcess(), status: 'ONGOING', isAbleToVote: false, hasVoted: false }, over)
+  Object.assign(
+    state,
+    { election: makeProcess(), status: 'ONGOING', isAbleToVote: false, hasVoted: false, voting: false },
+    over,
+  )
 }
 
 describe('VoteButton', () => {
@@ -37,6 +42,14 @@ describe('VoteButton', () => {
     setVoter({ isAbleToVote: true, hasVoted: true })
     renderWithComponents(<VoteButton />, slots)
     expect(screen.getByTestId('vote')).toHaveTextContent('Re-submit vote')
+  })
+
+  it('is disabled and loading while a vote is in flight — no double submit', () => {
+    setVoter({ isAbleToVote: true, voting: true })
+    renderWithComponents(<VoteButton />, slots)
+    const btn = screen.getByTestId('vote')
+    expect(btn).toBeDisabled()
+    expect(btn).toHaveAttribute('data-loading', 'true')
   })
 
   it('is disabled when the voter is not able to vote', () => {
