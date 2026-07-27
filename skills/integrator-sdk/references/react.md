@@ -24,7 +24,7 @@ Providers must be nested in this order. Inner providers consume context from out
 ```tsx
 <ClientProvider apiUrl="..." authToken={...}>
   <AuthProvider storageKey="vocdoni-auth">   {/* optional — for admin flows */}
-    <OrganizationProvider address={orgAddr}> {/* optional — for org management */}
+    <OrganizationProvider id={orgAddress}>   {/* optional — for org management */}
       <ElectionProvider id={processMongoId}> {/* data + auth session + voting */}
         <ActionsProvider>                    {/* optional — pause/end/cancel */}
           <YourVotingUI />
@@ -103,8 +103,8 @@ import { ElectionProvider, useElection } from '@vocdoni/react-providers'
 <ElectionProvider election={prefetchedProcess}>...</ElectionProvider>
 
 // Tune the underlying react-query reads: `queryOptions` (election read) and
-// `resultsQueryOptions` (results read). queryKey/queryFn/initialData are
-// provider-owned; `enabled` is AND-ed with the provider's own guard.
+// `resultsQueryOptions` (results read). queryKey/queryFn/enabled/initialData
+// are provider-owned.
 <ElectionProvider
   id="<processMongoId>"
   queryOptions={{ refetchInterval: 30_000 }}        // poll for status changes
@@ -214,11 +214,15 @@ await cancel()   // → status 'canceled'
 ```tsx
 import { OrganizationProvider, useOrganization } from '@vocdoni/react-providers'
 
-<OrganizationProvider address={orgAddress}>...</OrganizationProvider>
+<OrganizationProvider id={orgAddress}>...</OrganizationProvider>
 
-// Optional: tune the underlying react-query read (queryKey/queryFn are
-// provider-owned; `enabled` is AND-ed with the provider's address guard).
-<OrganizationProvider address={orgAddress} queryOptions={{ staleTime: 60_000 }}>
+// Or with prefetched data — rendered instantly and seeded as initialData;
+// still refetches when stale. `id` derives from organization.address if omitted.
+<OrganizationProvider organization={prefetchedOrg}>...</OrganizationProvider>
+
+// Optional: tune the underlying react-query read
+// (queryKey/queryFn/enabled/initialData are provider-owned).
+<OrganizationProvider id={orgAddress} queryOptions={{ staleTime: 60_000 }}>
   ...
 </OrganizationProvider>
 

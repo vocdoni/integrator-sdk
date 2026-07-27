@@ -82,19 +82,18 @@ export interface ElectionContextValue extends Omit<ElectionAuthContextValue, 'cl
 }
 
 /**
- * Extra react-query options for the election read. `queryKey`, `queryFn` and
- * `initialData` are provider-owned; `enabled` is AND-ed with the provider's
- * own "id is known" guard.
+ * Extra react-query options for the election read. `queryKey`, `queryFn`,
+ * `enabled` and `initialData` are provider-owned.
  */
 export type ElectionQueryOptions = Omit<
   UseQueryOptions<VotingProcessResponse, Error>,
-  'queryKey' | 'queryFn' | 'initialData'
+  'queryKey' | 'queryFn' | 'enabled' | 'initialData'
 >
 
 /** Extra react-query options for the results read — same rules as {@link ElectionQueryOptions}. */
 export type ElectionResultsQueryOptions = Omit<
   UseQueryOptions<VotingProcessResultsResponse | null, Error>,
-  'queryKey' | 'queryFn' | 'initialData'
+  'queryKey' | 'queryFn' | 'enabled' | 'initialData'
 >
 
 export interface ElectionProviderBaseProps {
@@ -174,7 +173,7 @@ export function ElectionProvider({
     ...queryOptions,
     queryKey: electionQueryKeys.election(electionId!),
     queryFn: () => client.elections.get(electionId!),
-    enabled: !!electionId && (queryOptions?.enabled ?? true),
+    enabled: !!electionId,
     // Never seed the cache entry of `id` with a *different* election's data.
     initialData: prefetched && prefetched.id === electionId ? prefetched : undefined,
   })
@@ -189,7 +188,7 @@ export function ElectionProvider({
         if (err instanceof VocdoniApiError && err.status === 404) return null
         throw err
       }),
-    enabled: !!electionId && !!election && (resultsQueryOptions?.enabled ?? true),
+    enabled: !!electionId && !!election,
   })
 
   const session = useVoterSession(electionId, election)

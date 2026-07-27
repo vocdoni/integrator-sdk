@@ -13,13 +13,12 @@ export const organizationQueryKeys = {
 }
 
 /**
- * Extra react-query options for the organization read. `queryKey` and
- * `queryFn` are provider-owned; `enabled` is AND-ed with the provider's own
- * "address is known" guard.
+ * Extra react-query options for the organization read. `queryKey`, `queryFn`,
+ * `enabled` and `initialData` are provider-owned.
  */
 export type OrganizationQueryOptions = Omit<
   UseQueryOptions<Organization, Error>,
-  'queryKey' | 'queryFn'
+  'queryKey' | 'queryFn' | 'enabled' | 'initialData'
 >
 
 export interface OrganizationContextValue {
@@ -32,17 +31,33 @@ export interface OrganizationContextValue {
 
 export interface OrganizationProviderProps {
   children: ReactNode
-  /** If provided, the organization is fetched automatically on mount */
-  address?: string
+  /** Organization id (its address) — fetches the organization on mount. */
+  id?: string
+  /**
+   * Prefetched organization, rendered immediately instead of a loading state.
+   * Seeded into the query cache as `initialData`, so the provider still
+   * refetches — by `id`, or by `organization.address` when `id` is omitted —
+   * whenever the query goes stale.
+   */
+  organization?: Organization
   /** Extra react-query options for the organization read, e.g. `staleTime` or `refetchInterval`. */
   queryOptions?: OrganizationQueryOptions
 }
 
 const OrganizationContext = createContext<OrganizationContextValue | undefined>(undefined)
 
-export function OrganizationProvider({ children, address, queryOptions }: OrganizationProviderProps) {
+export function OrganizationProvider({
+  children,
+  id,
+  organization: prefetched,
+  queryOptions,
+}: OrganizationProviderProps) {
   const { client } = useClient()
   const queryClient = useQueryClient()
+
+  // The id drives the query; a prefetched organization carries its own
+  // address, so passing only `organization` still allows refetching.
+  const address = id ?? prefetched?.address
 
   const {
     data: organization = null,
@@ -52,7 +67,9 @@ export function OrganizationProvider({ children, address, queryOptions }: Organi
     ...queryOptions,
     queryKey: organizationQueryKeys.organization(address),
     queryFn: () => client.organizations.get(address!),
-    enabled: !!address && (queryOptions?.enabled ?? true),
+    enabled: !!address,
+    // Never seed the cache entry of `id` with a *different* org's data.
+    initialData: prefetched && prefetched.address === address ? prefetched : undefined,
   })
 
   const updateMutation = useMutation<

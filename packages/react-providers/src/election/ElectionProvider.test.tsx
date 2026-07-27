@@ -648,7 +648,7 @@ describe('ElectionProvider', () => {
           <ElectionProvider
             id={mockProcess.id}
             queryOptions={{ refetchInterval: 30 }}
-            resultsQueryOptions={{ enabled: false }}
+            resultsQueryOptions={{ refetchInterval: 30 }}
           >
             {children}
           </ElectionProvider>
@@ -657,11 +657,9 @@ describe('ElectionProvider', () => {
     })
 
     await waitFor(() => expect(result.current.election).not.toBeNull())
-    // refetchInterval on the election read keeps it polling…
+    // refetchInterval keeps both reads polling independently.
     await waitFor(() => expect(electionCalls).toBeGreaterThanOrEqual(2))
-    // …while the disabled results read never fires, even with the election loaded.
-    expect(resultsCalls).toBe(0)
-    expect(result.current.results).toBeNull()
+    await waitFor(() => expect(resultsCalls).toBeGreaterThanOrEqual(2))
     unmount()
   })
 

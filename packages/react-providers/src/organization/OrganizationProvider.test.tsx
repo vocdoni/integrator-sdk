@@ -9,10 +9,10 @@ import { OrganizationProvider, useOrganization } from './OrganizationProvider'
 const BASE = 'http://localhost'
 const ADDRESS = '0xdeadbeef'
 
-function wrapper(address?: string) {
+function wrapper(id?: string) {
   return ({ children }: { children: React.ReactNode }) => (
     <TestProvider>
-      <OrganizationProvider address={address}>{children}</OrganizationProvider>
+      <OrganizationProvider id={id}>{children}</OrganizationProvider>
     </TestProvider>
   )
 }
@@ -65,33 +65,44 @@ describe('OrganizationProvider', () => {
       }),
     )
 
-    // enabled: false wins over the provider's own address guard…
-    const disabled = renderHook(useOrganization, {
+    // refetchInterval keeps the read polling.
+    const { unmount } = renderHook(useOrganization, {
       wrapper: ({ children }) => (
         <TestProvider>
-          <OrganizationProvider address={ADDRESS} queryOptions={{ enabled: false }}>
-            {children}
-          </OrganizationProvider>
-        </TestProvider>
-      ),
-    })
-    await new Promise((r) => setTimeout(r, 50))
-    expect(fetchCalls).toBe(0)
-    expect(disabled.result.current.organization).toBeNull()
-    disabled.unmount()
-
-    // …and refetchInterval keeps the read polling.
-    const polling = renderHook(useOrganization, {
-      wrapper: ({ children }) => (
-        <TestProvider>
-          <OrganizationProvider address={ADDRESS} queryOptions={{ refetchInterval: 30 }}>
+          <OrganizationProvider id={ADDRESS} queryOptions={{ refetchInterval: 30 }}>
             {children}
           </OrganizationProvider>
         </TestProvider>
       ),
     })
     await waitFor(() => expect(fetchCalls).toBeGreaterThanOrEqual(2))
-    polling.unmount()
+    unmount()
+  })
+
+  it('renders a prefetched organization immediately and still refetches by its address', async () => {
+    let fetchCalls = 0
+    server.use(
+      http.get(`${BASE}/organizations/:address`, () => {
+        fetchCalls++
+        return HttpResponse.json({ ...mockOrganization, name: { default: 'Fresh Org' } })
+      }),
+    )
+
+    // No `id` prop at all: the provider must derive it from organization.address.
+    const { result } = renderHook(useOrganization, {
+      wrapper: ({ children }) => (
+        <TestProvider>
+          <OrganizationProvider organization={mockOrganization}>{children}</OrganizationProvider>
+        </TestProvider>
+      ),
+    })
+
+    // The prefetched data is available synchronously — no loading flash.
+    expect(result.current.loading).toBe(false)
+    expect(result.current.organization?.name).toEqual(mockOrganization.name)
+    // initialData is immediately stale (staleTime 0), so it refetches on mount.
+    await waitFor(() => expect(result.current.organization?.name).toEqual({ default: 'Fresh Org' }))
+    expect(fetchCalls).toBe(1)
   })
 
   it('throws a clear error when useOrganization() is used outside a provider', () => {
