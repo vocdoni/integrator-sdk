@@ -4,6 +4,8 @@ export {
   isUpcoming,
   hasResults,
   isSecretUntilTheEnd,
+  normalizeQuestionStatus,
+  normalizeVotingProcess,
   processVoteCount,
   computeProcessStatus,
 } from './election-status'

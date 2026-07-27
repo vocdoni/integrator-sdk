@@ -25,6 +25,7 @@ import type {
   VotingProcessValidateResponse,
 } from '@vocdoni/api-types'
 import type { UpFetch } from 'up-fetch'
+import { normalizeQuestionStatus, normalizeVotingProcess } from './election-status'
 import { handleError } from './errors'
 import { JobsClient, type WaitForJobOptions } from './jobs'
 
@@ -83,7 +84,9 @@ export class ElectionsClient {
    * scoped API key see drafts (and the `eligibleMemberIds` restriction lists).
    */
   async get(id: string): Promise<VotingProcessResponse> {
-    return this.fetch<VotingProcessResponse>(`/processes/${id}`).catch(handleError)
+    return this.fetch<VotingProcessResponse>(`/processes/${id}`)
+      .then(normalizeVotingProcess)
+      .catch(handleError)
   }
 
   /** Public tallies via `GET /processes/{id}/results` — live per-question {@link QuestionResults} plus ids. */
@@ -108,7 +111,9 @@ export class ElectionsClient {
    * {@link getResults} for tallies.
    */
   async list({ orgAddress, ...params }: ElectionListParams): Promise<VotingProcessListResponse> {
-    return this.fetch<VotingProcessListResponse>('/processes', { params: { orgAddress, ...params } }).catch(handleError)
+    return this.fetch<VotingProcessListResponse>('/processes', { params: { orgAddress, ...params } })
+      .then((res) => ({ ...res, processes: res.processes.map(normalizeVotingProcess) }))
+      .catch(handleError)
   }
 
   /**
@@ -269,7 +274,9 @@ export class ElectionsClient {
    * `GET /processes/{processId}/questions/{questionId}`.
    */
   async getQuestion(processId: string, questionId: string): Promise<PublicQuestionResponse> {
-    return this.fetch<PublicQuestionResponse>(`/processes/${processId}/questions/${questionId}`).catch(handleError)
+    return this.fetch<PublicQuestionResponse>(`/processes/${processId}/questions/${questionId}`)
+      .then((q) => ({ ...q, status: normalizeQuestionStatus(q.status) }))
+      .catch(handleError)
   }
 
   /**

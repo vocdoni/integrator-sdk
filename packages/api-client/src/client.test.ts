@@ -25,6 +25,20 @@ describe('VocdoniApiClient', () => {
       expect(process.published).toBe(true)
       expect(process.questions).toHaveLength(mockProcess.questions.length)
     })
+
+    it('normalizes the wire READY question status to ONGOING', async () => {
+      server.use(
+        http.get(`${BASE_URL}/processes/:id`, ({ params }) =>
+          HttpResponse.json({
+            ...mockProcess,
+            id: params.id as string,
+            questions: [{ ...mockProcess.questions[0], status: 'READY' }],
+          }),
+        ),
+      )
+      const process = await client.elections.get('abc123')
+      expect(process.questions[0].status).toBe('ONGOING')
+    })
   })
 
   describe('elections.vote', () => {

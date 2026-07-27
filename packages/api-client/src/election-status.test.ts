@@ -10,11 +10,16 @@ import {
   isLive,
   isSecretUntilTheEnd,
   isUpcoming,
+  normalizeQuestionStatus,
+  normalizeVotingProcess,
   processVoteCount,
 } from './election-status'
 
 const q = (status: VotingProcessQuestion['status']): VotingProcessQuestion =>
   ({ status } as VotingProcessQuestion)
+
+/** The wire's live-question name that QuestionStatus doesn't declare. */
+const READY = 'READY' as VotingProcessQuestion['status']
 
 const base: VotingProcessResponse = {
   id: 'proc-1',
@@ -26,6 +31,25 @@ const base: VotingProcessResponse = {
   census: {},
   questions: [],
 }
+
+describe('normalizeQuestionStatus', () => {
+  it('maps the wire READY to ONGOING — same semantic state', () => {
+    expect(normalizeQuestionStatus('READY')).toBe('ONGOING')
+  })
+
+  it('passes every declared status through untouched', () => {
+    for (const s of ['PROCESS_UNKNOWN', 'UPCOMING', 'ONGOING', 'ENDED', 'CANCELED', 'PAUSED', 'RESULTS']) {
+      expect(normalizeQuestionStatus(s)).toBe(s)
+    }
+  })
+})
+
+describe('normalizeVotingProcess', () => {
+  it('normalizes every question status of a process read', () => {
+    const normalized = normalizeVotingProcess({ ...base, questions: [q(READY), q('ENDED')] })
+    expect(normalized.questions.map((x) => x.status)).toEqual(['ONGOING', 'ENDED'])
+  })
+})
 
 describe('isLive', () => {
   it('is true when the process status is ONGOING', () => {
@@ -56,6 +80,14 @@ describe('isLive', () => {
   it('is true when any question is ONGOING (mixed)', () => {
     const p: VotingProcessResponse = { ...base, questions: [q('ENDED'), q('ONGOING')] }
     expect(isLive(p)).toBe(true)
+  })
+
+  it('is true for the wire READY status — raw data that skipped the client', () => {
+    const p: VotingProcessResponse = { ...base, questions: [q(READY)] }
+    expect(isLive(p)).toBe(true)
+    expect(computeProcessStatus(p.questions)).toBe('ONGOING')
+    // Mixed with a non-live status, READY still wins as ONGOING (rule 1).
+    expect(computeProcessStatus([q('ENDED'), q(READY)])).toBe('ONGOING')
   })
 
   it('is false when no questions', () => {

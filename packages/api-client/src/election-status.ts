@@ -6,6 +6,22 @@ import type {
 } from '@vocdoni/api-types'
 
 /**
+ * The backend emits `READY` for a live question at runtime — the same semantic
+ * state as `ONGOING`, which is the only name {@link QuestionStatus} declares.
+ * Normalize it away at the read boundary so `status === 'ONGOING'` comparisons
+ * hold; the wire name `ready` then only exists in the write API
+ * (`SetElectionStatusRequest` / `bulkSetQuestionStatus`).
+ */
+export const normalizeQuestionStatus = (status: string): QuestionStatus =>
+  (status === 'READY' ? 'ONGOING' : status) as QuestionStatus
+
+/** Normalizes every question's status of a process read (`READY` → `ONGOING`). */
+export const normalizeVotingProcess = <T extends VotingProcessResponse>(process: T): T => ({
+  ...process,
+  questions: process.questions.map((q) => ({ ...q, status: normalizeQuestionStatus(q.status) })),
+})
+
+/**
  * Derive a single {@link QuestionStatus} for a process from its questions' statuses.
  *
  * Rules (applied in order):
@@ -13,11 +29,15 @@ import type {
  * 2. All questions share the same status → that status (e.g. all `RESULTS`, all `PAUSED`)
  * 3. All questions in `{ENDED, RESULTS}` → `ENDED` (mixed: some results still computing)
  * 4. No questions or mixed state → `PROCESS_UNKNOWN`
+ *
+ * Statuses are normalized first (`READY` → `ONGOING`), so the derivation also
+ * holds for raw wire data that didn't pass through the client (e.g. an SSR
+ * payload handed to `<ElectionProvider election>`).
  */
 export const computeProcessStatus = (questions: VotingProcessQuestion[]): QuestionStatus => {
   if (questions.length === 0) return 'PROCESS_UNKNOWN'
 
-  const statuses = questions.map((q) => q.status)
+  const statuses = questions.map((q) => normalizeQuestionStatus(q.status))
 
   if (statuses.includes('ONGOING')) return 'ONGOING'
 

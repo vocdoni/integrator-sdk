@@ -236,6 +236,12 @@ export type ElectionStatus = 'READY' | 'PAUSED' | 'ENDED' | 'CANCELED' | 'UPCOMI
  * a separate Vochain election, so its status follows the Vochain lifecycle.
  * Use {@link computeProcessStatus} (from `@vocdoni/api-client`) to derive a
  * combined status for the whole process.
+ *
+ * Wire caveat: the backend emits `READY` for a live question — the same
+ * semantic state as `ONGOING`. `@vocdoni/api-client` normalizes it to
+ * `ONGOING` on every process/question read (`normalizeQuestionStatus`), so
+ * `READY` is deliberately not part of this union; raw wire data that skipped
+ * the client may still carry it.
  */
 export type QuestionStatus =
   | 'PROCESS_UNKNOWN'

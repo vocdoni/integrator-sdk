@@ -186,6 +186,10 @@ const nullifier = await vote(encodedBallots)
 - All `ENDED` or `RESULTS` → `ENDED`
 - Otherwise → `PROCESS_UNKNOWN`
 
+The wire status `READY` (a live question) is normalized to `ONGOING` on every
+client read — and defensively inside `computeProcessStatus` too, so raw SSR
+data passed via `<ElectionProvider election>` derives correctly as well.
+
 ---
 
 ## ActionsProvider / useActions

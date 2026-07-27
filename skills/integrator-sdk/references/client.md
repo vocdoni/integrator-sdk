@@ -379,6 +379,7 @@ interface VotingProcessQuestion {
   typeSetup?: QuestionTypeSetup       // { minChoices, maxChoices, uniqueChoices }
   secretUntilTheEnd: boolean
   status: QuestionStatus              // 'UPCOMING' | 'ONGOING' | 'ENDED' | 'CANCELED' | 'PAUSED' | 'RESULTS' | 'PROCESS_UNKNOWN'
+                                      // wire may say 'READY' for live; the client normalizes it to 'ONGOING' on read
   encryptionKeys?: EncryptionKey[]    // secretUntilTheEnd only; ABSENT until keykeepers publish — poll
   results?: QuestionResults           // live tally — single reads only (never on list items)
 }
