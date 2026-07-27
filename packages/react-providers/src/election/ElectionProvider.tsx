@@ -63,11 +63,22 @@ export interface ElectionContextValue {
   clearVoter(): void
 }
 
-export interface ElectionProviderProps {
+export interface ElectionProviderBaseProps {
   children: ReactNode
   /** Election ID (the voting process Mongo ObjectID) — fetches the election on mount. */
-  id: string
+  id?: string
+  /**
+   * Prefetched election, rendered immediately instead of a loading state.
+   * Seeded into the query cache as `initialData`, so the provider still
+   * refetches — by `id`, or by `election.id` when `id` is omitted — whenever
+   * the query goes stale (immediately, under the default `staleTime` of 0).
+   */
+  election?: VotingProcessResponse
 }
+
+/** At least one of `id` or `election` must be provided. */
+export type ElectionProviderProps = ElectionProviderBaseProps &
+  ({ id: string } | { election: VotingProcessResponse })
 
 /**
  * Thrown by `vote()` when some questions' votes landed on chain and others
@@ -92,30 +103,36 @@ export class PartialVoteError extends Error {
 
 const ElectionContext = createContext<ElectionContextValue | undefined>(undefined)
 
-export function ElectionProvider({ children, id }: ElectionProviderProps) {
+export function ElectionProvider({ children, id, election: prefetched }: ElectionProviderProps) {
   const { client } = useClient()
   const process = useProcessOptional()
+
+  // The id drives every query; a prefetched election carries its own, so
+  // passing only `election` still leaves the provider able to refetch.
+  const electionId = id ?? prefetched?.id
 
   const {
     data: election = null,
     isLoading: loading,
     error,
   } = useQuery<VotingProcessResponse, Error>({
-    queryKey: processQueryKeys.process(id),
-    queryFn: () => client.elections.get(id),
-    enabled: !!id,
+    queryKey: processQueryKeys.process(electionId!),
+    queryFn: () => client.elections.get(electionId!),
+    enabled: !!electionId,
+    // Never seed the cache entry of `id` with a *different* election's data.
+    initialData: prefetched && prefetched.id === electionId ? prefetched : undefined,
   })
 
   const { data: results = null } = useQuery<VotingProcessResultsResponse | null, Error>({
-    queryKey: processQueryKeys.results(id),
+    queryKey: processQueryKeys.results(electionId!),
     // A 404 legitimately means "no results yet" (e.g. before any question is
     // published) — swallow it instead of letting react-query retry the endpoint.
     queryFn: () =>
-      client.elections.getResults(id).catch((err) => {
+      client.elections.getResults(electionId!).catch((err) => {
         if (err instanceof VocdoniApiError && err.status === 404) return null
         throw err
       }),
-    enabled: !!id && !!election,
+    enabled: !!electionId && !!election,
   })
 
   const chainId = election?.chainId ?? process?.chainId ?? null

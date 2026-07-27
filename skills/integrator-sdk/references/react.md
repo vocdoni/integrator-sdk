@@ -140,6 +140,12 @@ import { ElectionProvider, useElection } from '@vocdoni/react-providers'
 
 <ElectionProvider id="<processId>">...</ElectionProvider>
 
+// Or with prefetched data (e.g. from SSR or a list view). Rendered instantly —
+// no loading state — and seeded into the react-query cache as initialData, so
+// the provider still refetches when the data goes stale. `id` is optional here
+// (derived from election.id); at least one of the two props is required.
+<ElectionProvider election={prefetchedProcess}>...</ElectionProvider>
+
 const {
   election,      // VotingProcessResponse | null — full process with questions[]
   status,        // QuestionStatus | null — derived from all question statuses

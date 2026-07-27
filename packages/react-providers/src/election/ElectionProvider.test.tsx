@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { SignedTx, Tx } from '@vocdoni/proto/vochain'
 import { fromHex } from '@vocdoni/api-voting'
+import type { VotingProcessResponse } from '@vocdoni/api-types'
 import { describe, expect, it } from 'vitest'
 import { MOCK_CSP_SIGNATURE, MOCK_WEIGHT_HEX, mockProcess } from '../../../../mocks/handlers'
 import { server } from '../../../../mocks/server'
@@ -535,6 +536,99 @@ describe('ElectionProvider', () => {
     expect(partial.succeeded).toEqual([{ questionId: 'q-0', voteId: 'nullifier-job-0' }])
     expect(partial.failed).toHaveLength(1)
     expect(partial.failed[0].questionId).toBe('q-1')
+  })
+
+  it('renders a prefetched election immediately and still refetches by its id', async () => {
+    let fetchCalls = 0
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) => {
+        fetchCalls++
+        return HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          title: { default: 'Fresh title' },
+        })
+      }),
+    )
+
+    const prefetched = {
+      ...mockProcess,
+      title: { default: 'Prefetched title' },
+    } as VotingProcessResponse
+
+    // No `id` prop at all: the provider must derive it from `election.id`.
+    const { result } = renderHook(useElection, {
+      wrapper: ({ children }) => (
+        <TestProvider>
+          <ElectionProvider election={prefetched}>{children}</ElectionProvider>
+        </TestProvider>
+      ),
+    })
+
+    // The prefetched data is available synchronously — no loading flash.
+    expect(result.current.loading).toBe(false)
+    expect(result.current.election?.title).toEqual({ default: 'Prefetched title' })
+    // initialData is immediately stale (staleTime 0), so it refetches on mount.
+    await waitFor(() => expect(result.current.election?.title).toEqual({ default: 'Fresh title' }))
+    expect(fetchCalls).toBe(1)
+  })
+
+  it('with both election and id, seeds the prefetched data under the id and refetches', async () => {
+    let fetchCalls = 0
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) => {
+        fetchCalls++
+        return HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          title: { default: 'Fresh title' },
+        })
+      }),
+    )
+
+    const prefetched = {
+      ...mockProcess,
+      title: { default: 'Prefetched title' },
+    } as VotingProcessResponse
+
+    const { result } = renderHook(useElection, {
+      wrapper: ({ children }) => (
+        <TestProvider>
+          <ElectionProvider id={mockProcess.id} election={prefetched}>
+            {children}
+          </ElectionProvider>
+        </TestProvider>
+      ),
+    })
+
+    expect(result.current.loading).toBe(false)
+    expect(result.current.election?.title).toEqual({ default: 'Prefetched title' })
+    await waitFor(() => expect(result.current.election?.title).toEqual({ default: 'Fresh title' }))
+    expect(fetchCalls).toBe(1)
+  })
+
+  it('ignores a prefetched election whose id mismatches the id prop', async () => {
+    const prefetched = {
+      ...mockProcess,
+      id: 'someOtherProcess',
+      title: { default: 'Wrong election' },
+    } as VotingProcessResponse
+
+    const { result } = renderHook(useElection, {
+      wrapper: ({ children }) => (
+        <TestProvider>
+          <ElectionProvider id={mockProcess.id} election={prefetched}>
+            {children}
+          </ElectionProvider>
+        </TestProvider>
+      ),
+    })
+
+    // The mismatched data must never be shown under `id`'s cache entry.
+    expect(result.current.election?.title).not.toEqual({ default: 'Wrong election' })
+    await waitFor(() => expect(result.current.election).not.toBeNull())
+    expect(result.current.election?.id).toBe(mockProcess.id)
+    expect(result.current.election?.title).toEqual({ default: 'Test Process' })
   })
 
   it('clearVoter resets connection and vote state', async () => {

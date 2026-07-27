@@ -39,6 +39,7 @@ export {
   PartialVoteError,
   useElection,
   type ElectionContextValue,
+  type ElectionProviderBaseProps,
   type ElectionProviderProps,
 } from './election/ElectionProvider'
 
