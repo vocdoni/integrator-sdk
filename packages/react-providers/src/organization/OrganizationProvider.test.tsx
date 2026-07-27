@@ -56,6 +56,44 @@ describe('OrganizationProvider', () => {
     expect(result.current.organization).toBeNull()
   })
 
+  it('threads queryOptions through to react-query', async () => {
+    let fetchCalls = 0
+    server.use(
+      http.get(`${BASE}/organizations/:address`, () => {
+        fetchCalls++
+        return HttpResponse.json(mockOrganization)
+      }),
+    )
+
+    // enabled: false wins over the provider's own address guard…
+    const disabled = renderHook(useOrganization, {
+      wrapper: ({ children }) => (
+        <TestProvider>
+          <OrganizationProvider address={ADDRESS} queryOptions={{ enabled: false }}>
+            {children}
+          </OrganizationProvider>
+        </TestProvider>
+      ),
+    })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(fetchCalls).toBe(0)
+    expect(disabled.result.current.organization).toBeNull()
+    disabled.unmount()
+
+    // …and refetchInterval keeps the read polling.
+    const polling = renderHook(useOrganization, {
+      wrapper: ({ children }) => (
+        <TestProvider>
+          <OrganizationProvider address={ADDRESS} queryOptions={{ refetchInterval: 30 }}>
+            {children}
+          </OrganizationProvider>
+        </TestProvider>
+      ),
+    })
+    await waitFor(() => expect(fetchCalls).toBeGreaterThanOrEqual(2))
+    polling.unmount()
+  })
+
   it('throws a clear error when useOrganization() is used outside a provider', () => {
     expect(() => renderHook(useOrganization)).toThrow(
       'useOrganization() must be used inside <OrganizationProvider>',

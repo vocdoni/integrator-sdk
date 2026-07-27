@@ -74,9 +74,11 @@ export {
 
 export {
   OrganizationProvider,
+  organizationQueryKeys,
   useOrganization,
   type OrganizationContextValue,
   type OrganizationProviderProps,
+  type OrganizationQueryOptions,
 } from '@vocdoni/react-providers'
 
 export {
@@ -88,6 +90,8 @@ export {
   type ElectionContextValue,
   type ElectionProviderBaseProps,
   type ElectionProviderProps,
+  type ElectionQueryOptions,
+  type ElectionResultsQueryOptions,
   type ElectionSignResult,
 } from '@vocdoni/react-providers'
 

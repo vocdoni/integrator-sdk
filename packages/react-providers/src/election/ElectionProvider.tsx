@@ -5,7 +5,7 @@ import type {
   VotingProcessResultsResponse,
 } from '@vocdoni/api-types'
 import { buildVoteTransaction, EphemeralSigner, MAX_MEMO_BYTES } from '@vocdoni/api-voting'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, type UseQueryOptions } from '@tanstack/react-query'
 import {
   createContext,
   useCallback,
@@ -81,6 +81,22 @@ export interface ElectionContextValue extends Omit<ElectionAuthContextValue, 'cl
   clearVoter(): void
 }
 
+/**
+ * Extra react-query options for the election read. `queryKey`, `queryFn` and
+ * `initialData` are provider-owned; `enabled` is AND-ed with the provider's
+ * own "id is known" guard.
+ */
+export type ElectionQueryOptions = Omit<
+  UseQueryOptions<VotingProcessResponse, Error>,
+  'queryKey' | 'queryFn' | 'initialData'
+>
+
+/** Extra react-query options for the results read — same rules as {@link ElectionQueryOptions}. */
+export type ElectionResultsQueryOptions = Omit<
+  UseQueryOptions<VotingProcessResultsResponse | null, Error>,
+  'queryKey' | 'queryFn' | 'initialData'
+>
+
 export interface ElectionProviderBaseProps {
   children: ReactNode
   /** Election ID (the voting process Mongo ObjectID) — fetches the election on mount. */
@@ -92,6 +108,16 @@ export interface ElectionProviderBaseProps {
    * the query goes stale (immediately, under the default `staleTime` of 0).
    */
   election?: VotingProcessResponse
+  /**
+   * Extra react-query options for the election read, e.g. `refetchInterval`
+   * to poll for status changes or `staleTime` to trust prefetched data.
+   */
+  queryOptions?: ElectionQueryOptions
+  /**
+   * Extra react-query options for the results read, e.g. `refetchInterval`
+   * for live tallies.
+   */
+  resultsQueryOptions?: ElectionResultsQueryOptions
 }
 
 /** At least one of `id` or `election` must be provided. */
@@ -127,7 +153,13 @@ const ElectionContext = createContext<ElectionContextValue | undefined>(undefine
  * context readable through `useElectionAuth()`, so auth-only widgets don't
  * re-render on data/results updates.
  */
-export function ElectionProvider({ children, id, election: prefetched }: ElectionProviderProps) {
+export function ElectionProvider({
+  children,
+  id,
+  election: prefetched,
+  queryOptions,
+  resultsQueryOptions,
+}: ElectionProviderProps) {
   const { client } = useClient()
 
   // The id drives every query; a prefetched election carries its own, so
@@ -139,14 +171,16 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
     isLoading: loading,
     error,
   } = useQuery<VotingProcessResponse, Error>({
+    ...queryOptions,
     queryKey: electionQueryKeys.election(electionId!),
     queryFn: () => client.elections.get(electionId!),
-    enabled: !!electionId,
+    enabled: !!electionId && (queryOptions?.enabled ?? true),
     // Never seed the cache entry of `id` with a *different* election's data.
     initialData: prefetched && prefetched.id === electionId ? prefetched : undefined,
   })
 
   const { data: results = null } = useQuery<VotingProcessResultsResponse | null, Error>({
+    ...resultsQueryOptions,
     queryKey: electionQueryKeys.results(electionId!),
     // A 404 legitimately means "no results yet" (e.g. before any question is
     // published) — swallow it instead of letting react-query retry the endpoint.
@@ -155,7 +189,7 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
         if (err instanceof VocdoniApiError && err.status === 404) return null
         throw err
       }),
-    enabled: !!electionId && !!election,
+    enabled: !!electionId && !!election && (resultsQueryOptions?.enabled ?? true),
   })
 
   const session = useVoterSession(electionId, election)

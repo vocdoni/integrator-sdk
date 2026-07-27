@@ -17,9 +17,11 @@ export {
 // ─── Organization ─────────────────────────────────────────────────────────────
 export {
   OrganizationProvider,
+  organizationQueryKeys,
   useOrganization,
   type OrganizationContextValue,
   type OrganizationProviderProps,
+  type OrganizationQueryOptions,
 } from './organization/OrganizationProvider'
 
 // ─── Election ─────────────────────────────────────────────────────────────────
@@ -31,6 +33,8 @@ export {
   type ElectionContextValue,
   type ElectionProviderBaseProps,
   type ElectionProviderProps,
+  type ElectionQueryOptions,
+  type ElectionResultsQueryOptions,
 } from './election/ElectionProvider'
 
 export {

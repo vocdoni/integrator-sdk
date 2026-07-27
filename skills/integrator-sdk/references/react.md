@@ -24,7 +24,7 @@ Providers must be nested in this order. Inner providers consume context from out
 ```tsx
 <ClientProvider apiUrl="..." authToken={...}>
   <AuthProvider storageKey="vocdoni-auth">   {/* optional — for admin flows */}
-    <OrganizationProvider id={orgId}>        {/* optional — for org management */}
+    <OrganizationProvider address={orgAddr}> {/* optional — for org management */}
       <ElectionProvider id={processMongoId}> {/* data + auth session + voting */}
         <ActionsProvider>                    {/* optional — pause/end/cancel */}
           <YourVotingUI />
@@ -101,6 +101,15 @@ import { ElectionProvider, useElection } from '@vocdoni/react-providers'
 // the provider still refetches when the data goes stale. `id` is optional here
 // (derived from election.id); at least one of the two props is required.
 <ElectionProvider election={prefetchedProcess}>...</ElectionProvider>
+
+// Tune the underlying react-query reads: `queryOptions` (election read) and
+// `resultsQueryOptions` (results read). queryKey/queryFn/initialData are
+// provider-owned; `enabled` is AND-ed with the provider's own guard.
+<ElectionProvider
+  id="<processMongoId>"
+  queryOptions={{ refetchInterval: 30_000 }}        // poll for status changes
+  resultsQueryOptions={{ refetchInterval: 10_000 }} // live tallies
+>...</ElectionProvider>
 
 const {
   // data
@@ -205,10 +214,18 @@ await cancel()   // → status 'canceled'
 ```tsx
 import { OrganizationProvider, useOrganization } from '@vocdoni/react-providers'
 
-<OrganizationProvider id={orgAddress}>...</OrganizationProvider>
+<OrganizationProvider address={orgAddress}>...</OrganizationProvider>
 
-const { organization, loading, error } = useOrganization()
+// Optional: tune the underlying react-query read (queryKey/queryFn are
+// provider-owned; `enabled` is AND-ed with the provider's address guard).
+<OrganizationProvider address={orgAddress} queryOptions={{ staleTime: 60_000 }}>
+  ...
+</OrganizationProvider>
+
+const { organization, loading, error, fetch, update } = useOrganization()
 ```
+
+`organizationQueryKeys.organization(address)` is exported for cache pre-seeding/invalidation, mirroring `electionQueryKeys`.
 
 ---
 

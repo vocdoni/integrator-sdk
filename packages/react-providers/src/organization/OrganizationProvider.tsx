@@ -1,7 +1,26 @@
 import type { CreateOrganizationRequest, Organization } from '@vocdoni/api-types'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
 import { createContext, useCallback, useContext, type ReactNode } from 'react'
 import { useClient } from '../client/ClientProvider'
+
+/**
+ * Query keys the organization provider reads through. Exported so consumers
+ * can pre-seed (`setQueryData`) or invalidate these queries without hardcoding
+ * the key shape.
+ */
+export const organizationQueryKeys = {
+  organization: (address: string | undefined) => ['organization', address] as const,
+}
+
+/**
+ * Extra react-query options for the organization read. `queryKey` and
+ * `queryFn` are provider-owned; `enabled` is AND-ed with the provider's own
+ * "address is known" guard.
+ */
+export type OrganizationQueryOptions = Omit<
+  UseQueryOptions<Organization, Error>,
+  'queryKey' | 'queryFn'
+>
 
 export interface OrganizationContextValue {
   organization: Organization | null
@@ -15,11 +34,13 @@ export interface OrganizationProviderProps {
   children: ReactNode
   /** If provided, the organization is fetched automatically on mount */
   address?: string
+  /** Extra react-query options for the organization read, e.g. `staleTime` or `refetchInterval`. */
+  queryOptions?: OrganizationQueryOptions
 }
 
 const OrganizationContext = createContext<OrganizationContextValue | undefined>(undefined)
 
-export function OrganizationProvider({ children, address }: OrganizationProviderProps) {
+export function OrganizationProvider({ children, address, queryOptions }: OrganizationProviderProps) {
   const { client } = useClient()
   const queryClient = useQueryClient()
 
@@ -28,9 +49,10 @@ export function OrganizationProvider({ children, address }: OrganizationProvider
     isLoading: loading,
     error,
   } = useQuery<Organization, Error>({
-    queryKey: ['organization', address],
+    ...queryOptions,
+    queryKey: organizationQueryKeys.organization(address),
     queryFn: () => client.organizations.get(address!),
-    enabled: !!address,
+    enabled: !!address && (queryOptions?.enabled ?? true),
   })
 
   const updateMutation = useMutation<
@@ -40,7 +62,7 @@ export function OrganizationProvider({ children, address }: OrganizationProvider
   >({
     mutationFn: ({ address: addr, data }) => client.organizations.update(addr, data),
     onSuccess: (updated) => {
-      queryClient.setQueryData(['organization', updated.address], updated)
+      queryClient.setQueryData(organizationQueryKeys.organization(updated.address), updated)
     },
   })
 
@@ -49,7 +71,7 @@ export function OrganizationProvider({ children, address }: OrganizationProvider
       const target = addr ?? address
       if (!target) throw new Error('fetch() requires an address when none is set on the provider')
       await queryClient.fetchQuery({
-        queryKey: ['organization', target],
+        queryKey: organizationQueryKeys.organization(target),
         queryFn: () => client.organizations.get(target),
       })
     },

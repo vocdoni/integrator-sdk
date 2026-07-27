@@ -628,6 +628,43 @@ describe('ElectionProvider', () => {
     expect(result.current.election?.title).toEqual({ default: 'Test Process' })
   })
 
+  it('threads queryOptions and resultsQueryOptions through to react-query', async () => {
+    let electionCalls = 0
+    let resultsCalls = 0
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) => {
+        electionCalls++
+        return HttpResponse.json({ ...mockProcess, id: params.id as string })
+      }),
+      http.get(`http://localhost/processes/:id/results`, () => {
+        resultsCalls++
+        return HttpResponse.json({ processId: mockProcess.id, questions: [] })
+      }),
+    )
+
+    const { result, unmount } = renderHook(useElection, {
+      wrapper: ({ children }) => (
+        <TestProvider>
+          <ElectionProvider
+            id={mockProcess.id}
+            queryOptions={{ refetchInterval: 30 }}
+            resultsQueryOptions={{ enabled: false }}
+          >
+            {children}
+          </ElectionProvider>
+        </TestProvider>
+      ),
+    })
+
+    await waitFor(() => expect(result.current.election).not.toBeNull())
+    // refetchInterval on the election read keeps it polling…
+    await waitFor(() => expect(electionCalls).toBeGreaterThanOrEqual(2))
+    // …while the disabled results read never fires, even with the election loaded.
+    expect(resultsCalls).toBe(0)
+    expect(result.current.results).toBeNull()
+    unmount()
+  })
+
   it('clearVoter resets connection and vote state', async () => {
     const { result } = renderHook(useVoter, { wrapper })
     await waitFor(() => expect(result.current.election.election).not.toBeNull())
