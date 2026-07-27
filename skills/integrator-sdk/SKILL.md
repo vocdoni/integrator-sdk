@@ -59,7 +59,9 @@ Steps 1–4 are handled by `@vocdoni/api-client` (`client.elections.get` /
 `getResults` for the public reads; `client.processes` — `ProcessesCspClient` —
 for the CSP auth/check/sign routes).
 Steps 5–6 are handled by `@vocdoni/api-voting` (`VotingClient` or `buildVoteTransaction` directly).
-In React, `ProcessProvider` + `ElectionProvider` automate the flow.
+In React, `ElectionProvider` automates the whole flow — election data, the
+voter's CSP auth session (`useElectionAuth`) and voting (`useElection`).
+(There is no separate `ProcessProvider` — it was merged into `ElectionProvider`.)
 
 There is no bundle flow anymore: the legacy `/process/bundle/*` routes were
 removed from the backend along with `BundleClient` — everything is

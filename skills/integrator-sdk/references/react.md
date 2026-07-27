@@ -2,10 +2,12 @@
 
 Two packages that work together. `react-providers` is the headless logic layer (context + hooks); `react-components` is the unstyled UI layer built on top of it.
 
-The voter flow is process-scoped: `ProcessProvider` holds the CSP auth session
-against the voting process (`client.processes`), and `ElectionProvider` reads
-the same process and drives the per-question vote. Both take the process's
-Mongo ObjectID and share one react-query fetch (`processQueryKeys`).
+The voter flow is process-scoped and lives in ONE provider: `ElectionProvider`
+fetches the voting process, drives the per-question vote AND holds the voter's
+CSP auth session (`client.processes`). `useElection()` exposes everything;
+`useElectionAuth()` exposes just the session (for auth-only widgets that
+shouldn't re-render on data/results updates). Query keys are exported as
+`electionQueryKeys` for cache pre-seeding/invalidation.
 
 ```bash
 pnpm add @vocdoni/react-providers @vocdoni/react-components
@@ -23,19 +25,17 @@ Providers must be nested in this order. Inner providers consume context from out
 <ClientProvider apiUrl="..." authToken={...}>
   <AuthProvider storageKey="vocdoni-auth">   {/* optional — for admin flows */}
     <OrganizationProvider id={orgId}>        {/* optional — for org management */}
-      <ProcessProvider id={processMongoId}>  {/* required for voting */}
-        <ElectionProvider id={processMongoId}>
-          <ActionsProvider>                  {/* optional — pause/end/cancel */}
-            <YourVotingUI />
-          </ActionsProvider>
-        </ElectionProvider>
-      </ProcessProvider>
+      <ElectionProvider id={processMongoId}> {/* data + auth session + voting */}
+        <ActionsProvider>                    {/* optional — pause/end/cancel */}
+          <YourVotingUI />
+        </ActionsProvider>
+      </ElectionProvider>
     </OrganizationProvider>
   </AuthProvider>
 </ClientProvider>
 ```
 
-`ElectionProvider` can be rendered without `ProcessProvider` for read-only views (results, status — `chainId` resolves from its own process read). The vote functionality requires `ProcessProvider` as its parent.
+For read-only views (results, status) just render `ElectionProvider` and never call the auth methods — nothing else is required.
 
 ---
 
@@ -65,8 +65,9 @@ const { client, apiUrl } = useClient()
 
 Normal-SaaS-user session management — a signed-up user logging in with
 email/password to drive the SDK under their own organization. Not the integrator
-API-key flow, and not the voter CSP flow (that's `ProcessProvider`). Persists the
-JWT to `localStorage` when `storageKey` is provided.
+API-key flow, and not the voter CSP flow (that's `ElectionProvider`'s session,
+read via `useElectionAuth`). Persists the JWT to `localStorage` when
+`storageKey` is provided.
 
 ```tsx
 import { AuthProvider, useAuth } from '@vocdoni/react-providers'
@@ -86,32 +87,52 @@ sends it as Bearer.
 
 ---
 
-## ProcessProvider / useProcess
+## ElectionProvider / useElection
 
-Holds the voter's CSP auth session for one voting process. Exposes the full auth flow as methods. The process read is PUBLIC for published processes (drafts 404), so no API key is involved anywhere in the voter path.
+Fetches the voting process and exposes its data, results, the full vote flow AND the voter's CSP auth session. The process read is PUBLIC for published processes (drafts 404), so no API key is involved anywhere in the voter path.
 
 ```tsx
-import { ProcessProvider, useProcess } from '@vocdoni/react-providers'
+import { ElectionProvider, useElection } from '@vocdoni/react-providers'
 
-<ProcessProvider id="<processMongoId>">...</ProcessProvider>
+<ElectionProvider id="<processMongoId>">...</ElectionProvider>
+
+// Or with prefetched data (e.g. from SSR or a list view). Rendered instantly —
+// no loading state — and seeded into the react-query cache as initialData, so
+// the provider still refetches when the data goes stale. `id` is optional here
+// (derived from election.id); at least one of the two props is required.
+<ElectionProvider election={prefetchedProcess}>...</ElectionProvider>
 
 const {
-  processId,   // string — the process Mongo ObjectID
-  process,     // VotingProcessResponse | null — public process read (questions, census, chainId)
-  chainId,     // string | null — Vochain chain id (from the public process read)
-  authToken,   // string | null — verified token; null until authenticated
-  connected,   // boolean — true once the voter holds a verified authToken
-  weight,      // number | null — census weight (decoded from hex)
-  auth0,       // (participant: AuthRequest) => Promise<void>
-  auth1,       // (solution: string | string[]) => Promise<void>  — confirm 2FA OTP
-  resend,      // ({ email?, phone? }) => Promise<void>
-  check,       // () => Promise<ProcessCheckResponse> — per-question canVote/hasVoted
-  sign,        // (electionId, address) => Promise<sign result> — electionId = question.upstreamId
-  clear,       // () => void — reset auth state
-} = useProcess()
+  // data
+  election,      // VotingProcessResponse | null — full process with questions[]
+  status,        // QuestionStatus | null — derived from all question statuses
+  chainId,       // string | null — Vochain chain id votes are signed against
+  results,       // VotingProcessResultsResponse | null — per-question results
+  loading,       // boolean
+  error,         // Error | null
+  // voter auth session (also available standalone via useElectionAuth())
+  authToken,     // string | null — verified CSP token; null until authenticated
+  connected,     // boolean — true once the voter holds a verified authToken
+  weight,        // number | null — census weight (decoded from hex)
+  auth0,         // (participant: AuthRequest) => Promise<void>
+  auth1,         // (solution: string | string[]) => Promise<void> — confirm 2FA OTP
+  resend,        // ({ email?, phone? }) => Promise<void>
+  check,         // () => Promise<ProcessCheckResponse> — per-question canVote/hasVoted
+  sign,          // (electionId, address) => Promise<ElectionSignResult> — electionId = question.upstreamId
+  // voting
+  isInCensus,    // boolean — true if voter belongs to this process's census
+  voterQuestions,// ProcessQuestionStatus[] — per-question canVote/hasVoted (empty until connected)
+  hasVoted,      // boolean — true once EVERY question is voted (or right after vote())
+  isAbleToVote,  // boolean — connected && isInCensus && !hasVoted
+  vote,          // (encodedBallots: number[][]) => Promise<string> — per-question ballots
+  voteId,        // string | null — nullifier after a successful vote
+  clearVoter,    // () => void — clears the auth session and vote state
+} = useElection()
 ```
 
-**Auth-only census** (no 2FA): `process?.census?.twoFaFields` is empty/absent. `auth0()` sets `connected = true` immediately; skip `auth1`.
+### Voter authentication
+
+**Auth-only census** (no 2FA): `election?.census?.twoFaFields` is empty/absent. `auth0()` sets `connected = true` immediately; skip `auth1`.
 
 **2FA census**: `auth0()` sends the challenge; call `auth1(otp)` to confirm. `connected` becomes `true` after `auth1`.
 
@@ -127,42 +148,7 @@ await auth1('123456')
 // connected === true
 ```
 
-`useProcessOptional()` returns `undefined` instead of throwing when called outside `<ProcessProvider>` — useful for components shared between voter and admin views.
-
----
-
-## ElectionProvider / useElection
-
-Fetches process data and exposes the full vote flow. Automatically uses the enclosing `ProcessProvider` for auth when present.
-
-```tsx
-import { ElectionProvider, useElection } from '@vocdoni/react-providers'
-
-<ElectionProvider id="<processId>">...</ElectionProvider>
-
-// Or with prefetched data (e.g. from SSR or a list view). Rendered instantly —
-// no loading state — and seeded into the react-query cache as initialData, so
-// the provider still refetches when the data goes stale. `id` is optional here
-// (derived from election.id); at least one of the two props is required.
-<ElectionProvider election={prefetchedProcess}>...</ElectionProvider>
-
-const {
-  election,      // VotingProcessResponse | null — full process with questions[]
-  status,        // QuestionStatus | null — derived from all question statuses
-  results,       // VotingProcessResultsResponse | null — per-question results
-  loading,       // boolean
-  error,         // Error | null
-  connected,     // boolean — delegates to process.connected
-  weight,        // number | null — voter census weight
-  isInCensus,    // boolean — true if voter belongs to this process's census
-  voterQuestions,// ProcessQuestionStatus[] — per-question canVote/hasVoted (empty until connected)
-  hasVoted,      // boolean — true once EVERY question is voted (or right after vote())
-  isAbleToVote,  // boolean — connected && isInCensus && !hasVoted
-  vote,          // (encodedBallots: number[][]) => Promise<string> — per-question ballots
-  voteId,        // string | null — nullifier after a successful vote
-  clearVoter,    // () => void — clears vote state and the CSP session
-} = useElection()
-```
+`useElectionAuth()` returns just the session slice (`authToken`, `connected`, `weight`, `auth0`, `auth1`, `resend`, `check`, `sign`, `clear`) from its own context — auth-only widgets (identify forms, OTP inputs, logout buttons) using it don't re-render when election data or results update. Its `clear()` is equivalent to `clearVoter()`: clearing the session also resets the vote state.
 
 `vote(encodedBallots, memos?)` takes one pre-encoded `number[]` per question (plus optional per-question memo strings — free-text notes like an open "Other" answer, max 256 UTF-8 bytes each, validated pre-flight; ⚠️ memos ride the envelope in cleartext even for secret questions), casts a separate Vochain vote for each, and returns the first nullifier cast by the call. In `react-components`, registering reserved `memo.{index}` fields (`memo.0`, `memo.1`, …) in the questions form collects memos automatically.
 
@@ -268,16 +254,15 @@ them share a single dialog boundary — a provider you mount takes precedence.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   ClientProvider,
-  ProcessProvider,
   ElectionProvider,
   useElection,
-  useProcess,
+  useElectionAuth,
 } from '@vocdoni/react-providers'
 
 const qc = new QueryClient()
 
 function VoterAuth() {
-  const { connected, auth0 } = useProcess()
+  const { connected, auth0 } = useElectionAuth()
   if (connected) return null
   return (
     <button onClick={() => auth0({ memberNumber: '42' })}>
@@ -311,12 +296,10 @@ export function App() {
   return (
     <QueryClientProvider client={qc}>
       <ClientProvider apiUrl="https://saas-api.vocdoni.net">
-        <ProcessProvider id="<processMongoId>">
-          <ElectionProvider id="<processMongoId>">
-            <VoterAuth />
-            <VotingForm />
-          </ElectionProvider>
-        </ProcessProvider>
+        <ElectionProvider id="<processMongoId>">
+          <VoterAuth />
+          <VotingForm />
+        </ElectionProvider>
       </ClientProvider>
     </QueryClientProvider>
   )

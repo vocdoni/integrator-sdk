@@ -6,28 +6,25 @@ import type { VotingProcessResponse } from '@vocdoni/api-types'
 import { describe, expect, it } from 'vitest'
 import { MOCK_CSP_SIGNATURE, MOCK_WEIGHT_HEX, mockProcess } from '../../../../mocks/handlers'
 import { server } from '../../../../mocks/server'
-import { ProcessProvider, useProcess } from '../process/ProcessProvider'
 import { TestProvider } from '../test-utils'
 import { ElectionProvider, PartialVoteError, useElection } from './ElectionProvider'
 
 function wrapper({ children }: { children: React.ReactNode }) {
   return (
     <TestProvider>
-      <ProcessProvider id={mockProcess.id}>
-        <ElectionProvider id={mockProcess.id}>{children}</ElectionProvider>
-      </ProcessProvider>
+      <ElectionProvider id={mockProcess.id}>{children}</ElectionProvider>
     </TestProvider>
   )
 }
 
-const useVoter = () => ({ election: useElection(), process: useProcess() })
+const useVoter = () => ({ election: useElection() })
 
 async function connect(result: { current: ReturnType<typeof useVoter> }) {
   await act(async () => {
-    await result.current.process.auth0({ memberNumber: '5' })
+    await result.current.election.auth0({ memberNumber: '5' })
   })
   await act(async () => {
-    await result.current.process.auth1(['123456'])
+    await result.current.election.auth1(['123456'])
   })
 }
 
@@ -53,7 +50,7 @@ describe('ElectionProvider', () => {
 
   it('exposes the chainId once the process read loads', async () => {
     const { result } = renderHook(useVoter, { wrapper })
-    await waitFor(() => expect(result.current.process.chainId).toBe('test'))
+    await waitFor(() => expect(result.current.election.chainId).toBe('test'))
   })
 
   it('connects through the process auth flow and resolves membership + weight', async () => {

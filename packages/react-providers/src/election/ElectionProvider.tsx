@@ -17,21 +17,39 @@ import {
 } from 'react'
 import { computeProcessStatus, VocdoniApiError } from '@vocdoni/api-client'
 import { useClient } from '../client/ClientProvider'
-import { processQueryKeys, useProcessOptional } from '../process/ProcessProvider'
+import {
+  ElectionAuthContext,
+  useVoterSession,
+  type ElectionAuthContextValue,
+} from './use-election-auth'
 
-export interface ElectionContextValue {
+/**
+ * Query keys the election provider reads through. Exported so consumers can
+ * pre-seed (`setQueryData`) or invalidate these queries without hardcoding the
+ * key shape.
+ */
+export const electionQueryKeys = {
+  election: (id: string) => ['process', id] as const,
+  results: (id: string) => ['process-results', id] as const,
+}
+
+/**
+ * Election data, results and the vote flow, plus the voter's CSP auth session
+ * (inherited from {@link ElectionAuthContextValue} — `auth0`/`auth1`/`resend`
+ * to authenticate, `check`/`sign` for advanced UIs; the session's `clear` is
+ * exposed here as {@link clearVoter}).
+ */
+export interface ElectionContextValue extends Omit<ElectionAuthContextValue, 'clear'> {
   election: VotingProcessResponse | null
   /** Derived process status from all question statuses. */
   status: QuestionStatus | null
+  /** Vochain chain id the process's votes are signed against. */
+  chainId: string | null
   /** Per-question results from `GET /processes/{id}/results`. */
   results: VotingProcessResultsResponse | null
   loading: boolean
   error: Error | null
 
-  /** true once the voter has a verified process auth session. */
-  connected: boolean
-  /** Voter census weight (decoded), when known. */
-  weight: number | null
   /** Whether the voter belongs to this process's census. */
   isInCensus: boolean
   /**
@@ -59,7 +77,7 @@ export interface ElectionContextValue {
   vote(encodedBallots: number[][], memos?: (string | undefined)[]): Promise<string>
   voteId: string | null
   isAbleToVote: boolean
-  /** Clears the voter session (delegates to the process session when present). */
+  /** Clears the voter's auth session and vote state. */
   clearVoter(): void
 }
 
@@ -103,9 +121,14 @@ export class PartialVoteError extends Error {
 
 const ElectionContext = createContext<ElectionContextValue | undefined>(undefined)
 
+/**
+ * Fetches the election and provides its data, results and the vote flow via
+ * `useElection()`, plus the voter's CSP auth session — hosted in a separate
+ * context readable through `useElectionAuth()`, so auth-only widgets don't
+ * re-render on data/results updates.
+ */
 export function ElectionProvider({ children, id, election: prefetched }: ElectionProviderProps) {
   const { client } = useClient()
-  const process = useProcessOptional()
 
   // The id drives every query; a prefetched election carries its own, so
   // passing only `election` still leaves the provider able to refetch.
@@ -116,7 +139,7 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
     isLoading: loading,
     error,
   } = useQuery<VotingProcessResponse, Error>({
-    queryKey: processQueryKeys.process(electionId!),
+    queryKey: electionQueryKeys.election(electionId!),
     queryFn: () => client.elections.get(electionId!),
     enabled: !!electionId,
     // Never seed the cache entry of `id` with a *different* election's data.
@@ -124,7 +147,7 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
   })
 
   const { data: results = null } = useQuery<VotingProcessResultsResponse | null, Error>({
-    queryKey: processQueryKeys.results(electionId!),
+    queryKey: electionQueryKeys.results(electionId!),
     // A 404 legitimately means "no results yet" (e.g. before any question is
     // published) — swallow it instead of letting react-query retry the endpoint.
     queryFn: () =>
@@ -135,7 +158,9 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
     enabled: !!electionId && !!election,
   })
 
-  const chainId = election?.chainId ?? process?.chainId ?? null
+  const session = useVoterSession(electionId, election)
+
+  const chainId = election?.chainId ?? null
 
   const status: QuestionStatus | null = election
     ? computeProcessStatus(election.questions)
@@ -146,17 +171,21 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
   const [isInCensus, setIsInCensus] = useState(false)
   const [voterQuestions, setVoterQuestions] = useState<ProcessQuestionStatus[]>([])
 
-  // Resolve census membership once the voter's process session is connected.
-  // The process check reports per-question canVote/hasVoted state.
+  // Resolve census membership once the voter's session is connected. The
+  // check reports per-question canVote/hasVoted state. The disconnect branch
+  // also resets the vote state, so clearing the session from useElectionAuth()
+  // propagates here instead of leaving a stale hasVoted/voteId behind.
   useEffect(() => {
-    if (!process?.connected || !election) {
+    if (!session.connected || !election) {
       setIsInCensus(false)
       setVoterQuestions([])
+      setHasVoted(false)
+      setVoteId(null)
       return
     }
 
     let cancelled = false
-    process
+    session
       .check()
       .then((res) => {
         if (cancelled) return
@@ -171,12 +200,12 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [process?.connected, election?.id])
+  }, [session.connected, election?.id])
 
   const vote = useCallback(
     async (encodedBallots: number[][], memos?: (string | undefined)[]): Promise<string> => {
       if (!election) throw new Error('Election not loaded')
-      if (!process?.connected) throw new Error('Voter is not authenticated for this process')
+      if (!session.connected) throw new Error('Voter is not authenticated for this election')
       if (!chainId) {
         throw new Error('Missing chainId — the process read did not provide one; cannot cast a vote')
       }
@@ -224,7 +253,7 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
       // double-vote. Falls back to the last known state if the check is down.
       let voted: Set<string>
       try {
-        const checked = await process.check()
+        const checked = await session.check()
         setIsInCensus(checked.belongsToProcess)
         setVoterQuestions(checked.questions)
         voted = new Set(checked.questions.filter((q) => q.hasVoted).map((q) => q.questionId))
@@ -245,7 +274,7 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
       const signed: Array<{ question: (typeof election.questions)[number]; i: number; txPayload: string }> = []
       for (const { question, i } of pending) {
         const signer = new EphemeralSigner()
-        const { signature, weight } = await process.sign(question.upstreamId!, signer.address)
+        const { signature, weight } = await session.sign(question.upstreamId!, signer.address)
         signed.push({
           question,
           i,
@@ -281,7 +310,7 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
         // Truthful partial state: reflect what actually landed on chain, so
         // `voterQuestions`/`hasVoted` don't claim "not voted" for cast votes.
         try {
-          const checked = await process.check()
+          const checked = await session.check()
           setVoterQuestions(checked.questions)
           setHasVoted(checked.questions.length > 0 && checked.questions.every((q) => q.hasVoted))
         } catch {
@@ -299,7 +328,7 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
       setVoteId(resultVoteId)
       return resultVoteId
     },
-    [election, process, chainId, client, voterQuestions],
+    [election, session, chainId, client, voterQuestions],
   )
 
   const clearVoter = useCallback(() => {
@@ -307,33 +336,41 @@ export function ElectionProvider({ children, id, election: prefetched }: Electio
     setHasVoted(false)
     setIsInCensus(false)
     setVoterQuestions([])
-    process?.clear()
-  }, [process])
-
-  const connected = !!process?.connected
-  const weight = process?.weight ?? null
+    session.clear()
+  }, [session])
 
   const value = useMemo<ElectionContextValue>(
     () => ({
       election,
       status,
+      chainId,
       results,
       loading,
       error: error ?? null,
-      connected,
-      weight,
+      authToken: session.authToken,
+      connected: session.connected,
+      weight: session.weight,
+      auth0: session.auth0,
+      auth1: session.auth1,
+      resend: session.resend,
+      check: session.check,
+      sign: session.sign,
       isInCensus,
       voterQuestions,
       hasVoted,
       vote,
       voteId,
-      isAbleToVote: connected && isInCensus && !hasVoted,
+      isAbleToVote: session.connected && isInCensus && !hasVoted,
       clearVoter,
     }),
-    [election, status, results, loading, error, connected, weight, isInCensus, voterQuestions, hasVoted, vote, voteId, clearVoter],
+    [election, status, chainId, results, loading, error, session, isInCensus, voterQuestions, hasVoted, vote, voteId, clearVoter],
   )
 
-  return <ElectionContext.Provider value={value}>{children}</ElectionContext.Provider>
+  return (
+    <ElectionAuthContext.Provider value={session}>
+      <ElectionContext.Provider value={value}>{children}</ElectionContext.Provider>
+    </ElectionAuthContext.Provider>
+  )
 }
 
 export function useElection(): ElectionContextValue {

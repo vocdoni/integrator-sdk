@@ -1,6 +1,5 @@
 import type { AuthRequest, ProcessCheckResponse, VotingProcessResponse } from '@vocdoni/api-types'
-import { useQuery } from '@tanstack/react-query'
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { useClient } from '../client/ClientProvider'
 
 /** Decodes a hex-encoded weight ("2a") into a number; empty/invalid → null. */
@@ -13,31 +12,20 @@ function parseWeight(hex?: string): number | null {
   }
 }
 
-/**
- * Query keys the process/election providers read through. Exported so consumers
- * can pre-seed (`setQueryData`) or invalidate these queries without hardcoding
- * the key shape. `process` is shared by <ProcessProvider> and <ElectionProvider>,
- * so nesting them with the same id resolves to a single fetch.
- */
-export const processQueryKeys = {
-  process: (id: string) => ['process', id] as const,
-  results: (id: string) => ['process-results', id] as const,
-}
-
-export interface ProcessSignResult {
+export interface ElectionSignResult {
   /** Hex CSP signature over the voter address. */
   signature: string
   /** Hex-encoded census weight the CSP signed with. */
   weight?: string
 }
 
-export interface ProcessContextValue {
-  /** Voting process id (the SaaS Mongo ObjectID) the CSP session is anchored to. */
-  processId: string
-  /** Public process read (census auth config, questions, chain id); null until loaded. */
-  process: VotingProcessResponse | null
-  /** Vochain chain id the process's votes are signed against. */
-  chainId: string | null
+/**
+ * The voter's CSP auth session for the election's voting process. Exposed via
+ * {@link useElectionAuth} — a narrower context than `useElection()`, so
+ * auth-only widgets (identify forms, OTP inputs, logout buttons) don't
+ * re-render when election data or results change.
+ */
+export interface ElectionAuthContextValue {
   /** Verified auth token — null until the auth flow completes. */
   authToken: string | null
   /** true once the voter holds a verified auth token. */
@@ -64,35 +52,26 @@ export interface ProcessContextValue {
    * Request the CSP signature over an address for one question's on-chain
    * election (`electionId` is the question's `upstreamId`).
    */
-  sign(electionId: string, address: string): Promise<ProcessSignResult>
+  sign(electionId: string, address: string): Promise<ElectionSignResult>
   /** Clear all auth/voter state. */
   clear(): void
 }
 
-export interface ProcessProviderProps {
-  children: ReactNode
-  /** Voting process id (Mongo ObjectID) — the process voters authenticate against. */
-  id: string
-}
-
-const ProcessContext = createContext<ProcessContextValue | undefined>(undefined)
+export const ElectionAuthContext = createContext<ElectionAuthContextValue | undefined>(undefined)
 
 /**
- * Holds the per-process CSP auth session. The voter authenticates once against
- * the voting process and the verified token is reused by every nested
- * <ElectionProvider> to check membership, sign and cast votes.
+ * Builds the CSP session for a voting process. Internal to `ElectionProvider`,
+ * which provides the resulting value through {@link ElectionAuthContext}; the
+ * process read is shared with the caller instead of fetched again.
  */
-export function ProcessProvider({ children, id }: ProcessProviderProps) {
+export function useVoterSession(
+  id: string | undefined,
+  process: VotingProcessResponse | null,
+): ElectionAuthContextValue {
   const { client } = useClient()
   const [pendingToken, setPendingToken] = useState<string | null>(null)
   const [authToken, setAuthToken] = useState<string | null>(null)
   const [weight, setWeight] = useState<number | null>(null)
-
-  const { data: process = null } = useQuery<VotingProcessResponse, Error>({
-    queryKey: processQueryKeys.process(id),
-    queryFn: () => client.elections.get(id),
-    enabled: !!id,
-  })
 
   // Auth-only censuses (no twoFaFields) issue a verified token at step 0.
   const isAuthOnly = useMemo(
@@ -102,6 +81,7 @@ export function ProcessProvider({ children, id }: ProcessProviderProps) {
 
   const auth0 = useCallback(
     async (participant: AuthRequest) => {
+      if (!id) throw new Error('Election is not loaded yet — cannot authenticate')
       const res = await client.processes.authStep0(id, participant)
       if (!res.authToken) throw new Error('Process auth step 0 did not return a token')
       if (isAuthOnly) {
@@ -117,7 +97,8 @@ export function ProcessProvider({ children, id }: ProcessProviderProps) {
 
   const auth1 = useCallback(
     async (solution: string | string[]) => {
-      if (!pendingToken) throw new Error('Must complete process auth step 0 first')
+      if (!id) throw new Error('Election is not loaded yet — cannot authenticate')
+      if (!pendingToken) throw new Error('Must complete auth step 0 first')
       const authData = Array.isArray(solution) ? solution : [solution]
       const res = await client.processes.authStep1(id, { authToken: pendingToken, authData })
       setAuthToken(res.authToken ?? pendingToken)
@@ -128,6 +109,7 @@ export function ProcessProvider({ children, id }: ProcessProviderProps) {
 
   const resend = useCallback(
     async (contact: { email?: string; phone?: string }) => {
+      if (!id) throw new Error('Election is not loaded yet — cannot authenticate')
       const token = pendingToken ?? authToken
       if (!token) throw new Error('No pending auth token to resend')
       await client.processes.resend(id, { authToken: token, ...contact })
@@ -136,15 +118,15 @@ export function ProcessProvider({ children, id }: ProcessProviderProps) {
   )
 
   const check = useCallback(async () => {
-    if (!authToken) throw new Error('Must authenticate before checking membership')
+    if (!id || !authToken) throw new Error('Must authenticate before checking membership')
     const res = await client.processes.check(id, { authToken })
     if (res.weight) setWeight(parseWeight(res.weight))
     return res
   }, [client, id, authToken])
 
   const sign = useCallback(
-    async (electionId: string, address: string): Promise<ProcessSignResult> => {
-      if (!authToken) throw new Error('Must authenticate before signing')
+    async (electionId: string, address: string): Promise<ElectionSignResult> => {
+      if (!id || !authToken) throw new Error('Must authenticate before signing')
       const res = await client.processes.sign(id, { authToken, electionId, payload: address })
       if (!res.signature) throw new Error('Process sign did not return a signature')
       return { signature: res.signature, weight: res.weight }
@@ -158,11 +140,8 @@ export function ProcessProvider({ children, id }: ProcessProviderProps) {
     setWeight(null)
   }, [])
 
-  const value = useMemo<ProcessContextValue>(
+  return useMemo<ElectionAuthContextValue>(
     () => ({
-      processId: id,
-      process,
-      chainId: process?.chainId ?? null,
       authToken,
       connected: !!authToken,
       weight,
@@ -173,24 +152,22 @@ export function ProcessProvider({ children, id }: ProcessProviderProps) {
       sign,
       clear,
     }),
-    [id, process, authToken, weight, auth0, auth1, resend, check, sign, clear],
+    [authToken, weight, auth0, auth1, resend, check, sign, clear],
   )
-
-  return <ProcessContext.Provider value={value}>{children}</ProcessContext.Provider>
 }
 
-export function useProcess(): ProcessContextValue {
-  const ctx = useContext(ProcessContext)
+/**
+ * The voter's CSP auth session. Subscribes only to session state, so an
+ * identify form or logout button using this hook won't re-render on election
+ * data or results updates the way `useElection()` consumers do.
+ */
+export function useElectionAuth(): ElectionAuthContextValue {
+  const ctx = useContext(ElectionAuthContext)
   if (!ctx) {
     throw new Error(
-      'useProcess() must be used inside <ProcessProvider>. ' +
-        'Make sure the component is wrapped in <ProcessProvider>.',
+      'useElectionAuth() must be used inside <ElectionProvider>. ' +
+        'Make sure the component is wrapped in <ElectionProvider>.',
     )
   }
   return ctx
-}
-
-/** Like {@link useProcess} but returns undefined instead of throwing when there's no provider. */
-export function useProcessOptional(): ProcessContextValue | undefined {
-  return useContext(ProcessContext)
 }

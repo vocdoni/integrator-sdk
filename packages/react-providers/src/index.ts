@@ -22,26 +22,22 @@ export {
   type OrganizationProviderProps,
 } from './organization/OrganizationProvider'
 
-// ─── Process (CSP voter session) ──────────────────────────────────────────────
-export {
-  ProcessProvider,
-  processQueryKeys,
-  useProcess,
-  useProcessOptional,
-  type ProcessContextValue,
-  type ProcessProviderProps,
-  type ProcessSignResult,
-} from './process/ProcessProvider'
-
 // ─── Election ─────────────────────────────────────────────────────────────────
 export {
   ElectionProvider,
+  electionQueryKeys,
   PartialVoteError,
   useElection,
   type ElectionContextValue,
   type ElectionProviderBaseProps,
   type ElectionProviderProps,
 } from './election/ElectionProvider'
+
+export {
+  useElectionAuth,
+  type ElectionAuthContextValue,
+  type ElectionSignResult,
+} from './election/use-election-auth'
 
 export {
   ActionsProvider,
