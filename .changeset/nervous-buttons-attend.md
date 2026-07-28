@@ -1,8 +1,8 @@
 ---
 '@vocdoni/react-components': patch
 '@vocdoni/react-providers': patch
-'@vocdoni/api-client': minor
-'@vocdoni/api-types': minor
+'@vocdoni/api-client': patch
+'@vocdoni/api-types': patch
 ---
 
 Surface extended choice info (per-choice image and description) on process reads
@@ -31,3 +31,10 @@ were stored correctly and dropped on read: every question rendered
   image. `ipfs://` URLs and empty descriptions keep behaving as before.
 
 No stored data is migrated — both image shapes are tolerated on read.
+
+Released as a patch across the board on purpose. `api-types`/`api-client` are
+additive (a new optional field and a new export), which would normally be a
+minor — but `react-components`/`react-providers` **peer**-depend on them, and
+Changesets bumps a peer dependent to *major* on any peer bump. That would push
+them to `3.0.0` and out of the `^2.0.0` range the consuming app pins, for what
+is a read-side bug fix.
