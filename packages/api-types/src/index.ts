@@ -366,6 +366,17 @@ export interface ElectionListParams {
   status?: string
   page?: number
   limit?: number
+  /**
+   * Drafts filter (saas-backend#607). `true` → published processes only;
+   * `false` → drafts only, **Manager/Admin required** (401 otherwise);
+   * omitted → the caller's default view (anonymous sees published only, a
+   * manager sees everything).
+   *
+   * Caveat: combining `published: false` with `status` returns nothing — a
+   * draft's questions have no on-chain status yet and `status` matches on
+   * that field.
+   */
+  published?: boolean
 }
 
 export interface BallotProtocol {

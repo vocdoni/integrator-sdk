@@ -159,6 +159,11 @@ const election = await client.elections.get(mongoId)
 // List processes
 const { processes, pagination } = await client.elections.list({ orgAddress, page, limit, status })
 // List items never resolve question.results (N+1 guard) — use get()/getResults().
+// Drafts filter (saas-backend#607): published: true → published only;
+// published: false → drafts only (Manager/Admin REQUIRED, 401 otherwise);
+// omitted → caller's default view (anonymous: published only; manager: all).
+// Don't combine published: false with status — drafts have no on-chain
+// question status yet, so that combination returns nothing.
 
 // Get per-question results — public, LIVE tallies (finalResults marks live vs final)
 const { questions } = await client.elections.getResults(mongoId)

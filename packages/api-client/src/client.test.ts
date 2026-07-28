@@ -41,6 +41,30 @@ describe('VocdoniApiClient', () => {
     })
   })
 
+  describe('elections.list', () => {
+    it('serializes the published drafts filter — false must survive as published=false', async () => {
+      const queries: Array<URLSearchParams> = []
+      server.use(
+        http.get(`${BASE_URL}/processes`, ({ request }) => {
+          queries.push(new URL(request.url).searchParams)
+          return HttpResponse.json({ processes: [], pagination: { total: 0 } })
+        }),
+      )
+
+      // `false` is the manager-only drafts view: it must reach the wire, not
+      // be dropped as falsy by the param serialization.
+      await client.elections.list({ orgAddress: '0xabc', published: false })
+      expect(queries[0].get('published')).toBe('false')
+
+      await client.elections.list({ orgAddress: '0xabc', published: true })
+      expect(queries[1].get('published')).toBe('true')
+
+      // Omitted → absent, so the backend applies the caller's default view.
+      await client.elections.list({ orgAddress: '0xabc' })
+      expect(queries[2].has('published')).toBe(false)
+    })
+  })
+
   describe('elections.vote', () => {
     it('relays the tx to POST /vote and returns an async job id', async () => {
       const payload = { txPayload: 'encoded-tx-payload' }
