@@ -6,7 +6,7 @@ import { useElection } from '@vocdoni/react-providers'
 
 export const VoteButton = (props: ComponentPropsWithoutRef<'button'> & Record<string, unknown>) => {
   const externalDisabled = Boolean(props.disabled)
-  const { election, status, isAbleToVote, hasVoted, voting } = useElection()
+  const { election, status, isAbleToVote, voting } = useElection()
   const { VoteButton: Slot } = useComponents()
   const t = useReactComponentsLocalize()
 
@@ -23,7 +23,9 @@ export const VoteButton = (props: ComponentPropsWithoutRef<'button'> & Record<st
     // Also disabled while the vote is in flight — closes the double-submit window.
     disabled: isDisabled || voting,
     loading: voting,
-    label: hasVoted && isAbleToVote ? t('vote.button_update') : t('vote.button'),
+    // Re-voting isn't supported by the SaaS process model (`isAbleToVote`
+    // excludes voted users), so there is no "update your vote" label variant.
+    label: t('vote.button'),
   }
 
   return <Slot {...button} />

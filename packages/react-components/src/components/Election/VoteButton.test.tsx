@@ -38,10 +38,14 @@ describe('VoteButton', () => {
     expect(btn).toHaveTextContent('Vote')
   })
 
-  it('shows the update label once the voter has already voted', () => {
-    setVoter({ isAbleToVote: true, hasVoted: true })
+  it('keeps the plain label and disables once the voter has already voted', () => {
+    // Re-voting isn't supported: a voted user loses `isAbleToVote`, so there
+    // is no "update your vote" state — just the disabled plain button.
+    setVoter({ isAbleToVote: false, hasVoted: true })
     renderWithComponents(<VoteButton />, slots)
-    expect(screen.getByTestId('vote')).toHaveTextContent('Re-submit vote')
+    const btn = screen.getByTestId('vote')
+    expect(btn).toBeDisabled()
+    expect(btn).toHaveTextContent('Vote')
   })
 
   it('is disabled and loading while a vote is in flight — no double submit', () => {

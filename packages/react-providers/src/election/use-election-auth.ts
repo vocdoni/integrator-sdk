@@ -81,7 +81,10 @@ export function useVoterSession(
 
   const auth0 = useCallback(
     async (participant: AuthRequest) => {
-      if (!id) throw new Error('Election is not loaded yet — cannot authenticate')
+      // `process` must be loaded too: `isAuthOnly` can't be known without it,
+      // and misreading an auth-only census as 2FA would strand the verified
+      // step-0 token in `pendingToken` with no auth1 challenge to redeem it.
+      if (!id || !process) throw new Error('Election is not loaded yet — cannot authenticate')
       const res = await client.processes.authStep0(id, participant)
       if (!res.authToken) throw new Error('Process auth step 0 did not return a token')
       if (isAuthOnly) {
@@ -92,7 +95,7 @@ export function useVoterSession(
         setPendingToken(res.authToken)
       }
     },
-    [client, id, isAuthOnly],
+    [client, id, process, isAuthOnly],
   )
 
   const auth1 = useCallback(

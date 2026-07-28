@@ -357,7 +357,6 @@ describe('ElectionProvider', () => {
     // would cast question 0 first and only then hit the guard, half-voting the
     // process; the pre-flight must fire before ANY sign or relay.
     let signCalls = 0
-    let voteCalls = 0
     server.use(
       http.get(`http://localhost/processes/:id`, ({ params }) =>
         HttpResponse.json({
@@ -378,11 +377,8 @@ describe('ElectionProvider', () => {
         signCalls++
         return HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX })
       }),
-      http.post(`http://localhost/vote`, () => {
-        voteCalls++
-        return HttpResponse.json({ jobId: 'job-0' }, { status: 202 })
-      }),
     )
+    const relayed = captureBatchVotes()
 
     const { result } = renderHook(useVoter, { wrapper })
     await waitFor(() => expect(result.current.election.election).not.toBeNull())
@@ -393,13 +389,12 @@ describe('ElectionProvider', () => {
       /encryption keys are not published yet/,
     )
     expect(signCalls).toBe(0)
-    expect(voteCalls).toBe(0)
+    expect(relayed).toHaveLength(0)
     expect(result.current.election.hasVoted).toBe(false)
   })
 
   it('consumes every CSP sign before relaying anything — a sign failure casts zero votes', async () => {
     let signCalls = 0
-    let voteCalls = 0
     server.use(
       http.get(`http://localhost/processes/:id`, ({ params }) =>
         HttpResponse.json({
@@ -420,11 +415,8 @@ describe('ElectionProvider', () => {
         }
         return HttpResponse.json({ error: 'csp down' }, { status: 500 })
       }),
-      http.post(`http://localhost/vote`, () => {
-        voteCalls++
-        return HttpResponse.json({ jobId: 'job-0' }, { status: 202 })
-      }),
     )
+    const relayed = captureBatchVotes()
 
     const { result } = renderHook(useVoter, { wrapper })
     await waitFor(() => expect(result.current.election.election).not.toBeNull())
@@ -434,7 +426,7 @@ describe('ElectionProvider', () => {
     await expect(result.current.election.vote([[0], [1]])).rejects.toThrow()
     expect(signCalls).toBe(2)
     // Nothing was relayed: the failure aborted with zero votes on chain.
-    expect(voteCalls).toBe(0)
+    expect(relayed).toHaveLength(0)
     expect(result.current.election.hasVoted).toBe(false)
   })
 
@@ -704,9 +696,12 @@ describe('ElectionProvider', () => {
   it('exposes voting=true while vote() is in flight and false once it settles', async () => {
     // Slow the relay down so the in-flight state is observable.
     server.use(
-      http.post(`http://localhost/vote`, async () => {
+      http.post(`http://localhost/votes`, async ({ request }) => {
+        const body = (await request.json()) as { votes: Array<{ txPayload: string }> }
         await new Promise((r) => setTimeout(r, 100))
-        return HttpResponse.json({ jobId: 'job-0' }, { status: 202 })
+        const jobId = `batch-job-${mockBatchJobs.size}`
+        mockBatchJobs.set(jobId, body.votes.length)
+        return HttpResponse.json({ jobId }, { status: 202 })
       }),
     )
 

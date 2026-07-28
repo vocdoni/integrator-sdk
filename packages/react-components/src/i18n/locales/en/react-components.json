@@ -91,7 +91,6 @@
   },
   "vote": {
     "abstain": "Abstain",
-    "button_update": "Re-submit vote",
     "button": "Vote",
     "confirm": "Please confirm your choices:",
     "sign": "Sign first",
