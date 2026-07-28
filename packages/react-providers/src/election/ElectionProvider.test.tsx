@@ -669,6 +669,68 @@ describe('ElectionProvider', () => {
     expect(fetchCalls).toBe(1)
   })
 
+  it('normalizes a prefetched election, so extended choice info shows on the first paint', async () => {
+    // Raw wire data: extended choice info lives on the question, and the live
+    // status arrives under its wire name.
+    const prefetched = {
+      ...mockProcess,
+      questions: [
+        {
+          ...mockProcess.questions[0],
+          status: 'READY',
+          choices: [
+            { title: { default: 'With skin' }, value: 0 },
+            { title: { default: 'Without skin' }, value: 1 },
+          ],
+          metadata: {
+            choices: [{ value: 0, description: 'Unpeeled', image: 'https://cdn.example/a.jpeg' }],
+          },
+        },
+      ],
+    } as unknown as VotingProcessResponse
+
+    const { result } = renderHook(useElection, {
+      wrapper: ({ children }) => (
+        <TestProvider>
+          <ElectionProvider election={prefetched}>{children}</ElectionProvider>
+        </TestProvider>
+      ),
+    })
+
+    // Synchronously, before any refetch lands.
+    expect(result.current.loading).toBe(false)
+    expect(result.current.election?.questions[0].choices[0].meta).toEqual({
+      description: 'Unpeeled',
+      image: { default: 'https://cdn.example/a.jpeg' },
+    })
+    expect(result.current.election?.questions[0].choices[1].meta).toBeUndefined()
+    expect(result.current.status).toBe('ONGOING')
+  })
+
+  it('carries extended choice info through the fetched election, refetch included', async () => {
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) =>
+        HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          questions: [
+            {
+              ...mockProcess.questions[0],
+              choices: [{ title: { default: 'With skin' }, value: 0 }],
+              metadata: { choices: [{ value: 0, image: 'https://cdn.example/a.jpeg' }] },
+            },
+          ],
+        }),
+      ),
+    )
+
+    const { result } = renderHook(useElection, { wrapper })
+    await waitFor(() => expect(result.current.election).not.toBeNull())
+    expect(result.current.election?.questions[0].choices[0].meta?.image).toEqual({
+      default: 'https://cdn.example/a.jpeg',
+    })
+  })
+
   it('ignores a prefetched election whose id mismatches the id prop', async () => {
     const prefetched = {
       ...mockProcess,

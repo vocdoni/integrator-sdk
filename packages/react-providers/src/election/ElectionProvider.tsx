@@ -16,7 +16,12 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { computeProcessStatus, JobFailedError, VocdoniApiError } from '@vocdoni/api-client'
+import {
+  computeProcessStatus,
+  JobFailedError,
+  normalizeVotingProcess,
+  VocdoniApiError,
+} from '@vocdoni/api-client'
 import { useClient } from '../client/ClientProvider'
 import {
   ElectionAuthContext,
@@ -192,6 +197,17 @@ export function ElectionProvider({
   // passing only `election` still leaves the provider able to refetch.
   const electionId = id ?? prefetched?.id
 
+  // A prefetched process is raw wire data (SSR payload, cache dump) that never
+  // went through the client's read boundary, so run it through the same
+  // normalization the fetch path applies — otherwise the first paint would show
+  // `READY` statuses and choices without their extended info, and only settle
+  // once the refetch lands. Idempotent, so an already-normalized process is
+  // unaffected.
+  const initialElection = useMemo(
+    () => (prefetched && prefetched.id === electionId ? normalizeVotingProcess(prefetched) : undefined),
+    [prefetched, electionId],
+  )
+
   const {
     data: election = null,
     isLoading: loading,
@@ -201,8 +217,9 @@ export function ElectionProvider({
     queryKey: electionQueryKeys.election(electionId!),
     queryFn: () => client.elections.get(electionId!),
     enabled: !!electionId,
-    // Never seed the cache entry of `id` with a *different* election's data.
-    initialData: prefetched && prefetched.id === electionId ? prefetched : undefined,
+    // Never seed the cache entry of `id` with a *different* election's data
+    // (guarded when building `initialElection`).
+    initialData: initialElection,
   })
 
   const { data: results = null } = useQuery<VotingProcessResultsResponse | null, Error>({

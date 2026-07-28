@@ -271,9 +271,53 @@ export type MultiLangString = Record<string, string>
  */
 export type LocalizedInput = string | MultiLangString
 
+/**
+ * Extended per-choice display info: an illustrative image and a longer
+ * description, rendered by the "extended" choice presentation.
+ *
+ * The API has nowhere to store this on a choice (`db.Choice` is
+ * `{Title, Value}`), so it lives in the parent question's free-form
+ * {@link VotingProcessQuestion.metadata} bag under `choices`, keyed by choice
+ * `value` — see {@link ChoiceMetadataEntry}. The client folds it back onto each
+ * choice as {@link Choice.meta} on read.
+ */
+export interface ChoiceMeta {
+  description?: string
+  image?: {
+    default?: string
+    thumbnail?: string
+  }
+}
+
+/**
+ * One entry of a question's `metadata.choices` array — the storage form of
+ * {@link ChoiceMeta}, tied to a choice by its `value`.
+ *
+ * `image` is tolerated in both shapes on read: a plain URL string (what the
+ * creation flows write) is normalized to `{ default: url }`, an explicit
+ * `{ default, thumbnail }` object is passed through. Entries whose `value`
+ * matches no choice of the question are ignored.
+ */
+export interface ChoiceMetadataEntry {
+  value: number
+  description?: string
+  image?: string | { default?: string; thumbnail?: string }
+}
+
 export interface Choice {
   title: LocalizedInput
   value: number
+  /**
+   * Extended display info. **Response-only and client-derived**: the API stores
+   * it on the parent question (`metadata.choices`, see
+   * {@link ChoiceMetadataEntry}) and the client maps it here on read, so
+   * setting it on a create/update request has no effect — write
+   * `question.metadata.choices` instead.
+   *
+   * Absent when the question carries no `metadata.choices` entry for this
+   * choice's `value`.
+   */
+  meta?: ChoiceMeta
 }
 
 export interface Question {
@@ -447,6 +491,12 @@ export interface VotingProcessQuestion {
   typeSetup?: QuestionTypeSetup
   secretUntilTheEnd: boolean
   status: QuestionStatus
+  /**
+   * Open-ended metadata stored by the creator. Its `choices` key is
+   * SDK-recognized: an array of {@link ChoiceMetadataEntry} carrying each
+   * choice's extended display info, which the client folds onto the matching
+   * {@link Choice.meta} on read.
+   */
   metadata?: Record<string, unknown>
   /**
    * On-chain vote-encryption public keys — only for `secretUntilTheEnd`

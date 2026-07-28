@@ -23,7 +23,7 @@ const getQuestionPresentation = (question: VotingProcessQuestion): QuestionChoic
   question.choices.some(hasExtendedChoiceMeta) ? 'extended' : 'basic'
 
 const getQuestionLayout = (question: VotingProcessQuestion): QuestionLayout =>
-  question.choices.some((choice) => Boolean((choice as any).meta?.image?.default)) ? 'grid' : 'list'
+  question.choices.some((choice) => Boolean(choice.meta?.image?.default)) ? 'grid' : 'list'
 
 export const ElectionQuestion = ({ question, index }: QuestionProps) => {
   const { election } = useElection()
@@ -126,7 +126,7 @@ const MultiChoice = ({
                   controlType='checkbox'
                   selectionMode='multiple'
                   presentation={presentation}
-                  compact={!Boolean((choice as any).meta?.image?.default) && layout === 'list'}
+                  compact={!Boolean(choice.meta?.image?.default) && layout === 'list'}
                   dataAttrs={{
                     'data-choice-card': '',
                     'data-choice-control': '',
@@ -195,7 +195,7 @@ const ApprovalChoice = ({
                   controlType='checkbox'
                   selectionMode='multiple'
                   presentation={presentation}
-                  compact={!Boolean((choice as any).meta?.image?.default) && layout === 'list'}
+                  compact={!Boolean(choice.meta?.image?.default) && layout === 'list'}
                   dataAttrs={{
                     'data-choice-card': '',
                     'data-choice-control': '',
@@ -254,7 +254,7 @@ const SingleChoice = ({
               controlType='radio'
               selectionMode='single'
               presentation={presentation}
-              compact={!Boolean((choice as any).meta?.image?.default) && layout === 'list'}
+              compact={!Boolean(choice.meta?.image?.default) && layout === 'list'}
               dataAttrs={{
                 'data-choice-card': '',
                 'data-choice-control': '',
