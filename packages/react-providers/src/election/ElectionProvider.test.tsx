@@ -4,7 +4,7 @@ import { SignedTx, Tx } from '@vocdoni/proto/vochain'
 import { fromHex } from '@vocdoni/api-voting'
 import type { VotingProcessResponse } from '@vocdoni/api-types'
 import { describe, expect, it } from 'vitest'
-import { MOCK_CSP_SIGNATURE, MOCK_WEIGHT_HEX, mockProcess } from '../../../../mocks/handlers'
+import { MOCK_CSP_SIGNATURE, MOCK_WEIGHT_HEX, mockBatchJobs, mockProcess } from '../../../../mocks/handlers'
 import { server } from '../../../../mocks/server'
 import { TestProvider } from '../test-utils'
 import { ElectionProvider, PartialVoteError, useElection } from './ElectionProvider'
@@ -30,6 +30,25 @@ async function connect(result: { current: ReturnType<typeof useVoter> }) {
 
 /** Hex of the plain vote package prefix `{"nonce"` — present iff the ballot is cleartext. */
 const PLAIN_PACKAGE_MARKER = '7b226e6f6e6365'
+
+/**
+ * Overrides POST /votes to capture every relayed envelope (in request order)
+ * while registering the batch in mockBatchJobs, so the default batch-aware
+ * jobs handler keeps resolving the job.
+ */
+function captureBatchVotes() {
+  const txPayloads: string[] = []
+  server.use(
+    http.post(`http://localhost/votes`, async ({ request }) => {
+      const body = (await request.json()) as { votes: Array<{ txPayload: string }> }
+      txPayloads.push(...body.votes.map((v) => v.txPayload))
+      const jobId = `batch-job-${mockBatchJobs.size}`
+      mockBatchJobs.set(jobId, body.votes.length)
+      return HttpResponse.json({ jobId }, { status: 202 })
+    }),
+  )
+  return txPayloads
+}
 
 describe('ElectionProvider', () => {
   it('starts loading then resolves the election', async () => {
@@ -112,9 +131,11 @@ describe('ElectionProvider', () => {
       voteId = await result.current.election.vote([[0]])
     })
 
-    expect(voteId).toMatch(/^nullifier-job-/)
+    expect(voteId).toMatch(/^nullifier-batch-job-/)
     expect(result.current.election.voteId).toBe(voteId)
     expect(result.current.election.hasVoted).toBe(true)
+    // Per-question progress reaches its terminal state.
+    expect(result.current.election.voteStatus).toEqual({ 'q-0': 'confirmed' })
   })
 
   it('refuses to vote when the process read provides no chainId', async () => {
@@ -147,14 +168,7 @@ describe('ElectionProvider', () => {
   })
 
   it('threads per-question memos onto the vote envelopes, validated pre-flight', async () => {
-    const txPayloads: string[] = []
-    server.use(
-      http.post(`http://localhost/vote`, async ({ request }) => {
-        const body = (await request.json()) as { txPayload: string }
-        txPayloads.push(body.txPayload)
-        return HttpResponse.json({ jobId: `job-${txPayloads.length - 1}` }, { status: 202 })
-      }),
-    )
+    const txPayloads = captureBatchVotes()
 
     const { result } = renderHook(useVoter, { wrapper })
     await waitFor(() => expect(result.current.election.election).not.toBeNull())
@@ -202,12 +216,11 @@ describe('ElectionProvider', () => {
     expect(result.current.election.error).toBeNull()
   })
 
-  it('signs and casts one vote per question in a multi-question process', async () => {
+  it('signs per question but relays every envelope in ONE batch call', async () => {
     const UPSTREAM_A = 'aa'.repeat(32)
     const UPSTREAM_B = 'bb'.repeat(32)
     const signBodies: Array<{ electionId: string; payload: string }> = []
-    const voteJobIds: string[] = []
-    const polledJobIds: string[] = []
+    const batches: Array<Array<{ txPayload: string }>> = []
 
     server.use(
       http.get(`http://localhost/processes/:id`, ({ params }) =>
@@ -230,19 +243,12 @@ describe('ElectionProvider', () => {
         signBodies.push(body)
         return HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX })
       }),
-      http.post(`http://localhost/vote`, () => {
-        const jobId = `job-${voteJobIds.length}`
-        voteJobIds.push(jobId)
+      http.post(`http://localhost/votes`, async ({ request }) => {
+        const body = (await request.json()) as { votes: Array<{ txPayload: string }> }
+        batches.push(body.votes)
+        const jobId = `batch-job-${mockBatchJobs.size}`
+        mockBatchJobs.set(jobId, body.votes.length)
         return HttpResponse.json({ jobId }, { status: 202 })
-      }),
-      http.get(`http://localhost/jobs/:jobId`, ({ params }) => {
-        polledJobIds.push(params.jobId as string)
-        return HttpResponse.json({
-          jobId: params.jobId as string,
-          status: 'completed',
-          type: 'relay_vote',
-          result: { voteID: `nullifier-${params.jobId}` },
-        })
       }),
     )
 
@@ -265,13 +271,14 @@ describe('ElectionProvider', () => {
     expect(signBodies[1].payload).toMatch(/^0x[0-9a-f]{40}$/i)
     expect(signBodies[0].payload).not.toBe(signBodies[1].payload)
 
-    // two vote submissions, each awaited through the jobs endpoint
-    expect(voteJobIds).toEqual(['job-0', 'job-1'])
-    expect(polledJobIds).toEqual(['job-0', 'job-1'])
+    // ONE relay call carrying both envelopes, in question order
+    expect(batches).toHaveLength(1)
+    expect(batches[0]).toHaveLength(2)
 
-    // the returned vote id is the FIRST question's vote id
-    expect(voteId).toBe('nullifier-job-0')
-    expect(result.current.election.voteId).toBe('nullifier-job-0')
+    // the returned vote id is the FIRST question's vote id, per-question state terminal
+    expect(voteId).toBe('nullifier-batch-job-0-0')
+    expect(result.current.election.voteId).toBe('nullifier-batch-job-0-0')
+    expect(result.current.election.voteStatus).toEqual({ 'q-0': 'confirmed', 'q-1': 'confirmed' })
   })
 
   it('refuses to cast a cleartext ballot for a secret question without published keys', async () => {
@@ -306,7 +313,6 @@ describe('ElectionProvider', () => {
   it('passes the encryption keys through — secret ballots go out sealed', async () => {
     const UPSTREAM_A = 'aa'.repeat(32)
     const UPSTREAM_B = 'bb'.repeat(32)
-    const txPayloads: string[] = []
 
     server.use(
       http.get(`http://localhost/processes/:id`, ({ params }) =>
@@ -327,12 +333,8 @@ describe('ElectionProvider', () => {
           ],
         }),
       ),
-      http.post(`http://localhost/vote`, async ({ request }) => {
-        const body = (await request.json()) as { txPayload: string }
-        txPayloads.push(body.txPayload)
-        return HttpResponse.json({ jobId: `job-${txPayloads.length - 1}` }, { status: 202 })
-      }),
     )
+    const txPayloads = captureBatchVotes()
 
     const { result } = renderHook(useVoter, { wrapper })
     await waitFor(() => expect(result.current.election.election).not.toBeNull())
@@ -480,14 +482,15 @@ describe('ElectionProvider', () => {
 
     // Only q-1 was signed and cast; the resumed call completes the process.
     expect(signBodies.map((b) => b.electionId)).toEqual([UPSTREAM_B])
-    expect(voteId).toMatch(/^nullifier-job-/)
+    expect(voteId).toMatch(/^nullifier-batch-job-/)
     expect(result.current.election.hasVoted).toBe(true)
+    // The skipped question reads as confirmed too — it is on chain already.
+    expect(result.current.election.voteStatus).toEqual({ 'q-0': 'confirmed', 'q-1': 'confirmed' })
   })
 
-  it('surfaces a PartialVoteError naming cast and failed questions', async () => {
+  it('surfaces a PartialVoteError from the batch job per-vote outcomes', async () => {
     const UPSTREAM_A = 'aa'.repeat(32)
     const UPSTREAM_B = 'bb'.repeat(32)
-    let voteCalls = 0
     server.use(
       http.get(`http://localhost/processes/:id`, ({ params }) =>
         HttpResponse.json({
@@ -502,18 +505,24 @@ describe('ElectionProvider', () => {
       http.post(`http://localhost/processes/:processId/sign`, () =>
         HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX }),
       ),
-      http.post(`http://localhost/vote`, () => {
-        voteCalls++
-        // q-0 relays fine; q-1's relay is rejected.
-        if (voteCalls === 1) return HttpResponse.json({ jobId: 'job-0' }, { status: 202 })
-        return HttpResponse.json({ error: 'tx queue full' }, { status: 503 })
-      }),
+      // The batch is ACCEPTED (both envelopes enqueued)…
+      http.post(`http://localhost/votes`, () =>
+        HttpResponse.json({ jobId: 'batch-job-partial' }, { status: 202 }),
+      ),
+      // …but on chain q-0 lands and q-1 fails: the job ends FAILED and its
+      // per-vote outcomes carry the truth for both envelopes.
       http.get(`http://localhost/jobs/:jobId`, ({ params }) =>
         HttpResponse.json({
           jobId: params.jobId as string,
-          status: 'completed',
-          type: 'relay_vote',
-          result: { voteID: `nullifier-${params.jobId}` },
+          status: 'failed',
+          type: 'relay_votes',
+          errors: ['1/2 votes failed'],
+          result: {
+            votes: [
+              { processId: UPSTREAM_A, nullifier: 'null-0', status: 'completed', voteID: 'nullifier-job-0' },
+              { processId: UPSTREAM_B, nullifier: 'null-1', status: 'failed', error: 'tx dropped by chain' },
+            ],
+          },
         }),
       ),
     )
@@ -533,6 +542,70 @@ describe('ElectionProvider', () => {
     expect(partial.succeeded).toEqual([{ questionId: 'q-0', voteId: 'nullifier-job-0' }])
     expect(partial.failed).toHaveLength(1)
     expect(partial.failed[0].questionId).toBe('q-1')
+    expect((partial.failed[0].error as Error).message).toBe('tx dropped by chain')
+    // voteStatus mirrors the per-envelope truth.
+    expect(result.current.election.voteStatus).toEqual({ 'q-0': 'confirmed', 'q-1': 'failed' })
+  })
+
+  it('a synchronously rejected batch is a plain retryable error — zero votes, no PartialVoteError', async () => {
+    let jobPolls = 0
+    server.use(
+      // Queue full: the batch is rejected AS A UNIT, nothing was enqueued.
+      http.post(`http://localhost/votes`, () =>
+        HttpResponse.json({ error: 'transaction queue is full' }, { status: 503 }),
+      ),
+      http.get(`http://localhost/jobs/:jobId`, () => {
+        jobPolls++
+        return HttpResponse.json({}, { status: 404 })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    let thrown: unknown
+    await act(async () => {
+      thrown = await result.current.election.vote([[0]]).catch((err) => err)
+    })
+
+    expect(thrown).not.toBeInstanceOf(PartialVoteError)
+    expect(thrown).toBeInstanceOf(Error)
+    // No job was created, so nothing was polled; nothing is voted.
+    expect(jobPolls).toBe(0)
+    expect(result.current.election.hasVoted).toBe(false)
+    expect(result.current.election.voteStatus).toEqual({ 'q-0': 'failed' })
+  })
+
+  it('refuses to cast more than the batch cap in one call — before any CSP sign', async () => {
+    let signCalls = 0
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) =>
+        HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          questions: Array.from({ length: 101 }, (_, i) => ({
+            ...mockProcess.questions[0],
+            id: `q-${i}`,
+            upstreamId: `${i.toString(16).padStart(2, '0')}`.repeat(32),
+          })),
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign`, () => {
+        signCalls++
+        return HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isInCensus).toBe(true))
+
+    const ballots = Array.from({ length: 101 }, () => [0])
+    await expect(result.current.election.vote(ballots)).rejects.toThrow('caps at 100')
+    expect(signCalls).toBe(0)
   })
 
   it('renders a prefetched election immediately and still refetches by its id', async () => {

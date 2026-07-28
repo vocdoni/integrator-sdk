@@ -239,6 +239,13 @@ await client.elections.validateCensus({ orgAddress, census: { authFields: ['memb
 
 // Relay a vote (called internally by VotingClient — you rarely call this directly)
 const { jobId } = await client.elections.vote({ txPayload })
+
+// Relay a BATCH of signed votes in one call (POST /votes, saas-backend#610;
+// used internally by ElectionProvider.vote()). At most 100; the backend
+// validates the batch synchronously and accepts or rejects it AS A UNIT, so a
+// rejection relays nothing — this closes the half-voted window of relaying a
+// multi-question process envelope by envelope. One job covers the batch.
+const { jobId } = await client.elections.voteBatch({ votes: [{ txPayload }, ...] })
 ```
 
 ---
@@ -291,10 +298,14 @@ imports all return a `jobId` polled here (the old
 // One-shot status check
 const job = await client.jobs.get(jobId)
 // job.status  — 'pending' | 'completed' | 'failed'
-// job.type    — 'relay_vote' | 'publish_process' | 'set_process_status'
+// job.type    — 'relay_vote' | 'relay_votes' | 'publish_process' | 'set_process_status'
 //               | 'set_process_census' | 'org_members' | 'census_participants'
 //               | 'publish_voting_process'
 // job.result?.voteID — vote nullifier (relay_vote jobs)
+// job.result?.nullifier/processId — seeded at creation on relay jobs: readable while PENDING
+// job.result?.votes — relay_votes only: per-envelope outcomes in request order, each
+//   { processId, nullifier, status, voteID?, error? }. The job completes only when EVERY
+//   envelope landed and fails otherwise — a failed job still carries the array.
 // job.result?.added/total/progress — import counters (org_members / census_participants jobs)
 // job.errors — error detail lines (e.g. "line 3: invalid email" on imports)
 
@@ -304,6 +315,8 @@ const job = await client.jobs.waitFor(jobId, {
   timeoutMs: 60000,        // default 60000
   signal,                  // optional AbortSignal
   expectType: 'relay_vote', // optional: throw if the completed job.type differs
+  onPoll: (j) => {},       // optional: observe every polled state (e.g. relay_votes
+                           //   entries settling one by one while the job is pending)
 })
 // throws JobFailedError if job.status === 'failed'
 // throws Error on timeout, or on job.type mismatch when expectType is set

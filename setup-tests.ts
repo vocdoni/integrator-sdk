@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom'
 import { TextDecoder, TextEncoder } from 'node:util'
+import { mockBatchJobs } from './mocks/handlers'
 import { server } from './mocks/server'
 
 Object.defineProperties(globalThis, {
@@ -8,7 +9,10 @@ Object.defineProperties(globalThis, {
 })
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }))
-afterEach(() => server.resetHandlers())
+afterEach(() => {
+  server.resetHandlers()
+  mockBatchJobs.clear()
+})
 afterAll(() => server.close())
 
 let consoleErrorSpy: ReturnType<typeof vi.spyOn> | undefined

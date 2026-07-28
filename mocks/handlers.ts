@@ -10,6 +10,13 @@ export const MOCK_CSP_SIGNATURE = 'ab'.repeat(64)
 /** Hex-encoded weight "2a" === 42. */
 export const MOCK_WEIGHT_HEX = '2a'
 
+/**
+ * Batch relay jobs registered by the default `POST /votes` handler: jobId →
+ * number of envelopes. Cleared between tests (see setup-tests.ts) so batch job
+ * ids stay deterministic per test.
+ */
+export const mockBatchJobs = new Map<string, number>()
+
 export const mockElection = {
   id: 'abc123',
   title: 'Test Election',
@@ -143,15 +150,43 @@ export const handlers = [
     )
   }),
 
-  // Job polling — resolves immediately to a completed relay_vote with a nullifier.
-  http.get(`${BASE}/jobs/:jobId`, ({ params }) =>
-    HttpResponse.json({
-      jobId: params.jobId as string,
+  // Batch vote relay — POST /votes (saas-backend#610). Accepts the batch and
+  // returns one job id; the size is remembered so the jobs handler can report
+  // one per-envelope outcome per vote, in request order.
+  http.post(`${BASE}/votes`, async ({ request }) => {
+    const body = (await request.json()) as { votes?: Array<{ txPayload?: string }> }
+    const jobId = `batch-job-${mockBatchJobs.size}`
+    mockBatchJobs.set(jobId, body.votes?.length ?? 0)
+    return HttpResponse.json({ jobId }, { status: 202 })
+  }),
+
+  // Job polling — batch jobs resolve to a completed relay_votes with one
+  // per-envelope outcome each; anything else is a completed relay_vote.
+  http.get(`${BASE}/jobs/:jobId`, ({ params }) => {
+    const jobId = params.jobId as string
+    const batchSize = mockBatchJobs.get(jobId)
+    if (batchSize !== undefined) {
+      return HttpResponse.json({
+        jobId,
+        status: 'completed',
+        type: 'relay_votes',
+        result: {
+          votes: Array.from({ length: batchSize }, (_, i) => ({
+            processId: MOCK_PROCESS_ADDRESS,
+            nullifier: `nullifier-${jobId}-${i}`,
+            status: 'completed',
+            voteID: `nullifier-${jobId}-${i}`,
+          })),
+        },
+      })
+    }
+    return HttpResponse.json({
+      jobId,
       status: 'completed',
       type: 'relay_vote',
-      result: { voteID: `nullifier-${params.jobId}` },
-    }),
-  ),
+      result: { voteID: `nullifier-${jobId}` },
+    })
+  }),
 
   http.get(`${BASE}/organizations/:address`, ({ params }) =>
     HttpResponse.json({ ...mockOrganization, address: params.address as string }),

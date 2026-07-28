@@ -65,6 +65,25 @@ describe('VocdoniApiClient', () => {
     })
   })
 
+  describe('elections.voteBatch', () => {
+    it('relays the batch to POST /votes and returns the covering job id', async () => {
+      let received: Array<{ txPayload: string }> | undefined
+      server.use(
+        http.post(`${BASE_URL}/votes`, async ({ request }) => {
+          const body = (await request.json()) as { votes: Array<{ txPayload: string }> }
+          received = body.votes
+          return HttpResponse.json({ jobId: 'batch-1' }, { status: 202 })
+        }),
+      )
+
+      const res = await client.elections.voteBatch({
+        votes: [{ txPayload: 'aa' }, { txPayload: 'bb' }],
+      })
+      expect(res.jobId).toBe('batch-1')
+      expect(received).toEqual([{ txPayload: 'aa' }, { txPayload: 'bb' }])
+    })
+  })
+
   describe('elections.vote', () => {
     it('relays the tx to POST /vote and returns an async job id', async () => {
       const payload = { txPayload: 'encoded-tx-payload' }

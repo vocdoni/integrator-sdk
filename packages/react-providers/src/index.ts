@@ -35,6 +35,7 @@ export {
   type ElectionProviderProps,
   type ElectionQueryOptions,
   type ElectionResultsQueryOptions,
+  type QuestionVoteStatus,
 } from './election/ElectionProvider'
 
 export {

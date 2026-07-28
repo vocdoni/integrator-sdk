@@ -135,6 +135,8 @@ const {
   isAbleToVote,  // boolean — connected && isInCensus && !hasVoted
   vote,          // (encodedBallots: number[][]) => Promise<string> — per-question ballots
   voting,        // boolean — true while vote() is in flight (success OR error settles it)
+  voteStatus,    // Record<questionId, 'signing'|'submitting'|'confirming'|'confirmed'|'failed'>
+                 //   per-question progress of the current/last vote() call (already-voted → 'confirmed')
   voteId,        // string | null — nullifier after a successful vote
   clearVoter,    // () => void — clears the auth session and vote state
 } = useElection()
@@ -164,10 +166,12 @@ await auth1('123456')
 
 Casting is **phased** so a failure can never half-vote silently:
 
-1. **Pre-flight** — every question is validated up front (`upstreamId` present; `secretUntilTheEnd` questions have published `encryptionKeys` — never casts cleartext). Any problem throws before anything is consumed.
+1. **Pre-flight** — every question is validated up front (`upstreamId` present; `secretUntilTheEnd` questions have published `encryptionKeys` — never casts cleartext; at most 100 questions, the batch relay cap). Any problem throws before anything is consumed.
 2. **Resume check** — a fresh `processes.check()` marks questions already voted; they are skipped, so calling `vote()` again after a failure completes the remaining questions instead of dying on a double-vote.
 3. **Sign + build** — every remaining question gets an ephemeral signer, its one-shot CSP signature (`processes.sign`), and a locally built tx. A failure here aborts with **zero** votes relayed.
-4. **Relay + await** — each tx is relayed and its job awaited. A failed question doesn't abort the rest (their signatures are already consumed); if some land and some fail, `vote()` throws `PartialVoteError` (exported from `@vocdoni/react-providers`) with `succeeded: {questionId, voteId}[]` and `failed: {questionId, error}[]`, and refreshes `voterQuestions`/`hasVoted` to the on-chain truth. Catch it and offer a retry — the next `vote()` call resumes.
+4. **Batch relay + await** — every tx is relayed in ONE `POST /votes` call (saas-backend#610) that the backend accepts or rejects **as a unit**: a rejection (bad payload, queue full…) relays nothing and throws a plain, fully-retryable error — never a partial vote. On accept, one job covers the batch; its per-envelope outcomes settle one by one and are mirrored into `voteStatus` while pending. If, on chain, some votes land and some fail, `vote()` throws `PartialVoteError` (exported from `@vocdoni/react-providers`) with `succeeded: {questionId, voteId}[]` and `failed: {questionId, error}[]`, and refreshes `voterQuestions`/`hasVoted` to the on-chain truth. Catch it and offer a retry — the next `vote()` call resumes.
+
+Drive a per-question spinner off `voteStatus`: `signing` → `submitting` (tx built, batch not yet sent) → `confirming` (enqueued, awaiting the chain) → `confirmed` | `failed`.
 
 Use `@vocdoni/ballot` to encode ballots before calling `vote()`:
 

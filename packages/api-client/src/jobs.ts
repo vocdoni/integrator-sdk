@@ -14,6 +14,14 @@ export interface WaitForJobOptions {
    * instead of resolving silently — guards against polling the wrong job id.
    */
   expectType?: string
+  /**
+   * Called with every polled job state, including the terminal one. Lets
+   * callers observe intermediate progress — e.g. the per-envelope
+   * `result.votes` of a `relay_votes` batch, whose entries settle one by one
+   * while the job is still pending. Exceptions thrown by the callback abort
+   * the wait.
+   */
+  onPoll?: (job: JobStatusResponse) => void
 }
 
 /** Thrown when a polled job ends in the `failed` state. */
@@ -69,11 +77,12 @@ export class JobsClient {
    * @throws {JobFailedError} when the job ends as `failed`.
    */
   async waitFor(jobId: string, opts: WaitForJobOptions = {}): Promise<JobStatusResponse> {
-    const { intervalMs = 1000, timeoutMs = 60000, signal, expectType } = opts
+    const { intervalMs = 1000, timeoutMs = 60000, signal, expectType, onPoll } = opts
     const deadline = Date.now() + timeoutMs
 
     for (;;) {
       const job = await this.get(jobId)
+      onPoll?.(job)
       if (job.status === 'completed') {
         if (expectType && job.type !== expectType) {
           throw new Error(`Job ${jobId} completed with unexpected type "${job.type}" (expected "${expectType}")`)

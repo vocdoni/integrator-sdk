@@ -189,6 +189,11 @@ export interface OrganizationCensus {
   orgAddress: string
   size?: number
   weighted?: boolean
+  /**
+   * Source member group, absent for org-wide censuses. Before saas-backend#606
+   * org-wide censuses reported a fake all-zeros id here — no need to guard for
+   * that anymore.
+   */
   groupID?: string
   authFields?: OrgMemberAuthField[]
   twoFaFields?: OrgMemberTwoFaField[]
@@ -466,9 +471,17 @@ export interface VotingProcessQuestion {
  */
 export interface CensusSpec {
   authFields?: OrgMemberAuthField[]
-  /** Create/update input only — not returned on reads. */
+  /**
+   * Org member group the census was built from. Round-trips since
+   * saas-backend#606: echoed back on process reads so a client can restore the
+   * group a draft targeted. Absent (not a zero id) when the census is
+   * organization-wide.
+   */
   groupId?: string
-  /** Create/update input only — not returned on reads. */
+  /**
+   * Explicit member selection, as an alternative to `groupId`. Write-only: a
+   * process read echoes the census config, not the member list it resolved to.
+   */
   memberIds?: string[]
   twoFaFields?: OrgMemberTwoFaField[]
   weighted?: boolean
@@ -721,6 +734,20 @@ export interface RelayVoteResponse {
   jobId: string
 }
 
+/**
+ * Body of `POST /votes` (saas-backend#610) — batch relay of already-signed
+ * votes, at most 100 per call. The whole batch is validated synchronously and
+ * accepted or rejected as a unit (every payload must decode to a Vote for a
+ * known process, all must belong to one organization, and the queue must have
+ * room for all): a rejected batch relays NOTHING, closing the half-voted
+ * window of per-envelope relaying. Returns 202 with a single job covering the
+ * batch — its {@link JobResult.votes} reports every envelope in request order.
+ */
+export interface RelayVotesRequest {
+  /** Signed vote transactions, at most 100. */
+  votes: RelayVoteRequest[]
+}
+
 // ─── Jobs (async transaction outcomes) ─────────────────────────────────────────
 
 export type JobStatus = 'pending' | 'completed' | 'failed'
@@ -732,7 +759,23 @@ export type JobType =
   | 'set_process_status'
   | 'set_process_census'
   | 'relay_vote'
+  | 'relay_votes'
   | 'publish_voting_process'
+
+/**
+ * One envelope's outcome in a `relay_votes` batch job, index-aligned with the
+ * {@link RelayVotesRequest.votes} that created it. `processId` and `nullifier`
+ * are derived from the signed envelope and seeded at job creation, so they are
+ * readable while the entry is still `pending`; `voteID` (the chain-assigned
+ * id) or `error` arrive when the entry settles.
+ */
+export interface VoteJobResult {
+  processId: string
+  nullifier: string
+  status: JobStatus
+  voteID?: string
+  error?: string
+}
 
 /** Unified job result — each field is only populated by the job types that produce it. */
 export interface JobResult {
@@ -740,6 +783,20 @@ export interface JobResult {
   status?: string
   /** Vote nullifier — present once a relay_vote job completes. */
   voteID?: string
+  /**
+   * Vote nullifier, derived from the signed envelope and seeded at job
+   * creation (relay_vote) — readable while the job is still pending, unlike
+   * `voteID` which the chain assigns on success.
+   */
+  nullifier?: string
+  /** Voting process id the relayed vote targets — seeded at creation (relay_vote). */
+  processId?: string
+  /**
+   * Per-envelope outcomes of a `relay_votes` batch, in request order. The job
+   * completes when every entry succeeded and fails otherwise — read this array
+   * (also present on a failed job) for the per-vote truth.
+   */
+  votes?: VoteJobResult[]
   /** Members/census rows imported so far — produced by member/census import jobs. */
   added?: number
   /** Total rows to import — produced by member/census import jobs. */

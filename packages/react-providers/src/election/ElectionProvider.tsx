@@ -1,6 +1,7 @@
 import type {
   ProcessQuestionStatus,
   QuestionStatus,
+  VoteJobResult,
   VotingProcessResponse,
   VotingProcessResultsResponse,
 } from '@vocdoni/api-types'
@@ -15,7 +16,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { computeProcessStatus, VocdoniApiError } from '@vocdoni/api-client'
+import { computeProcessStatus, JobFailedError, VocdoniApiError } from '@vocdoni/api-client'
 import { useClient } from '../client/ClientProvider'
 import {
   ElectionAuthContext,
@@ -32,6 +33,16 @@ export const electionQueryKeys = {
   election: (id: string) => ['process', id] as const,
   results: (id: string) => ['process-results', id] as const,
 }
+
+/**
+ * One question's progress through a `vote()` call: CSP-signing the envelope,
+ * built and waiting for the batch relay, accepted and awaiting chain
+ * confirmation, then confirmed or failed.
+ */
+export type QuestionVoteStatus = 'signing' | 'submitting' | 'confirming' | 'confirmed' | 'failed'
+
+/** Hard cap of `POST /votes` — the backend rejects larger batches. */
+const MAX_VOTE_BATCH = 100
 
 /**
  * Election data, results and the vote flow, plus the voter's CSP auth session
@@ -69,10 +80,12 @@ export interface ElectionContextValue extends Omit<ElectionAuthContextValue, 'cl
    *
    * Casting is phased so a failure can't half-vote silently: every question is
    * validated and CSP-signed and every transaction built BEFORE anything is
-   * relayed. Questions the voter already voted (per a fresh check) are skipped,
-   * so calling `vote()` again after a failure resumes the remaining questions.
-   * When some questions land and others fail, throws {@link PartialVoteError}
-   * naming both sets.
+   * relayed, then the whole batch is relayed in ONE call (`POST /votes`) that
+   * the backend accepts or rejects as a unit — a rejection relays nothing and
+   * is safe to retry. Questions the voter already voted (per a fresh check)
+   * are skipped, so calling `vote()` again after a failure resumes the
+   * remaining questions. If, after the batch is accepted, some votes land on
+   * chain and others fail, throws {@link PartialVoteError} naming both sets.
    */
   vote(encodedBallots: number[][], memos?: (string | undefined)[]): Promise<string>
   /**
@@ -81,6 +94,14 @@ export interface ElectionContextValue extends Omit<ElectionAuthContextValue, 'cl
    * overlays and disable submit buttons with it (double-submit guard).
    */
   voting: boolean
+  /**
+   * Per-question progress of the current (or last) `vote()` call, keyed by
+   * question id: `signing` → `submitting` → `confirming` → `confirmed` or
+   * `failed`. Questions the call skipped because they were already voted
+   * appear as `confirmed`. Empty until a vote is attempted; cleared by
+   * {@link clearVoter} and on disconnect.
+   */
+  voteStatus: Record<string, QuestionVoteStatus>
   voteId: string | null
   isAbleToVote: boolean
   /** Clears the voter's auth session and vote state. */
@@ -207,6 +228,7 @@ export function ElectionProvider({
 
   const [voteId, setVoteId] = useState<string | null>(null)
   const [voting, setVoting] = useState(false)
+  const [voteStatus, setVoteStatus] = useState<Record<string, QuestionVoteStatus>>({})
   const [hasVoted, setHasVoted] = useState(false)
   const [isInCensus, setIsInCensus] = useState(false)
   const [voterQuestions, setVoterQuestions] = useState<ProcessQuestionStatus[]>([])
@@ -221,6 +243,7 @@ export function ElectionProvider({
       setVoterQuestions([])
       setHasVoted(false)
       setVoteId(null)
+      setVoteStatus({})
       return
     }
 
@@ -306,11 +329,25 @@ export function ElectionProvider({
       if (pending.length === 0) {
         throw new Error('Every question of this process has already been voted')
       }
+      // Fail before consuming any CSP signature: the batch endpoint hard-caps
+      // at 100 envelopes and would reject the whole relay.
+      if (pending.length > MAX_VOTE_BATCH) {
+        throw new Error(
+          `Cannot cast ${pending.length} votes in one call — the batch relay caps at ${MAX_VOTE_BATCH}`,
+        )
+      }
 
-      // The backend has no batch relay (one POST /vote per signed envelope), so
-      // batch client-side instead: consume every one-shot CSP signature and
-      // build every transaction BEFORE relaying anything. A failure in these
-      // phases aborts with zero votes on chain.
+      // Per-question progress for UIs: already-voted questions show as
+      // confirmed, everything this call will cast starts at 'signing'.
+      setVoteStatus(
+        Object.fromEntries(
+          election.questions.map((q) => [q.id, voted.has(q.id) ? 'confirmed' : 'signing'] as const),
+        ),
+      )
+
+      // Consume every one-shot CSP signature and build every transaction
+      // BEFORE relaying anything. A failure in these phases aborts with zero
+      // votes on chain.
       const signed: Array<{ question: (typeof election.questions)[number]; i: number; txPayload: string }> = []
       for (const { question, i } of pending) {
         const signer = new EphemeralSigner()
@@ -329,22 +366,78 @@ export function ElectionProvider({
             memo: memos?.[i],
           }),
         })
+        setVoteStatus((st) => ({ ...st, [question.id]: 'submitting' }))
       }
 
-      // Relay every transaction and await its job. A failed question does not
-      // abort the rest — the remaining signatures are already consumed, so
-      // casting what we can and reporting the rest maximizes progress.
+      // Relay the whole batch in ONE call (saas-backend#610). The backend
+      // validates it synchronously and accepts or rejects it AS A UNIT, so a
+      // throw here means zero votes are on chain — a plain, fully-retryable
+      // error, never a partial vote.
+      let jobId: string
+      try {
+        ;({ jobId } = await client.elections.voteBatch({
+          votes: signed.map(({ txPayload }) => ({ txPayload })),
+        }))
+      } catch (err) {
+        setVoteStatus((st) => {
+          const next = { ...st }
+          for (const { question } of signed) next[question.id] = 'failed'
+          return next
+        })
+        throw err
+      }
+
+      // One job covers the batch; its per-envelope entries settle one by one
+      // while the job is pending — mirror every poll into voteStatus so UIs
+      // can show per-question confirmation progress.
+      const applyOutcomes = (votes: VoteJobResult[] | undefined) => {
+        if (!votes) return
+        setVoteStatus((st) => {
+          const next = { ...st }
+          votes.forEach((v, idx) => {
+            const question = signed[idx]?.question
+            if (!question) return
+            next[question.id] =
+              v.status === 'completed' ? 'confirmed' : v.status === 'failed' ? 'failed' : 'confirming'
+          })
+          return next
+        })
+      }
+      setVoteStatus((st) => {
+        const next = { ...st }
+        for (const { question } of signed) next[question.id] = 'confirming'
+        return next
+      })
+
+      // The job completes only when EVERY envelope landed and fails otherwise;
+      // a failed job still carries the per-vote outcomes, so read them from
+      // the JobFailedError instead of rethrowing.
+      let outcomes: VoteJobResult[]
+      try {
+        const job = await client.jobs.waitFor(jobId, {
+          expectType: 'relay_votes',
+          onPoll: (j) => applyOutcomes(j.result?.votes),
+        })
+        outcomes = job.result?.votes ?? []
+      } catch (err) {
+        if (!(err instanceof JobFailedError)) throw err
+        outcomes = err.job.result?.votes ?? []
+        applyOutcomes(outcomes)
+      }
+
       const succeeded: Array<{ questionId: string; voteId: string }> = []
       const failed: Array<{ questionId: string; error: unknown }> = []
-      for (const { question, txPayload } of signed) {
-        try {
-          const { jobId } = await client.elections.vote({ txPayload })
-          const job = await client.jobs.waitFor(jobId)
-          succeeded.push({ questionId: question.id, voteId: job.result?.voteID ?? jobId })
-        } catch (err) {
-          failed.push({ questionId: question.id, error: err })
+      signed.forEach(({ question }, idx) => {
+        const outcome = outcomes[idx]
+        if (outcome?.status === 'completed') {
+          succeeded.push({ questionId: question.id, voteId: outcome.voteID ?? outcome.nullifier })
+        } else {
+          failed.push({
+            questionId: question.id,
+            error: new Error(outcome?.error ?? `Vote for question ${question.id} did not complete`),
+          })
         }
-      }
+      })
 
       if (failed.length > 0) {
         // Truthful partial state: reflect what actually landed on chain, so
@@ -389,6 +482,7 @@ export function ElectionProvider({
 
   const clearVoter = useCallback(() => {
     setVoteId(null)
+    setVoteStatus({})
     setHasVoted(false)
     setIsInCensus(false)
     setVoterQuestions([])
@@ -416,11 +510,12 @@ export function ElectionProvider({
       hasVoted,
       vote,
       voting,
+      voteStatus,
       voteId,
       isAbleToVote: session.connected && isInCensus && !hasVoted,
       clearVoter,
     }),
-    [election, status, chainId, results, loading, error, session, isInCensus, voterQuestions, hasVoted, vote, voting, voteId, clearVoter],
+    [election, status, chainId, results, loading, error, session, isInCensus, voterQuestions, hasVoted, vote, voting, voteStatus, voteId, clearVoter],
   )
 
   return (

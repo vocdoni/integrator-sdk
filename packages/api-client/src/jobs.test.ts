@@ -127,4 +127,33 @@ describe('jobs.waitFor', () => {
     expect(caught).toBeInstanceOf(JobFailedError)
     expect((caught as Error).message).toBe('Job failed-2 failed')
   })
+
+  it('calls onPoll with every polled state, including the terminal one', async () => {
+    let polls = 0
+    server.use(
+      http.get(`${BASE_URL}/jobs/:jobId`, ({ params }) => {
+        polls++
+        // First poll pending (with a settling per-vote entry), then completed.
+        return HttpResponse.json({
+          jobId: params.jobId as string,
+          status: polls === 1 ? 'pending' : 'completed',
+          type: 'relay_votes',
+          result: {
+            votes: [
+              { processId: 'aa', nullifier: 'n-0', status: polls === 1 ? 'pending' : 'completed' },
+            ],
+          },
+        })
+      }),
+    )
+
+    const seen: string[] = []
+    const job = await client.jobs.waitFor('batch-1', {
+      intervalMs: 5,
+      onPoll: (j) => seen.push(`${j.status}:${j.result?.votes?.[0]?.status}`),
+    })
+
+    expect(job.status).toBe('completed')
+    expect(seen).toEqual(['pending:pending', 'completed:completed'])
+  })
 })

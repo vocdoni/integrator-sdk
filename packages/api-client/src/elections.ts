@@ -14,6 +14,7 @@ import type {
   PublishProcessResponse,
   RelayVoteRequest,
   RelayVoteResponse,
+  RelayVotesRequest,
   SetElectionStatusRequest,
   SetQuestionsStatusRequest,
   UpdateProcessCensusResponse,
@@ -297,6 +298,24 @@ export class ElectionsClient {
    */
   async vote(payload: RelayVoteRequest): Promise<RelayVoteResponse> {
     return this.fetch<RelayVoteResponse>('/vote', {
+      method: 'POST',
+      body: payload,
+    }).catch(handleError)
+  }
+
+  /**
+   * Relay a batch of already-signed votes in one call (`POST /votes`,
+   * saas-backend#610) — at most 100. The batch is validated synchronously and
+   * accepted or rejected AS A UNIT, so a rejection relays nothing: this closes
+   * the half-voted window that per-envelope relaying leaves in a
+   * multi-question process. Returns a single job for the whole batch; its
+   * `result.votes` reports every envelope in request order (`processId` and
+   * `nullifier` readable while pending, `voteID`/`error` once settled). The
+   * job completes only when every envelope succeeded and fails otherwise —
+   * a failed job still carries the per-vote outcomes.
+   */
+  async voteBatch(payload: RelayVotesRequest): Promise<RelayVoteResponse> {
+    return this.fetch<RelayVoteResponse>('/votes', {
       method: 'POST',
       body: payload,
     }).catch(handleError)
