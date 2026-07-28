@@ -90,6 +90,98 @@ describe('ElectionQuestion field switching (via inferQuestionBallotType)', () =>
   })
 })
 
+describe('extended choice presentation (driven by choice.meta)', () => {
+  /** Renders one question of `election` and captures the layout/presentation it picks. */
+  function renderQuestionAt(election: ReturnType<typeof makeProcess>, index: number) {
+    state.election = election
+    const captured: { layout?: string; hasExtendedChoices?: boolean; presentations: string[]; compacts: boolean[] } = {
+      presentations: [],
+      compacts: [],
+    }
+    renderWithComponents(
+      <FormHost>
+        <ElectionQuestion question={election.questions[index]} index={String(index)} />
+      </FormHost>,
+      {
+        components: {
+          ElectionQuestion: (props: any) => {
+            captured.layout = props.layout
+            captured.hasExtendedChoices = props.hasExtendedChoices
+            return <>{props.fields}</>
+          },
+          QuestionChoice: (props: any) => {
+            captured.presentations.push(props.presentation)
+            captured.compacts.push(props.compact)
+            return null
+          },
+        },
+      },
+    )
+    return captured
+  }
+
+  const withImage = {
+    title: 'Q1',
+    choices: [
+      { title: 'A', value: 0, meta: { image: { default: 'https://cdn.example/a.jpeg' } } },
+      { title: 'B', value: 1 },
+    ],
+  }
+
+  const withDescriptionOnly = {
+    title: 'Q1',
+    choices: [
+      { title: 'A', value: 0, meta: { description: 'Peeled beforehand' } },
+      { title: 'B', value: 1 },
+    ],
+  }
+
+  const withEmptyDescription = {
+    title: 'Q1',
+    choices: [{ title: 'A', value: 0, meta: { description: '' } }, { title: 'B', value: 1 }],
+  }
+
+  it('renders basic/list when no choice carries extended info', () => {
+    const captured = renderQuestionAt(makeProcess({ questions: [threeChoices] }), 0)
+    expect(captured.layout).toBe('list')
+    expect(captured.hasExtendedChoices).toBe(false)
+    expect([...new Set(captured.presentations)]).toEqual(['basic'])
+  })
+
+  it('renders extended/grid when a choice carries an image', () => {
+    const captured = renderQuestionAt(makeProcess({ questions: [withImage] }), 0)
+    expect(captured.layout).toBe('grid')
+    expect(captured.hasExtendedChoices).toBe(true)
+    expect([...new Set(captured.presentations)]).toEqual(['extended'])
+  })
+
+  it('renders extended but stays on the list layout for a description-only question', () => {
+    const captured = renderQuestionAt(makeProcess({ questions: [withDescriptionOnly] }), 0)
+    expect(captured.layout).toBe('list')
+    expect(captured.hasExtendedChoices).toBe(true)
+    expect([...new Set(captured.presentations)]).toEqual(['extended'])
+  })
+
+  it('stays basic/list when the only stored info is an empty description', () => {
+    const captured = renderQuestionAt(makeProcess({ questions: [withEmptyDescription] }), 0)
+    expect(captured.layout).toBe('list')
+    expect(captured.hasExtendedChoices).toBe(false)
+    expect([...new Set(captured.presentations)]).toEqual(['basic'])
+  })
+
+  it('keeps each question of a mixed process on its own presentation', () => {
+    const mixed = makeProcess({ questions: [withImage, threeChoices] })
+
+    const first = renderQuestionAt(mixed, 0)
+    expect(first.layout).toBe('grid')
+    expect([...new Set(first.presentations)]).toEqual(['extended'])
+
+    const second = renderQuestionAt(mixed, 1)
+    expect(second.layout).toBe('list')
+    expect([...new Set(second.presentations)]).toEqual(['basic'])
+  })
+})
+
 describe('questionSelectionRange', () => {
   it('requires exactly maxCount when abstain is not reserved', () => {
     // uniqueChoices needs maxValue >= (numChoices); maxValue 2 does not reserve for 3 choices.

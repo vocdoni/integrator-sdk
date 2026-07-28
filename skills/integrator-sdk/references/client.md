@@ -390,7 +390,7 @@ interface VotingProcessQuestion {
   id: string
   upstreamId?: string                 // on-chain vochain hex id (voting; `electionId` of CSP check/sign)
   title: MultiLangString
-  choices: Choice[]                   // { title, value }
+  choices: Choice[]                   // { title, value, meta? } — see "Extended choice info" below
   ballotProtocol: BallotProtocol
   type: string                        // 'singlechoice' | 'multichoice' when created with a named
                                       // type; empty for raw-ballotProtocol questions
@@ -398,6 +398,7 @@ interface VotingProcessQuestion {
   secretUntilTheEnd: boolean
   status: QuestionStatus              // 'UPCOMING' | 'ONGOING' | 'ENDED' | 'CANCELED' | 'PAUSED' | 'RESULTS' | 'PROCESS_UNKNOWN'
                                       // wire may say 'READY' for live; the client normalizes it to 'ONGOING' on read
+  metadata?: Record<string, unknown>  // free-form creator bag; its `choices` key is SDK-recognized
   encryptionKeys?: EncryptionKey[]    // secretUntilTheEnd only; ABSENT until keykeepers publish — poll
   results?: QuestionResults           // live tally — single reads only (never on list items)
 }
@@ -434,6 +435,59 @@ interface CensusInfo {
   twoFaFields?: string[]      // empty/absent → auth-only (no 2FA)
 }
 ```
+
+---
+
+## Extended choice info (image + description)
+
+A choice can carry an illustrative image and a longer description. The API has
+nowhere to store this on a choice (`db.Choice` is `{Title, Value}`), so it lives
+on the **parent question**, in its free-form `metadata` bag under `choices`,
+keyed by choice `value`:
+
+```ts
+// What you WRITE (create/update): on the question, not the choice
+{
+  title: { default: 'How do you eat it?' },
+  choices: [{ title: { default: 'With skin' }, value: 0 }, …],
+  type: 'singlechoice',
+  metadata: {
+    choices: [
+      { value: 0, description: 'Unpeeled', image: 'https://cdn.example/a.jpeg' },
+      { value: 1, image: { default: 'https://…/full.jpg', thumbnail: 'https://…/t.jpg' } },
+    ],
+  },
+}
+```
+
+On **read**, `elections.get`, `elections.list` and `elections.getQuestion` fold
+those entries onto the matching choice as `choice.meta`, so components read it
+straight off the choice:
+
+```ts
+interface ChoiceMeta {
+  description?: string
+  image?: { default?: string; thumbnail?: string }
+}
+
+interface Choice {
+  title: LocalizedInput
+  value: number
+  meta?: ChoiceMeta   // response-only, client-derived — writing it here is ignored
+}
+```
+
+Rules:
+
+- `image` is tolerated in both stored shapes — a plain URL string is normalized
+  to `{ default: url }`, an object is passed through.
+- Entries whose `value` matches no choice are ignored; a question with no
+  `metadata.choices` leaves every `choice.meta` undefined (and so renders the
+  basic, non-extended presentation in `@vocdoni/react-components`).
+- `ipfs://` URLs are stored as-is and resolved to a gateway URL by the display
+  layer, not by the client.
+- The mapping is exported as `normalizeQuestionChoiceMeta(question)` for anyone
+  normalizing raw wire data by hand (it also runs inside `normalizeVotingProcess`).
 
 ---
 

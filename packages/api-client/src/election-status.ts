@@ -4,6 +4,7 @@ import type {
   VotingProcessResponse,
   VotingProcessResultsResponse,
 } from '@vocdoni/api-types'
+import { normalizeQuestionChoiceMeta } from './choice-meta'
 
 /**
  * The backend emits `READY` for a live question at runtime — the same semantic
@@ -15,10 +16,19 @@ import type {
 export const normalizeQuestionStatus = (status: string): QuestionStatus =>
   (status === 'READY' ? 'ONGOING' : status) as QuestionStatus
 
-/** Normalizes every question's status of a process read (`READY` → `ONGOING`). */
+/**
+ * Normalizes a process read: every question's status (`READY` → `ONGOING`) and
+ * its extended choice info (`metadata.choices` → `choice.meta`, see
+ * {@link normalizeQuestionChoiceMeta}).
+ *
+ * Idempotent, so it is safe to run on data that already went through the
+ * client (e.g. a prefetched process handed to `<ElectionProvider election>`).
+ */
 export const normalizeVotingProcess = <T extends VotingProcessResponse>(process: T): T => ({
   ...process,
-  questions: process.questions.map((q) => ({ ...q, status: normalizeQuestionStatus(q.status) })),
+  questions: process.questions.map((q) =>
+    normalizeQuestionChoiceMeta({ ...q, status: normalizeQuestionStatus(q.status) }),
+  ),
 })
 
 /**

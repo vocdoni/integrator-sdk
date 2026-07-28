@@ -26,6 +26,7 @@ import type {
   VotingProcessValidateResponse,
 } from '@vocdoni/api-types'
 import type { UpFetch } from 'up-fetch'
+import { normalizeQuestionChoiceMeta } from './choice-meta'
 import { normalizeQuestionStatus, normalizeVotingProcess } from './election-status'
 import { handleError } from './errors'
 import { JobsClient, type WaitForJobOptions } from './jobs'
@@ -276,7 +277,7 @@ export class ElectionsClient {
    */
   async getQuestion(processId: string, questionId: string): Promise<PublicQuestionResponse> {
     return this.fetch<PublicQuestionResponse>(`/processes/${processId}/questions/${questionId}`)
-      .then((q) => ({ ...q, status: normalizeQuestionStatus(q.status) }))
+      .then((q) => normalizeQuestionChoiceMeta({ ...q, status: normalizeQuestionStatus(q.status) }))
       .catch(handleError)
   }
 

@@ -1,5 +1,6 @@
 import type {
   BallotProtocol,
+  ChoiceMeta,
   Election,
   QuestionStatus,
   VotingProcessQuestion,
@@ -54,7 +55,11 @@ const DEFAULT_BALLOT_PROTOCOL: BallotProtocol = {
 
 type MakeProcessQuestionInput = {
   title?: string
-  choices?: Array<{ title: string; value: number }>
+  /**
+   * `meta` mirrors what the API client derives from the question's
+   * `metadata.choices` — set it to exercise the extended choice presentation.
+   */
+  choices?: Array<{ title: string; value: number; meta?: ChoiceMeta }>
   ballotProtocol?: Partial<BallotProtocol>
   status?: QuestionStatus
   secretUntilTheEnd?: boolean
@@ -106,7 +111,11 @@ export function makeProcess(opts: MakeProcessOptions = {}): VotingProcessRespons
     parentProcessId: opts.id ?? 'proc-1',
     upstreamId: q.upstreamId ?? `upstream-${i}`,
     title: { default: q.title ?? `Question ${i + 1}` },
-    choices: (q.choices ?? []).map((c) => ({ title: { default: c.title }, value: c.value })),
+    choices: (q.choices ?? []).map((c) => ({
+      title: { default: c.title },
+      value: c.value,
+      ...(c.meta && { meta: c.meta }),
+    })),
     ballotProtocol: { ...DEFAULT_BALLOT_PROTOCOL, ...bpOverrides, ...(q.ballotProtocol ?? {}) },
     type: 'singlechoice',
     secretUntilTheEnd: q.secretUntilTheEnd ?? electionType?.secretUntilTheEnd ?? false,

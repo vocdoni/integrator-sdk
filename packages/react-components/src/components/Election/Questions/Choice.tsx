@@ -16,11 +16,16 @@ export type QuestionChoiceMeta = {
 const toNonEmpty = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim().length > 0 ? value : undefined
 
+/**
+ * Read a choice's extended display info (image, description), resolving `ipfs://`
+ * URLs and dropping empty/whitespace-only strings.
+ *
+ * The source is `choice.meta`, which the API client fills from the parent
+ * question's `metadata.choices` on read — a question without those entries
+ * yields an empty meta here, and so renders the basic presentation.
+ */
 export const getQuestionChoiceMeta = (choice: Choice): QuestionChoiceMeta => {
-  const meta = ((choice as any).meta ?? {}) as {
-    image?: { default?: string; thumbnail?: string }
-    description?: string
-  }
+  const meta = choice.meta ?? {}
 
   const imageDefault = toNonEmpty(meta.image?.default)
   const imageThumbnail = toNonEmpty(meta.image?.thumbnail)

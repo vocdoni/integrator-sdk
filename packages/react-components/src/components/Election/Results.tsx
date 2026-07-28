@@ -63,8 +63,7 @@ export const ElectionResults = ({ forceRender, ...rest }: ElectionResultsProps) 
         }
 
         const choice = choiceByValue.get(row.choice)
-        const meta = (choice as any)?.meta ?? {}
-        const image = meta?.image?.default as string | undefined
+        const image = choice?.meta?.image?.default
 
         return {
           title: choice ? resolveTitle(choice.title) : String(row.choice),

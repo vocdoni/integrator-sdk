@@ -1,4 +1,5 @@
 export { AuthClient } from './auth'
+export { normalizeQuestionChoiceMeta } from './choice-meta'
 export {
   isLive,
   isUpcoming,
