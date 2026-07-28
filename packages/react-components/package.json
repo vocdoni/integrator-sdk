@@ -1,7 +1,6 @@
 {
   "name": "@vocdoni/react-components",
   "version": "1.1.1",
-  "private": true,
   "license": "GPL-3.0-or-later",
   "description": "React UI components for Vocdoni voting",
   "keywords": [
