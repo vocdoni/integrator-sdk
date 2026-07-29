@@ -105,6 +105,31 @@ Only single-choice is ever multi-question, so a flat array is unambiguous:
   `maxCount` choices. On the way back, `decodeResults` **unifies** all sentinel columns into a
   single trailing `{ choice: 'abstain', … }` bucket per multichoice question.
 
+## Decoding semantics
+
+`decodeResults` / `decodeQuestionResults` read the raw on-chain matrix, whose layout
+depends on the protocol:
+
+| Type | Matrix | Per-choice tally |
+|---|---|---|
+| single-choice | one row per question, one column per choice value | `results[q][choiceValue]` |
+| approval / dense multichoice | one row per option, `[notSelected, selected]` | `results[optionPos][1]` |
+| pick-slot multichoice | one row per pick-slot, columns are choice values | column sum across rows; sentinel columns (`>= choices.length`) unify into one `abstain` bucket |
+| budget / quadratic | one row per option, **one column** | `results[optionPos][0]` |
+
+The budget/quadratic row is a single cell because `maxValue === 0` switches the
+scrutinizer to *discrete aggregation*: it accumulates `Σ amount × weight` into column
+0 instead of bucketing a histogram (vocdoni-node `vochain/results/results.go` —
+"The results are aggregated, so we use only the first column of the results matrix").
+Reading such a row as a histogram yields zero for every option.
+
+> **Ranked ballots are encodable but not decodable as a ranking.** A ranked protocol
+> (`uniqueValues: true`, `maxValue >= maxCount - 1`) encodes correctly — pass one rank
+> per option in choice order — but there is no ranked branch in the decoder: it is
+> labelled `multichoice`, so `decodeResults` reports *how many voters ranked each
+> option* (plus an always-zero `abstain` bucket), not the resulting order. Aggregate
+> the raw matrix yourself if you need Borda/positional scoring.
+
 ## Unsatisfiable ballot configs
 
 The vochain scrutinizer applies `uniqueValues` (`voteType.uniqueChoices`) to the **raw

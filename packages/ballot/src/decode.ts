@@ -72,15 +72,20 @@ function decodeQuestion(
 
     case BallotType.Budget:
     case BallotType.Quadratic: {
-      // One field per option; value = amount allocated (maxValue === 0 marker). The
-      // field index is the option's *position* in choices (amounts are laid out in
-      // choice order by encode), NOT its choice.value — those differ when values are
-      // non-contiguous. The per-option total is the index-weighted sum of its histogram
-      // row: Σ value * count(value).
-      const counts = question.choices.map((_c, i) => {
-        const row = results[i] ?? []
-        return row.reduce((sum, cell, value) => sum + value * toInt(cell), 0)
-      })
+      // One field per option; value = amount allocated. `maxValue === 0` is not just
+      // a marker — it switches the scrutinizer to **discrete aggregation**: rather
+      // than bucketing each ballot into a histogram, it accumulates
+      // `results[field][0] += value * weight` and leaves the row one cell wide
+      // (vochain/results/results.go, the `MaxValue == 0` branch: "The results are
+      // aggregated, so we use only the first column of the results matrix").
+      // So the per-option total is that single cell, already weighted — NOT an
+      // index-weighted sum over the row, which would read the sole column at index
+      // 0 and always evaluate to zero.
+      //
+      // The field index is the option's *position* in choices (amounts are laid out
+      // in choice order by encode), NOT its choice.value — those differ when values
+      // are non-contiguous.
+      const counts = question.choices.map((_c, i) => toInt((results[i] ?? [])[0]))
       return withPercentages(question, counts)
     }
 

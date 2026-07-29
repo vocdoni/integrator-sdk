@@ -33,8 +33,17 @@ const createElection = (
   })),
 })
 
-/** One voter's ballot → rectangular one-hot histogram (results[field][value] = 1). */
-const histogramFromBallot = (ballot: number[]): string[][] => {
+/**
+ * One voter's ballot → the results matrix a vochain would hold after that vote.
+ *
+ * Two modes, matching `results.AddVote`:
+ * - `maxValue > 0`: histogram — `results[field][value] += weight`, so one voter
+ *   produces a one-hot row per field.
+ * - `maxValue === 0` (budget / quadratic): discrete aggregation — the value itself
+ *   is summed into `results[field][0]`, and the row stays one cell wide.
+ */
+const resultsFromBallot = (voteType: Election['voteType'], ballot: number[]): string[][] => {
+  if (voteType.maxValue === 0) return ballot.map((value) => [String(value)])
   const width = Math.max(...ballot, 0) + 1
   return ballot.map((value) => {
     const row = new Array(width).fill('0')
@@ -44,7 +53,9 @@ const histogramFromBallot = (ballot: number[]): string[][] => {
 }
 
 const votesOf = (election: Pick<Election, 'questions' | 'voteType' | 'results'>, ballot: number[]) =>
-  decodeResults({ ...election, results: histogramFromBallot(ballot) }).map((q) => q.map((c) => c.votes))
+  decodeResults({ ...election, results: resultsFromBallot(election.voteType, ballot) }).map((q) =>
+    q.map((c) => c.votes)
+  )
 
 describe('encode ↔ decode round-trip', () => {
   it('single-choice (multi-question)', () => {

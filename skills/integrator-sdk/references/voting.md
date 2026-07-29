@@ -163,6 +163,30 @@ without repeating one.
 choices: [0, 2, 1]
 ```
 
+> Ranked ballots **encode** correctly through `encodeQuestionBallot`, but
+> `decodeQuestionResults` has no ranked branch — it reports how many voters
+> ranked each option, not the resulting order. Aggregate the raw matrix yourself
+> for Borda/positional scoring.
+
+### Budget / quadratic (per-option amounts)
+
+`ballotProtocol.maxCount = numOptions`, `ballotProtocol.maxValue = 0`,
+`costExponent = 1` (budget) or `2` (quadratic), `maxTotalCost` caps the spend.
+
+The array has one element per option: the amount allocated to it, in choice
+order.
+
+```ts
+// 4 options; voter allocates 4 to option 0 and 6 to option 2
+choices: [4, 0, 6, 0]
+```
+
+`maxValue = 0` means "no upper bound per option" — and it also changes how the
+**results** come back. The scrutinizer switches to discrete aggregation: each
+option's row holds a single cell with `Σ amount × weight`, not a histogram.
+`decodeQuestionResults` handles that; if you read the matrix by hand, take
+`results[optionPosition][0]`.
+
 Prefer `encodeQuestionBallot(question, selections)` from `@vocdoni/ballot`
 over hand-building this array — it infers the ballot type from
 `question.ballotProtocol` and handles multichoice abstain-padding for you

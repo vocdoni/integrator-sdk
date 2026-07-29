@@ -9,9 +9,12 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 //   2. loads a 100-member memberbase (memberNumber 1..100)
 //   3. reads the auto-created "All members" group
 //   4. builds + publishes a CSP census from that group
-//   5. creates and publishes 3 processes (single-choice, multi-choice, and a
+//   5. creates and publishes 4 processes (single-choice, multi-choice, a
 //      secretUntilTheEnd single-choice — its per-question encryption keys are
-//      polled after publish, per saas-backend#594) sharing that one group
+//      polled after publish, per saas-backend#594 — and a ballot-protocol
+//      matrix covering every remaining type @vocdoni/ballot supports: approval,
+//      capped approval, pick-slot multichoice, ranked, budget and quadratic)
+//      sharing that one group
 //      census, then proves the PUBLIC voter surface for each: drafts 404 on the
 //      token-less process read (draft gating, saas-backend#599) while published
 //      processes are fully public — chainId, questions, census size/totalWeight
@@ -24,7 +27,10 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 //      off the PUBLIC process read; the secret question's ballots are sealed
 //      with its encryption keys, and each vote resolves a distinct nullifier
 //   7. reads the live per-question tallies (QuestionResults, saas-backend#596/
-//      #599) publicly and checks the vote counts
+//      #599) publicly and checks the vote counts AND the decoded per-choice
+//      tallies — the latter is the only thing that proves a vote was actually
+//      counted, since the chain increments voteCount even for ballots the
+//      scrutinizer discards during aggregation
 //
 // This is deliberately the ONLY integration suite: anything needing a live
 // backend gets asserted inside this lifecycle (it creates all its own data, so
@@ -32,9 +38,10 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 // disposable saas-api + vochain container on every PR/push.
 //
 // Opt-in: needs INTEGRATION_API_KEY (a `vsk_…` key whose org is an integrator
-// with scopes managed:write + members:write + voting:write, and quota for >=3
-// processes / >=200 census). It creates real on-chain elections and votes, so it
-// is excluded from the default run.
+// with scopes managed:write + members:write + voting:write, and quota for >=4
+// processes / >=9 on-chain elections / >=200 census). It creates real on-chain
+// elections and casts 36 real votes, so it is excluded from the default run and
+// takes several minutes.
 const suite = apiKey ? describe : describe.skip
 
 const MEMBER_COUNT = 100
@@ -62,6 +69,18 @@ interface ProcessSpec {
    * chain silently discards, or a decoder misreading the histogram, fails here.
    */
   tally: number[]
+  /**
+   * Per-question override of `choices`/`tally`, positionally aligned with
+   * `questions`. Used by the ballot-protocol matrix process, whose questions each
+   * exercise a different ballot type and therefore need their own selections.
+   */
+  perQuestion?: Array<{ choices: number[]; tally: number[] }>
+}
+
+/** The selections + expected tally for one question of a process. */
+const specFor = (p: ProcessSpec, questionId: string) => {
+  const index = p.questions.findIndex((q) => q.id === questionId)
+  return p.perQuestion?.[index] ?? { choices: p.choices, tally: p.tally }
 }
 
 suite('full election lifecycle (live — creates an org, processes and votes)', () => {
@@ -125,7 +144,14 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       // endDate is required; omitting startDate makes each election start
       // immediately on publish, so the voters below can cast right away.
       const endDate = new Date(Date.now() + 2 * 60 * 60_000).toISOString()
-      const drafts: Array<{ label: string; secret: boolean; choices: number[]; tally: number[]; body: Parameters<typeof admin.elections.create>[0] }> = [
+      const drafts: Array<{
+        label: string
+        secret: boolean
+        choices: number[]
+        tally: number[]
+        perQuestion?: ProcessSpec['perQuestion']
+        body: Parameters<typeof admin.elections.create>[0]
+      }> = [
         {
           label: 'single-choice',
           secret: false,
@@ -209,6 +235,79 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             ],
           },
         },
+        // Every remaining ballot type @vocdoni/ballot can encode and decode, in
+        // one process — one question per protocol, each with its own selections
+        // and expected tally. The named types above only reach two of them
+        // (singlechoice, dense multichoice); the rest are only expressible via a
+        // raw `ballotProtocol`, and each has a distinct wire layout AND a
+        // distinct results layout, so nothing here is redundant with the others.
+        //
+        // This exists because voteCount cannot tell a counted vote from a
+        // discarded one — only a decoded tally can, and every protocol decodes
+        // differently. Two silent all-zero-results bugs were found exactly here.
+        {
+          label: 'ballot protocol matrix',
+          secret: false,
+          choices: [],
+          tally: [],
+          perQuestion: [
+            // approval — dense 0/1 vector, uncapped.
+            { choices: [0, 2], tally: [VOTERS.length, 0, VOTERS.length, 0] },
+            // approval capped by maxTotalCost (2 picks costs exactly 2).
+            { choices: [0, 2], tally: [VOTERS.length, 0, VOTERS.length, 0] },
+            // legacy pick-slot multichoice: 3 slots, 2 picks, one abstain
+            // sentinel padded in. uniqueValues is TRUE here and satisfiable
+            // (maxValue 6 >= maxCount 3) — this is the case the guard must NOT
+            // reject, and the ballot [0, 2, 4] does carry three distinct values.
+            // Decoding appends the unified abstain bucket, hence the 5th entry.
+            { choices: [0, 2], tally: [VOTERS.length, 0, VOTERS.length, 0, VOTERS.length] },
+            // ranked: one rank per option, no repeats. NOTE the decoder has no
+            // ranked branch — it labels this multichoice and reports "how many
+            // voters ranked each option", which is why every option shows the
+            // full voter count and a zero abstain bucket. That is a real gap,
+            // not a mis-tally: the ranking itself is not recoverable through
+            // decodeQuestionResults. Locked in here so it changes deliberately.
+            {
+              choices: [2, 0, 3, 1],
+              tally: [VOTERS.length, VOTERS.length, VOTERS.length, VOTERS.length, 0],
+            },
+            // budget: per-option amounts, maxValue 0 → the chain aggregates
+            // Σ amount × weight into one cell per option.
+            { choices: [4, 0, 6, 0], tally: [4 * VOTERS.length, 0, 6 * VOTERS.length, 0] },
+            // quadratic: same aggregation, cost is Σ amount² (12 <= 16).
+            {
+              choices: [2, 0, 2, 2],
+              tally: [2 * VOTERS.length, 0, 2 * VOTERS.length, 2 * VOTERS.length],
+            },
+          ],
+          body: {
+            orgAddress,
+            census: { authFields: ['memberNumber'], groupId },
+            title: 'Ballot protocol matrix',
+            endDate,
+            questions: (
+              [
+                ['Approval', { maxCount: 4, maxValue: 1 }],
+                ['Approval (max 2)', { maxCount: 4, maxValue: 1, maxTotalCost: 2 }],
+                ['Multichoice pick-slot', { maxCount: 3, maxValue: 6, uniqueValues: true }],
+                ['Ranked', { maxCount: 4, maxValue: 3, uniqueValues: true }],
+                ['Budget', { maxCount: 4, maxValue: 0, costExponent: 1, maxTotalCost: 10 }],
+                ['Quadratic', { maxCount: 4, maxValue: 0, costExponent: 2, maxTotalCost: 16 }],
+              ] as const
+            ).map(([title, bp]) => ({
+              title,
+              choices: Array.from({ length: 4 }, (_, v) => ({ title: `C${v}`, value: v })),
+              ballotProtocol: {
+                maxVoteOverwrites: 0,
+                maxTotalCost: 0,
+                costExponent: 1,
+                uniqueValues: false,
+                costFromWeight: false,
+                ...bp,
+              },
+            })),
+          },
+        },
       ]
 
       const processes: ProcessSpec[] = []
@@ -280,6 +379,17 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             unsatisfiableQuestionReason(pub),
             `${d.label} public question has an unsatisfiable ballot config`,
           ).toBeNull()
+          // The multichoice question is created with uniqueChoices: true on
+          // purpose (see the draft above); the client must have rewritten it,
+          // so it reads back false. Without that, the on-chain uniqueValues
+          // would discard every ballot and the tally assertion below would
+          // come back all zeros.
+          if (pub.type === 'multichoice') {
+            expect(
+              pub.typeSetup?.uniqueChoices,
+              `${d.label} multichoice kept uniqueChoices — its votes will not be tallied`,
+            ).toBe(false)
+          }
           if (q.secretUntilTheEnd) {
             expect(
               pub.encryptionKeys?.length,
@@ -315,6 +425,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           secret: d.secret,
           choices: d.choices,
           tally: d.tally,
+          perQuestion: d.perQuestion,
         })
       }
 
@@ -374,7 +485,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
               processId: status.upstreamId!,
               // Encode the raw selections into the question's wire ballot —
               // the same codec path react-components voters go through.
-              choices: encodeQuestionBallot(question!, p.choices),
+              choices: encodeQuestionBallot(question!, specFor(p, status.questionId).choices),
               chainId: chainId!,
               signer,
               cspSignature: sign.signature!,
@@ -432,8 +543,9 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             const decoded = decodeQuestionResults(question!, q.results!)
             expect(
               decoded.map((c) => c.votes),
-              `${p.label} decoded tally mismatch`,
-            ).toEqual(p.tally)
+              `${p.label} / "${question!.title?.default}" decoded tally mismatch ` +
+                `(raw ${JSON.stringify(q.results)})`,
+            ).toEqual(specFor(p, q.questionId).tally)
           }
         }
         // The same live tally rides the public single reads (process + question).
@@ -448,6 +560,8 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
 
       step(`done — ${nullifiers.size} votes cast across ${questionCount} on-chain processes`)
     },
-    600000,
+    // 4 processes / 9 on-chain elections / 36 votes, each vote a CSP sign + relay
+    // + job poll, plus publish jobs and the indexer lag before the tally settles.
+    1800000,
   )
 })
