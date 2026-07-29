@@ -1,5 +1,26 @@
 # @vocdoni/react-providers
 
+## 2.1.0
+
+### Minor Changes
+
+- 26228bf: Surface every question's vote id, not just the first one.
+
+  **`@vocdoni/react-providers`:** `useElection()` gains `voteIds: Record<questionId, string>` — every nullifier the voter holds for the process. It is populated from the outcomes of `vote()`, from the questions that _did_ land when `vote()` throws `PartialVoteError` (a partial cast no longer loses the ids it produced), and, on connect, recovered from `POST /processes/{id}/sign-info` when the membership check reports something voted — so a voter returning after a page reload still sees all of their ids instead of none. A sign-info failure is swallowed and leaves membership resolved. `voteId` keeps working unchanged and is now marked `@deprecated`: votes are relayed per question, so it only ever exposes one of them.
+
+  **`@vocdoni/react-components`:** `<Voted />` now renders one entry per voted question, pairing each question's title with its vote id (still link-ified), in process order. The `Voted` slot gains an additive `votes: VotedVote[]` prop (`{ questionId, questionTitle, voteId, description }`); the existing `description` prop now carries every line joined, so slot overrides written against the old single-string API keep showing all of the ids. A single voted question still renders the exact `vote.voted_description` sentence it did before; multiple questions use the new `vote.voted_question_description` key.
+
+### Patch Changes
+
+- 3e867d2: Publish internal peer dependencies as caret ranges instead of exact pins.
+
+  `workspace:*` peers resolve to the exact version at publish time, so every
+  release of a peer forced a lockstep major on its dependents and pinned
+  consumers to one precise version. Peers now use `workspace:^`, which publishes
+  as `^x.y.z`, and changesets is configured with
+  `onlyUpdatePeerDependentsWhenOutOfRange` so an in-range peer bump cascades as
+  a patch (via `updateInternalDependents: 'always'`) rather than a major.
+
 ## 2.0.1
 
 ### Patch Changes
