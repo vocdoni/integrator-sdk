@@ -188,6 +188,33 @@ describe('ProcessesCspClient (voter CSP routes on /processes)', () => {
       expect(auth).toBeNull()
     })
 
+    it('folds metadata.choices onto choice.meta, like every other question read', async () => {
+      server.use(
+        http.get(`${BASE_URL}/processes/${PROCESS_ID}/questions/q-0`, () =>
+          HttpResponse.json({
+            ...mockProcess.questions[0],
+            parentProcessId: PROCESS_ID,
+            status: 'READY',
+            choices: [
+              { title: { default: 'With skin' }, value: 0 },
+              { title: { default: 'Without skin' }, value: 1 },
+            ],
+            metadata: {
+              choices: [{ value: 0, description: 'Unpeeled', image: 'https://cdn.example/a.jpeg' }],
+            },
+          }),
+        ),
+      )
+
+      const q = await client.processes.getQuestion(PROCESS_ID, 'q-0')
+      expect(q.choices[0].meta).toEqual({
+        description: 'Unpeeled',
+        image: { default: 'https://cdn.example/a.jpeg' },
+      })
+      expect(q.choices[1].meta).toBeUndefined()
+      expect(q.status).toBe('ONGOING')
+    })
+
     it('has no encryptionKeys until the keykeepers publish them (omitempty)', async () => {
       server.use(
         http.get(`${BASE_URL}/processes/${PROCESS_ID}/questions/q-0`, () =>
