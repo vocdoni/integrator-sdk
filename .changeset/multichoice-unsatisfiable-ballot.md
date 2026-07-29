@@ -33,7 +33,8 @@ ballot was rejected during aggregation while the vote still counted towards
   `QuestionTypeSetup.uniqueChoices`.
 
 Already-published elections with this config cannot be repaired — their votes are on
-chain but were never aggregated.
+chain but were never aggregated. The derivation bug itself is upstream
+(vocdoni/saas-backend#619), so processes created outside this SDK are still affected.
 
 ---
 

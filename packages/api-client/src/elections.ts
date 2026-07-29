@@ -58,7 +58,11 @@ function toMultiLang(value: LocalizedInput | undefined): MultiLangString | undef
  * two cannot both hold: the scrutinizer applies `uniqueValues` to raw field values,
  * so a 0/1 vector over more than two choices always repeats one and the ballot is
  * dropped at tally. The election then accepts votes and reports an all-zero result
- * (saas-backend `account/ballot.go`, `VoteTypeFromQuestion`).
+ * (saas-backend `account/ballot.go`, `VoteTypeFromQuestion` — vocdoni/saas-backend#619).
+ *
+ * This is a MITIGATION for that upstream bug, not a fix: it only protects callers
+ * going through this client. Drop it once #619 lands and the backend stops
+ * propagating the flag.
  *
  * So:
  * - **Named `multichoice`**: drop `uniqueChoices`. It is lossless — a dense layout
