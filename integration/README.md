@@ -16,9 +16,10 @@ real API.
 
 Everything that needs a real backend is asserted inside the lifecycle, which
 creates all of its own data — org, members, group, census, processes, votes —
-so there are no dev-DB fixtures to rot. It runs in CI (`.github/workflows/integration.yml`)
-against a disposable saas-api + vochain container on pushes to `main`, on a
-nightly schedule, and on pull requests labeled `run-integration`.
+so there are no dev-DB fixtures to rot. It runs in CI
+(`.github/workflows/integration.yml`) against a disposable saas-api + vochain
+container on every pull request, on pushes to `main`, and on a nightly
+schedule. The whole job takes ~3.5 minutes.
 
 To run the same stack locally:
 
