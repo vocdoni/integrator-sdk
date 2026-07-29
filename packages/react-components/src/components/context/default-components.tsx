@@ -139,10 +139,14 @@ export const defaultComponents: ComponentsDefinition = {
       <button onClick={onConfirm}>Confirm</button>
     </div>
   ),
-  Voted: ({ title, description, ...props }) => (
+  Voted: ({ title, description, votes, ...props }) => (
     <div {...props}>
       <strong>{title}</strong>
-      <p>{description}</p>
+      {votes.length > 0 ? (
+        votes.map((vote) => <p key={vote.questionId}>{vote.description}</p>)
+      ) : (
+        <p>{description}</p>
+      )}
     </div>
   ),
   VoteButton: ({ label, loading, ...props }) => <button {...props}>{loading ? '...' : label}</button>,

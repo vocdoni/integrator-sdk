@@ -16,7 +16,28 @@ export type QuestionsTypeBadgeSlotProps = BaseProps<HTMLDivElement> & { title: s
 export type QuestionTipSlotProps = BaseProps<HTMLDivElement> & { text: string }
 export type QuestionsEmptySlotProps = BaseProps<HTMLDivElement> & { text: string }
 export type QuestionsErrorSlotProps = BaseProps<HTMLDivElement> & { error: string; variant?: 'field' | 'form' }
-export type VotedSlotProps = BaseProps<HTMLDivElement> & { title: string; description: ReactNode }
+/** One voted question's vote id, as rendered by the `Voted` slot. */
+export type VotedVote = {
+  questionId: string
+  /** Resolved question title — empty when the question is no longer in the process. */
+  questionTitle: string
+  /** The vote id (nullifier) of that question's vote. */
+  voteId: string
+  /** Ready-to-render line for this vote, with the id link-ified. */
+  description: ReactNode
+}
+
+export type VotedSlotProps = BaseProps<HTMLDivElement> & {
+  title: string
+  /**
+   * Every vote's line, joined — one per voted question. Kept so existing
+   * overrides keep rendering all the information; prefer {@link votes} to lay
+   * the entries out yourself.
+   */
+  description: ReactNode
+  /** One entry per voted question, in process order. */
+  votes: VotedVote[]
+}
 export type VoteButtonSlotProps = BaseProps<HTMLButtonElement> & {
   label: ReactNode
   form?: string

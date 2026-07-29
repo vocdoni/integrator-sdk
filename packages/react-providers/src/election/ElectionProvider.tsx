@@ -81,7 +81,8 @@ export interface ElectionContextValue extends Omit<ElectionAuthContextValue, 'cl
    * ballots (`number[][]`, one entry per question) and optional per-question
    * memos (free-text notes, e.g. an open "Other" answer — max 256 UTF-8 bytes
    * each, and ⚠️ always cleartext on the envelope, even for secret questions).
-   * Returns the first vote id cast by this call.
+   * Returns the first vote id cast by this call — one vote id is relayed per
+   * question, so read {@link voteIds} for all of them.
    *
    * Casting is phased so a failure can't half-vote silently: every question is
    * validated and CSP-signed and every transaction built BEFORE anything is
@@ -107,6 +108,23 @@ export interface ElectionContextValue extends Omit<ElectionAuthContextValue, 'cl
    * {@link clearVoter} and on disconnect.
    */
   voteStatus: Record<string, QuestionVoteStatus>
+  /**
+   * Every vote id (nullifier) the voter holds for this process, keyed by
+   * question id — one entry per question already cast. Populated from the
+   * outcomes of `vote()` (including the questions that landed when it throws
+   * {@link PartialVoteError}) and, on load, recovered from
+   * `POST /processes/{id}/sign-info`, so a voter returning after a reload still
+   * sees all of them. Empty until the voter is connected and has voted.
+   */
+  voteIds: Record<string, string>
+  /**
+   * The first vote id cast by the last `vote()` call — or, before any call in
+   * this session, the first one recovered from sign-info.
+   *
+   * @deprecated Votes are relayed per question, so a process with more than one
+   * question yields more than one vote id. Read {@link voteIds} instead; this
+   * field only ever exposes one of them.
+   */
   voteId: string | null
   isAbleToVote: boolean
   /** Clears the voter's auth session and vote state. */
@@ -176,6 +194,10 @@ export class PartialVoteError extends Error {
   }
 }
 
+/** Folds a `succeeded` list into the `questionId → voteId` map shape. */
+const byQuestion = (succeeded: Array<{ questionId: string; voteId: string }>): Record<string, string> =>
+  Object.fromEntries(succeeded.map((s) => [s.questionId, s.voteId]))
+
 const ElectionContext = createContext<ElectionContextValue | undefined>(undefined)
 
 /**
@@ -244,6 +266,7 @@ export function ElectionProvider({
     : null
 
   const [voteId, setVoteId] = useState<string | null>(null)
+  const [voteIds, setVoteIds] = useState<Record<string, string>>({})
   const [voting, setVoting] = useState(false)
   const [voteStatus, setVoteStatus] = useState<Record<string, QuestionVoteStatus>>({})
   const [hasVoted, setHasVoted] = useState(false)
@@ -260,6 +283,7 @@ export function ElectionProvider({
       setVoterQuestions([])
       setHasVoted(false)
       setVoteId(null)
+      setVoteIds({})
       setVoteStatus({})
       return
     }
@@ -267,11 +291,29 @@ export function ElectionProvider({
     let cancelled = false
     session
       .check()
-      .then((res) => {
+      .then(async (res) => {
         if (cancelled) return
         setIsInCensus(res.belongsToProcess)
         setVoterQuestions(res.questions)
         setHasVoted(res.questions.length > 0 && res.questions.every((q) => q.hasVoted))
+
+        // Recover the nullifiers of the questions already on chain, so a voter
+        // coming back after a reload still sees every vote id they hold and
+        // not just the ones this session's vote() produced. Only worth a
+        // request once something is actually voted, and a failure here must
+        // never invalidate the membership check — swallow it.
+        if (!res.questions.some((q) => q.hasVoted)) return
+        const info = await client.processes
+          .signInfo(election.id, { authToken: session.authToken! })
+          .catch(() => null)
+        if (cancelled || !info) return
+        const recovered = byQuestion(
+          info.consumed.map((c) => ({ questionId: c.questionId, voteId: c.nullifier })),
+        )
+        // Ids cast in this session win: they came straight from the relay job.
+        setVoteIds((prev) => ({ ...recovered, ...prev }))
+        const first = info.consumed[0]?.nullifier
+        if (first) setVoteId((prev) => prev ?? first)
       })
       .catch(() => {
         // ineligible / network error — leave membership as not-in-census
@@ -456,7 +498,14 @@ export function ElectionProvider({
         }
       })
 
+      // Whatever landed is the voter's, failures included: expose those ids
+      // before the throw path so a partial cast doesn't lose them.
+      if (succeeded.length > 0) {
+        setVoteIds((prev) => ({ ...prev, ...byQuestion(succeeded) }))
+      }
+
       if (failed.length > 0) {
+        if (succeeded.length > 0) setVoteId((prev) => prev ?? succeeded[0].voteId)
         // Truthful partial state: reflect what actually landed on chain, so
         // `voterQuestions`/`hasVoted` don't claim "not voted" for cast votes.
         try {
@@ -499,6 +548,7 @@ export function ElectionProvider({
 
   const clearVoter = useCallback(() => {
     setVoteId(null)
+    setVoteIds({})
     setVoteStatus({})
     setHasVoted(false)
     setIsInCensus(false)
@@ -528,11 +578,12 @@ export function ElectionProvider({
       vote,
       voting,
       voteStatus,
+      voteIds,
       voteId,
       isAbleToVote: session.connected && isInCensus && !hasVoted,
       clearVoter,
     }),
-    [election, status, chainId, results, loading, error, session, isInCensus, voterQuestions, hasVoted, vote, voting, voteStatus, voteId, clearVoter],
+    [election, status, chainId, results, loading, error, session, isInCensus, voterQuestions, hasVoted, vote, voting, voteStatus, voteIds, voteId, clearVoter],
   )
 
   return (
