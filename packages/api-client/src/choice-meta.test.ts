@@ -73,6 +73,38 @@ describe('normalizeQuestionChoiceMeta', () => {
     expect(metaOf(normalized, 0)).toEqual({ description: '', image: { default: 'https://cdn.example/a.jpeg' } })
   })
 
+  it('carries creator-defined keys through, alongside the recognized ones', () => {
+    const normalized = normalizeQuestionChoiceMeta(
+      question({
+        choices: [{ value: 0, image: 'https://cdn.example/a.jpeg', color: 'red', badge: { label: 'new' } }],
+      }),
+    )
+    expect(metaOf(normalized, 0)).toEqual({
+      image: { default: 'https://cdn.example/a.jpeg' },
+      color: 'red',
+      badge: { label: 'new' },
+    })
+  })
+
+  it('maps an entry carrying only creator-defined keys', () => {
+    const normalized = normalizeQuestionChoiceMeta(question({ choices: [{ value: 0, color: 'red' }] }))
+    expect(metaOf(normalized, 0)).toEqual({ color: 'red' })
+  })
+
+  it('never copies the value join key onto the meta', () => {
+    const normalized = normalizeQuestionChoiceMeta(
+      question({ choices: [{ value: 0, description: 'Peeled beforehand' }] }),
+    )
+    expect(metaOf(normalized, 0)).not.toHaveProperty('value')
+  })
+
+  it('drops a recognized key that is unusable, keeping the rest of the entry', () => {
+    const normalized = normalizeQuestionChoiceMeta(
+      question({ choices: [{ value: 0, description: 42, image: 42, color: 'red' }] }),
+    )
+    expect(metaOf(normalized, 0)).toEqual({ color: 'red' })
+  })
+
   it('ignores metadata entries whose value matches no choice', () => {
     const normalized = normalizeQuestionChoiceMeta(
       question({ choices: [{ value: 7, description: 'Orphan', image: 'https://cdn.example/x.jpeg' }] }),

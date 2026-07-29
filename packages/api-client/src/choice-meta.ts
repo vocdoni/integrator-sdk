@@ -27,12 +27,28 @@ const toChoiceImage = (image: unknown): ChoiceMeta['image'] => {
   return normalized.default !== undefined || normalized.thumbnail !== undefined ? normalized : undefined
 }
 
-/** Build a {@link ChoiceMeta} from one raw `metadata.choices` entry, or undefined if it carries nothing. */
+/**
+ * Build a {@link ChoiceMeta} from one raw `metadata.choices` entry, or undefined
+ * if it carries nothing beyond its `value` join key.
+ *
+ * `description` and `image` are the SDK-recognized keys and get validated (a
+ * non-string description, an unusable image) — everything else the creator
+ * stored is passed through untouched, so a custom `QuestionChoice` slot sees
+ * the same open bag it would have got when meta lived on the choice directly.
+ * `value` is dropped: it identifies the choice, it is not part of its meta.
+ */
 const toChoiceMeta = (entry: Record<string, unknown>): ChoiceMeta | undefined => {
-  const description = typeof entry.description === 'string' ? entry.description : undefined
-  const image = toChoiceImage(entry.image)
-  if (description === undefined && image === undefined) return undefined
-  return { ...(description !== undefined && { description }), ...(image !== undefined && { image }) }
+  const { value: _value, description: rawDescription, image: rawImage, ...rest } = entry
+  const description = typeof rawDescription === 'string' ? rawDescription : undefined
+  const image = toChoiceImage(rawImage)
+
+  const meta: ChoiceMeta = {
+    ...rest,
+    ...(description !== undefined && { description }),
+    ...(image !== undefined && { image }),
+  }
+
+  return Object.keys(meta).length > 0 ? meta : undefined
 }
 
 /**
