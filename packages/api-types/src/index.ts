@@ -280,6 +280,10 @@ export type LocalizedInput = string | MultiLangString
  * {@link VotingProcessQuestion.metadata} bag under `choices`, keyed by choice
  * `value` — see {@link ChoiceMetadataEntry}. The client folds it back onto each
  * choice as {@link Choice.meta} on read.
+ *
+ * `description` and `image` are the keys the SDK's display components read;
+ * the bag is open, so any other key a creator stored on the entry is carried
+ * over verbatim for custom `QuestionChoice` slots to consume.
  */
 export interface ChoiceMeta {
   description?: string
@@ -287,6 +291,8 @@ export interface ChoiceMeta {
     default?: string
     thumbnail?: string
   }
+  /** Creator-defined keys, passed through untouched. */
+  [key: string]: unknown
 }
 
 /**
@@ -297,11 +303,16 @@ export interface ChoiceMeta {
  * creation flows write) is normalized to `{ default: url }`, an explicit
  * `{ default, thumbnail }` object is passed through. Entries whose `value`
  * matches no choice of the question are ignored.
+ *
+ * `value` is the join key and is stripped when the entry is folded onto the
+ * choice; every other key lands on {@link ChoiceMeta}.
  */
 export interface ChoiceMetadataEntry {
   value: number
   description?: string
   image?: string | { default?: string; thumbnail?: string }
+  /** Creator-defined keys, carried over to {@link ChoiceMeta} untouched. */
+  [key: string]: unknown
 }
 
 export interface Choice {
