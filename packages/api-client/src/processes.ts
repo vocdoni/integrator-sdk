@@ -13,6 +13,8 @@ import type {
   UserWeightResponse,
 } from '@vocdoni/api-types'
 import type { UpFetch } from 'up-fetch'
+import { normalizeQuestionChoiceMeta } from './choice-meta'
+import { normalizeQuestionStatus } from './election-status'
 import { handleError } from './errors'
 
 /**
@@ -114,11 +116,16 @@ export class ProcessesCspClient {
    * `secretUntilTheEnd` questions, `encryptionKeys` is absent until the
    * keykeepers publish the keys — poll until present before building an
    * encrypted ballot.
+   *
+   * Normalized like every other question read: the wire `READY` status becomes
+   * `ONGOING`, and `metadata.choices` is folded onto each choice as
+   * `choice.meta`, so a voter-side UI gets the same extended choice info
+   * (image, description) as `elections.get`.
    */
   async getQuestion(processId: string, questionId: string): Promise<PublicQuestionResponse> {
-    return this.fetch<PublicQuestionResponse>(
-      `/processes/${processId}/questions/${questionId}`,
-    ).catch(handleError)
+    return this.fetch<PublicQuestionResponse>(`/processes/${processId}/questions/${questionId}`)
+      .then((q) => normalizeQuestionChoiceMeta({ ...q, status: normalizeQuestionStatus(q.status) }))
+      .catch(handleError)
   }
 
 }
