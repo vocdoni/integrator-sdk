@@ -1,0 +1,86 @@
+name: Integration
+
+# Runs integration/full-flow.itest.ts against a disposable mongo + vocone +
+# saas-backend stack (integration/docker-compose.ci.yml), built from published
+# `:main` images. Not called from release.yml: this job depends on
+# externally-published images and a live chain, so a red run often means
+# "upstream moved" rather than "this repo is broken" — that must not block npm
+# publishing (release gating stays on .github/workflows/test.yml only).
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '37 3 * * *'
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Integration suite
+    runs-on: ubuntu-latest
+    # On pull_request, only run when explicitly opted in via the
+    # `run-integration` label — this job uses no secrets and touches no
+    # private images, so fork PRs need no additional skip condition.
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-integration') }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Print resolved image digests
+        # :main is tracked deliberately (see integration/README.md); a green
+        # run can go red with no change in this repo. This makes a red run
+        # reproducible locally.
+        run: |
+          docker pull ghcr.io/vocdoni/vocdoni-node:main
+          docker pull ghcr.io/vocdoni/saas-backend:main
+          docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/vocdoni/vocdoni-node:main
+          docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/vocdoni/saas-backend:main
+
+      - name: Start stack and bootstrap integrator key
+        id: stack
+        run: scripts/integration-stack.sh up
+
+      - name: Run integration suite
+        env:
+          INTEGRATION_API_URL: ${{ steps.stack.outputs.api_url }}
+          INTEGRATION_API_KEY: ${{ steps.stack.outputs.api_key }}
+        run: pnpm test:integration
+
+      - name: Dump container logs
+        if: failure()
+        run: |
+          mkdir -p /tmp/integration-logs
+          docker compose -f integration/docker-compose.ci.yml logs --no-color vocone > /tmp/integration-logs/vocone.log
+          docker compose -f integration/docker-compose.ci.yml logs --no-color api > /tmp/integration-logs/api.log
+          docker compose -f integration/docker-compose.ci.yml logs --no-color mongo > /tmp/integration-logs/mongo.log
+
+      - name: Upload container logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-logs
+          path: /tmp/integration-logs
+
+      - name: Tear down stack
+        if: always()
+        run: scripts/integration-stack.sh down

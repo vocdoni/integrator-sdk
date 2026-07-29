@@ -10,6 +10,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:integration": "turbo run build && vitest run --config integration/vitest.config.ts",
+    "test:integration:stack": "scripts/integration-stack.sh run",
     "lint": "turbo run lint",
     "clean": "turbo run clean && rm -rf node_modules",
     "dev": "turbo run dev --parallel",
