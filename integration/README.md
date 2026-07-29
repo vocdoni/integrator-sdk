@@ -16,9 +16,30 @@ real API.
 
 Everything that needs a real backend is asserted inside the lifecycle, which
 creates all of its own data — org, members, group, census, processes, votes —
-so there are no dev-DB fixtures to rot. The intended future is running this in
-CI against a disposable saas-api + vochain container on every PR and push;
-until that lands, run it manually against dev with an integrator API key.
+so there are no dev-DB fixtures to rot. It runs in CI (`.github/workflows/integration.yml`)
+against a disposable saas-api + vochain container on pushes to `main`, on a
+nightly schedule, and on pull requests labeled `run-integration`.
+
+To run the same stack locally:
+
+```bash
+pnpm test:integration:stack
+```
+
+This boots `mongo` + `vocone` + `saas-backend` (`integration/docker-compose.ci.yml`),
+seeds a default plan, mints an integrator API key, and runs the suite against it —
+identical to what CI does. Tear it down afterwards with:
+
+```bash
+scripts/integration-stack.sh down
+```
+
+To drive the stack and the suite as separate steps (e.g. to reuse the same
+stack across repeated test runs), use `scripts/integration-stack.sh up` to
+start it — it prints `INTEGRATION_API_URL` and `INTEGRATION_API_KEY` — then
+export those and run `pnpm test:integration` directly. If port `8080` (or
+`8025`) is already taken locally, set `INTEGRATION_HOST_PORT` (and/or
+`INTEGRATION_MAILHOG_PORT`) to an alternate port before calling `up`.
 
 ## What it covers
 
