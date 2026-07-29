@@ -169,6 +169,34 @@ describe('extended choice presentation (driven by choice.meta)', () => {
     expect([...new Set(captured.presentations)]).toEqual(['basic'])
   })
 
+  const withWhitespaceImage = {
+    title: 'Q1',
+    choices: [{ title: 'A', value: 0, meta: { image: { default: '   ' } } }, { title: 'B', value: 1 }],
+  }
+
+  const withThumbnailOnly = {
+    title: 'Q1',
+    choices: [
+      { title: 'A', value: 0, meta: { image: { thumbnail: 'https://cdn.example/t.jpeg' } } },
+      { title: 'B', value: 1 },
+    ],
+  }
+
+  it('stays basic/list and compact when an image URL is whitespace-only', () => {
+    const captured = renderQuestionAt(makeProcess({ questions: [withWhitespaceImage] }), 0)
+    expect(captured.layout).toBe('list')
+    expect(captured.hasExtendedChoices).toBe(false)
+    expect([...new Set(captured.presentations)]).toEqual(['basic'])
+    expect([...new Set(captured.compacts)]).toEqual([true])
+  })
+
+  it('treats a thumbnail-only image as an image, for the layout as well as the presentation', () => {
+    const captured = renderQuestionAt(makeProcess({ questions: [withThumbnailOnly] }), 0)
+    expect(captured.layout).toBe('grid')
+    expect(captured.hasExtendedChoices).toBe(true)
+    expect([...new Set(captured.presentations)]).toEqual(['extended'])
+  })
+
   it('keeps each question of a mixed process on its own presentation', () => {
     const mixed = makeProcess({ questions: [withImage, threeChoices] })
 

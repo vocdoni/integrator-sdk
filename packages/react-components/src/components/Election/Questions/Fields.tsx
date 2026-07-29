@@ -5,7 +5,7 @@ import { QuestionChoicePresentation, QuestionLayout, QuestionSelectionMode } fro
 import { useComponents } from '../../context/useComponents'
 import { useReactComponentsLocalize } from '../../../i18n/localize'
 import { useElection } from '@vocdoni/react-providers'
-import { hasExtendedChoiceMeta, QuestionChoice } from './Choice'
+import { getQuestionChoiceMeta, hasExtendedChoiceMeta, QuestionChoice } from './Choice'
 import { QuestionTip } from './Tip'
 import { resolveTitle } from '../../../election/normalized'
 
@@ -22,8 +22,18 @@ const selectionModeForType = (ballotType: BallotType): QuestionSelectionMode =>
 const getQuestionPresentation = (question: VotingProcessQuestion): QuestionChoicePresentation =>
   question.choices.some(hasExtendedChoiceMeta) ? 'extended' : 'basic'
 
+/**
+ * Whether a choice has an image worth laying out a grid cell for.
+ *
+ * Reads through {@link getQuestionChoiceMeta} rather than `choice.meta` directly
+ * so it applies the same trimming as the presentation check — an empty or
+ * whitespace-only URL is not an image, and must not flip the question to `grid`
+ * with nothing to show in it.
+ */
+const hasChoiceImage = (choice: Choice): boolean => Boolean(getQuestionChoiceMeta(choice).image)
+
 const getQuestionLayout = (question: VotingProcessQuestion): QuestionLayout =>
-  question.choices.some((choice) => Boolean(choice.meta?.image?.default)) ? 'grid' : 'list'
+  question.choices.some(hasChoiceImage) ? 'grid' : 'list'
 
 export const ElectionQuestion = ({ question, index }: QuestionProps) => {
   const { election } = useElection()
@@ -126,7 +136,7 @@ const MultiChoice = ({
                   controlType='checkbox'
                   selectionMode='multiple'
                   presentation={presentation}
-                  compact={!Boolean(choice.meta?.image?.default) && layout === 'list'}
+                  compact={!hasChoiceImage(choice) && layout === 'list'}
                   dataAttrs={{
                     'data-choice-card': '',
                     'data-choice-control': '',
@@ -195,7 +205,7 @@ const ApprovalChoice = ({
                   controlType='checkbox'
                   selectionMode='multiple'
                   presentation={presentation}
-                  compact={!Boolean(choice.meta?.image?.default) && layout === 'list'}
+                  compact={!hasChoiceImage(choice) && layout === 'list'}
                   dataAttrs={{
                     'data-choice-card': '',
                     'data-choice-control': '',
@@ -254,7 +264,7 @@ const SingleChoice = ({
               controlType='radio'
               selectionMode='single'
               presentation={presentation}
-              compact={!Boolean(choice.meta?.image?.default) && layout === 'list'}
+              compact={!hasChoiceImage(choice) && layout === 'list'}
               dataAttrs={{
                 'data-choice-card': '',
                 'data-choice-control': '',
