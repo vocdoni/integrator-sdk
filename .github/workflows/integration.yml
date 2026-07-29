@@ -13,7 +13,6 @@ on:
     - cron: '37 3 * * *'
   workflow_dispatch:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
 
 concurrency:
   group: integration-${{ github.ref }}
@@ -23,10 +22,20 @@ jobs:
   integration:
     name: Integration suite
     runs-on: ubuntu-latest
-    # On pull_request, only run when explicitly opted in via the
-    # `run-integration` label — this job uses no secrets and touches no
-    # private images, so fork PRs need no additional skip condition.
-    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-integration') }}
+    # Runs on every PR, unconditionally. It uses no secrets and touches no
+    # private images, so fork PRs need no skip condition either.
+    #
+    # Measured cost on a real runner: ~3.5 min end to end (12s image pulls, 29s
+    # to a booted-and-bootstrapped stack, 144s suite) — close enough to the
+    # existing Test job that gating it behind a label was not worth the risk of
+    # a regression merging green.
+    #
+    # The known downside: this consumes two moving `:main` images, so an
+    # upstream saas-backend or vocdoni-node regression can redden every open PR
+    # with nothing wrong in this repo. That is a deliberate trade — the digests
+    # printed below tell you immediately whether upstream moved. If it ever
+    # becomes a nuisance, gate PR runs behind a label rather than deleting the
+    # job.
     timeout-minutes: 25
     permissions:
       contents: read
