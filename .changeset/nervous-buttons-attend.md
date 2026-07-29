@@ -16,19 +16,35 @@ were stored correctly and dropped on read: every question rendered
 
 - `@vocdoni/api-types`: `Choice` gains a `meta?: ChoiceMeta`
   (`{ description?, image?: { default?, thumbnail? } }`), plus a
-  `ChoiceMetadataEntry` type documenting the storage form.
-- `@vocdoni/api-client`: `elections.get`, `elections.list` and
-  `elections.getQuestion` now fold `metadata.choices` onto the matching choice
-  as `choice.meta`. Both stored image shapes are tolerated — a plain URL string
-  is normalized to `{ default: url }`, an object is passed through — and
-  entries matching no choice are ignored. Exported as
-  `normalizeQuestionChoiceMeta` for hand-normalizing raw wire data.
+  `ChoiceMetadataEntry` type documenting the storage form. Both are open bags —
+  creator-defined keys are part of the contract, not stripped.
+- `@vocdoni/api-client`: `elections.get`, `elections.list`,
+  `elections.getQuestion` and `processes.getQuestion` now fold
+  `metadata.choices` onto the matching choice as `choice.meta`. Both stored
+  image shapes are tolerated — a plain URL string is normalized to
+  `{ default: url }`, an object is passed through — and entries matching no
+  choice are ignored. `description`/`image` are validated; every other key on
+  the entry rides along untouched, so custom `QuestionChoice` slots keep seeing
+  the open bag they saw when meta lived on the choice directly. The `value` join
+  key is stripped. Exported as `normalizeQuestionChoiceMeta` for hand-normalizing
+  raw wire data.
 - `@vocdoni/react-providers`: `<ElectionProvider election>` runs a prefetched
   process through the same normalization, so extended choices (and normalized
   statuses) are right on the first paint instead of only after the refetch.
 - `@vocdoni/react-components`: questions with extended choice info render the
   `extended` presentation again, and the `grid` layout when a choice has an
   image. `ipfs://` URLs and empty descriptions keep behaving as before.
+
+Two rendering fixes ride along, where the layout and `compact` checks read
+`choice.meta.image.default` raw while the presentation check read it through
+`getQuestionChoiceMeta`:
+
+- A whitespace-only image URL no longer flips a question to the `grid` layout
+  with nothing to show in it — it is trimmed away like every other empty-ish
+  string, and the question stays `basic`/`list`.
+- A thumbnail-only image now counts for the layout too. The default choice
+  renderer resolves `image.thumbnail ?? image.default`, so such a choice did
+  render an image, but inside a control styled as image-less.
 
 No stored data is migrated — both image shapes are tolerated on read.
 

@@ -460,14 +460,16 @@ keyed by choice `value`:
 }
 ```
 
-On **read**, `elections.get`, `elections.list` and `elections.getQuestion` fold
-those entries onto the matching choice as `choice.meta`, so components read it
-straight off the choice:
+On **read**, every question-bearing endpoint — `elections.get`,
+`elections.list`, `elections.getQuestion` and the voter-side
+`processes.getQuestion` — folds those entries onto the matching choice as
+`choice.meta`, so components read it straight off the choice:
 
 ```ts
 interface ChoiceMeta {
   description?: string
   image?: { default?: string; thumbnail?: string }
+  [key: string]: unknown   // creator-defined keys ride along untouched
 }
 
 interface Choice {
@@ -481,11 +483,20 @@ Rules:
 
 - `image` is tolerated in both stored shapes — a plain URL string is normalized
   to `{ default: url }`, an object is passed through.
+- `description` and `image` are the recognized keys and get validated (an
+  unusable one is dropped). **Any other key on the entry is carried over
+  verbatim**, so a custom `QuestionChoice` slot can read it off `choice.meta`.
+  The `value` join key is the one thing stripped — it identifies the choice, it
+  is not part of its meta.
+- An entry carrying only creator-defined keys still produces a `choice.meta`;
+  it just does not count as "extended" for presentation purposes.
 - Entries whose `value` matches no choice are ignored; a question with no
   `metadata.choices` leaves every `choice.meta` undefined (and so renders the
   basic, non-extended presentation in `@vocdoni/react-components`).
 - `ipfs://` URLs are stored as-is and resolved to a gateway URL by the display
-  layer, not by the client.
+  layer, not by the client. Empty and whitespace-only strings are likewise
+  dropped by the display layer, not the client — `choice.meta` holds what was
+  stored.
 - The mapping is exported as `normalizeQuestionChoiceMeta(question)` for anyone
   normalizing raw wire data by hand (it also runs inside `normalizeVotingProcess`).
 
