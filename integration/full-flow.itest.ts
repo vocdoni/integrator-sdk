@@ -1,6 +1,6 @@
 import type { VotingProcessQuestion } from '@vocdoni/api-types'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
-import { decodeQuestionResults, encodeQuestionBallot } from '@vocdoni/ballot'
+import { decodeQuestionResults, encodeQuestionBallot, unsatisfiableQuestionReason } from '@vocdoni/ballot'
 import { apiKey, makeAdminClient, makeClient } from './helpers'
 
 // End-to-end organizer→voter flow, SaaS-only, driven entirely through the SDK
@@ -173,13 +173,14 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
                   { title: 'C', value: 2 },
                 ],
                 type: 'multichoice',
-                // uniqueChoices MUST stay false: the backend propagates it into
-                // the on-chain UniqueChoices, and the scrutinizer applies
-                // uniqueness to the raw 0/1 fields of the derived dense layout —
-                // with it set, every multi-pick ballot is silently discarded at
-                // tally (saas-backend derivation bug; the tally assertion below
-                // would catch it).
-                typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: false },
+                // Deliberately `true` — the backend propagates it into the
+                // on-chain UniqueChoices, and the scrutinizer applies uniqueness
+                // to the raw 0/1 fields of the derived dense layout, so with it
+                // set every multi-pick ballot is silently discarded at tally
+                // (saas-backend derivation bug in account/ballot.go). The client
+                // forces it back to false on create, and the tally assertion
+                // below is what proves that mitigation still works end to end.
+                typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: true },
               },
             ],
           },
@@ -272,6 +273,13 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             pub.ballotProtocol ?? pub.type,
             `${d.label} public question has neither ballotProtocol nor type`,
           ).toBeTruthy()
+          // No question may ship a ballot config the scrutinizer can never
+          // tally — that is the all-zero-results failure mode, and it is
+          // invisible until the votes are already lost.
+          expect(
+            unsatisfiableQuestionReason(pub),
+            `${d.label} public question has an unsatisfiable ballot config`,
+          ).toBeNull()
           if (q.secretUntilTheEnd) {
             expect(
               pub.encryptionKeys?.length,

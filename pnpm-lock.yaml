@@ -67,6 +67,9 @@ importers:
       '@vocdoni/api-types':
         specifier: workspace:*
         version: link:../api-types
+      '@vocdoni/ballot':
+        specifier: workspace:*
+        version: link:../ballot
       up-fetch:
         specifier: ^2.5.0
         version: 2.6.0

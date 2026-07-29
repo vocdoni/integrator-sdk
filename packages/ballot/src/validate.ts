@@ -2,6 +2,7 @@ import type { Election, Question, VoteType } from '@vocdoni/api-types'
 import { BallotType, type BallotSelections } from './types.js'
 import { inferBallotType } from './infer.js'
 import { normalizeSelections } from './selections.js'
+import { unsatisfiableProtocolReason, voteTypeBounds } from './protocol.js'
 
 /**
  * Validate voter selections against election constraints.
@@ -13,15 +14,24 @@ import { normalizeSelections } from './selections.js'
  * It does NOT validate on-chain-only constraints (like minNumberOfChoices) which would
  * require additional metadata.
  *
+ * It DOES reject the election itself when its ballot config admits no usable
+ * ballot at all (see {@link unsatisfiableProtocolReason}) — no selection can be
+ * valid there, and the failure is otherwise invisible until the tally comes back
+ * all zeros.
+ *
  * @param input - Election config with questions and voteType
  * @param selections - The selections to validate
- * @throws Error if selections are invalid
+ * @throws Error if selections are invalid, or if the election's ballot config is unsatisfiable
  */
 export function validateSelections(
   input: Pick<Election, 'questions' | 'voteType'>,
   selections: BallotSelections
 ): void {
   const { questions, voteType } = input
+  const unsatisfiable = unsatisfiableProtocolReason(voteTypeBounds(voteType))
+  if (unsatisfiable) {
+    throw new Error(`this election's ballot config admits no valid ballot: ${unsatisfiable}`)
+  }
   const ballotType = inferBallotType(input)
   const perQuestion = normalizeSelections(input, selections)
 

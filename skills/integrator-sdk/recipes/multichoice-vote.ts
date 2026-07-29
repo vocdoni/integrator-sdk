@@ -13,24 +13,37 @@
  *   question.ballotProtocol.maxValue = numOptions - 1
  *   selections = [optionIndex]   (the 0-based index of the chosen option)
  *
- * ─── Format B: Approval voting (binary per option) ────────────────────────
+ * ─── Format B: Multichoice / approval (dense 0/1 per option) ──────────────
  *   question.ballotProtocol.maxCount = numOptions
  *   question.ballotProtocol.maxValue = 1
- *   selections = the option indexes the voter approved, e.g. [0, 2, 4]
+ *   selections = the option indexes the voter picked, e.g. [0, 2, 4]
  *   encodeQuestionBallot turns that into the dense 0/1 vector expected on-chain.
- *   question.ballotProtocol.maxTotalCost, if set, caps the number of approvals.
+ *   question.ballotProtocol.maxTotalCost caps the number of picks (the backend
+ *   sets it from typeSetup.maxChoices).
+ *
+ *   This is what the named `multichoice` question type derives, so it is the
+ *   format you get from client.elections.create({ type: 'multichoice' }).
+ *   ⚠️ uniqueValues / typeSetup.uniqueChoices MUST be false here: uniqueness is
+ *   checked against the raw 0/1 field values, so any dense ballot over more than
+ *   two options repeats one and the chain discards it at tally — the election
+ *   reports zeros while voteCount keeps rising. encodeQuestionBallot throws for
+ *   such a question instead of casting a vote that cannot count.
  *
  * ─── Format C: Ranked voting (unique values) ──────────────────────────────
  *   question.ballotProtocol.maxCount = numOptions
+ *   question.ballotProtocol.maxValue >= numOptions - 1
  *   question.ballotProtocol.uniqueValues = true
  *   selections = rank value per option in choice order, e.g. [2, 0, 3, 1]
  *   (must be a permutation of 0..numOptions-1 — no repeated ranks)
  *
- * ─── Format D: Multichoice (pick up to N options) ─────────────────────────
+ * ─── Format D: Legacy pick-slot multichoice (raw ballotProtocol only) ──────
  *   question.ballotProtocol.maxCount = maximum number of picks allowed
+ *   question.ballotProtocol.maxValue = numOptions - 1 + abstain allowance
  *   selections = the option indexes the voter picked, e.g. [1, 3]
  *   encodeQuestionBallot pads any unpicked slots with abstain sentinels for you
  *   when the question's ballotProtocol reserves room for them.
+ *   Only produced by passing a raw ballotProtocol — the named `multichoice`
+ *   type always derives Format B.
  *
  * Prerequisites:
  *   pnpm add @vocdoni/api-client @vocdoni/api-voting @vocdoni/ballot
@@ -78,13 +91,13 @@ const SELECTIONS_BY_QUESTION: Record<string, number[]> = {
   // Format A — single choice: pick option 2
   // '<questionId>': [2],
 
-  // Format B — approval: approve options 0, 2 and 4
+  // Format B — multichoice / approval: pick options 0, 2 and 4
   // '<questionId>': [0, 2, 4],
 
   // Format C — ranked: 4 options ranked 3rd, 1st, 4th, 2nd (0-indexed ranks 2,0,3,1)
   // '<questionId>': [2, 0, 3, 1],
 
-  // Format D — multichoice: pick options 1 and 3 (out of maxCount slots)
+  // Format D — legacy pick-slot multichoice: pick options 1 and 3
   // '<questionId>': [1, 3],
 }
 
@@ -114,11 +127,14 @@ for (const status of check.questions) {
   // Public single-question read — choices + ballotProtocol; no API key needed.
   const question = await client.processes.getQuestion(PROCESS_ID, status.questionId)
   console.log(`Question ${question.id} ballotProtocol:`, question.ballotProtocol)
-  // question.ballotProtocol.maxCount      — how many picks/slots the ballot has
+  // question.ballotProtocol.maxCount      — number of ballot fields (dense: one per option)
   // question.ballotProtocol.maxValue      — max encoded value per element
-  // question.ballotProtocol.uniqueValues  — true for ranked voting
-  // question.ballotProtocol.maxTotalCost  — caps total approvals/weight, if set
+  // question.ballotProtocol.uniqueValues  — true for ranked voting; MUST be false on dense
+  // question.ballotProtocol.maxTotalCost  — caps total picks/weight, if set
   // question.typeSetup?.minChoices/maxChoices — UI-facing pick bounds, if set
+  // Public reads of a named-type question may omit ballotProtocol entirely —
+  // encodeQuestionBallot falls back to type + typeSetup, so pass the whole
+  // question rather than reading the protocol yourself.
 
   const signer = new EphemeralSigner()
   const { signature, weight } = await client.processes.sign(PROCESS_ID, {
@@ -129,8 +145,12 @@ for (const status of check.questions) {
   if (!signature) throw new Error(`CSP did not return a signature for question ${question.id}`)
 
   // encodeQuestionBallot infers the ballot type (single-choice / approval /
-  // multichoice / ranked) from question.ballotProtocol and produces the exact
-  // on-chain `choices` array — including abstain-padding for multichoice.
+  // multichoice / ranked) from question.ballotProtocol (or type + typeSetup) and
+  // produces the exact on-chain `choices` array — including abstain-padding for
+  // the legacy pick-slot multichoice. It THROWS when the question's ballot config
+  // can never be tallied (e.g. a dense multichoice created with uniqueChoices
+  // true), so the voter sees an error instead of casting a vote that is silently
+  // discarded during aggregation.
   const choices = encodeQuestionBallot(question, selections)
 
   const jobId = await voting.vote({

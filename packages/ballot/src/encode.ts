@@ -3,6 +3,7 @@ import { BallotType, type BallotSelections } from './types.js'
 import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
 import { normalizeSelections } from './selections.js'
 import { requiredAbstainMaxValue } from './abstain.js'
+import { unsatisfiableProtocolReason, unsatisfiableQuestionReason, voteTypeBounds } from './protocol.js'
 
 /**
  * Encode high-level voter selections into the on-chain ballot array format.
@@ -21,12 +22,20 @@ import { requiredAbstainMaxValue } from './abstain.js'
  * @param input - Election config with questions and voteType
  * @param selections - Per-question choice values (single/multi) or per-option amounts (budget/quadratic)
  * @returns The ballot array as numbers
+ * @throws When the election's ballot config is unsatisfiable — see
+ *   {@link unsatisfiableProtocolReason}. Encoding would produce a ballot the
+ *   scrutinizer drops at tally, so refuse rather than cast a vote that silently
+ *   never counts.
  */
 export function encodeBallot(
   input: Pick<Election, 'questions' | 'voteType'>,
   selections: BallotSelections
 ): number[] {
   const { questions, voteType } = input
+  const unsatisfiable = unsatisfiableProtocolReason(voteTypeBounds(voteType))
+  if (unsatisfiable) {
+    throw new Error(`cannot encode a ballot for this election: ${unsatisfiable}`)
+  }
   const ballotType = inferBallotType(input)
   const perQuestion = normalizeSelections(input, selections)
 
@@ -158,11 +167,19 @@ function ballotProtocolToVoteType(bp: BallotProtocol): VoteType {
  *
  * @param question - The question with `ballotProtocol` and `choices`
  * @param selections - The voter's raw selections for this question
+ * @throws When the question's ballot config is unsatisfiable — see
+ *   {@link unsatisfiableQuestionReason}. Every ballot it could produce is dropped
+ *   by the scrutinizer at tally while still counting towards `voteCount`, so
+ *   refuse instead of letting the voter cast a vote that never counts.
  */
 export function encodeQuestionBallot(
   question: { ballotProtocol?: BallotProtocol; type?: string; typeSetup?: QuestionTypeSetup; choices: Choice[] },
   selections: number[]
 ): number[] {
+  const unsatisfiable = unsatisfiableQuestionReason(question)
+  if (unsatisfiable) {
+    throw new Error(`cannot encode a ballot for this question: ${unsatisfiable}`)
+  }
   const ballotType = inferQuestionBallotType(question)
   const fakeQuestion: Question = { title: { default: '' }, choices: question.choices }
 

@@ -21,10 +21,12 @@ import type {
   ValidateProcessCensusRequest,
   ValidateProcessCensusResponse,
   VotingProcessListResponse,
+  VotingProcessQuestionRequest,
   VotingProcessResponse,
   VotingProcessResultsResponse,
   VotingProcessValidateResponse,
 } from '@vocdoni/api-types'
+import { unsatisfiableProtocolReason } from '@vocdoni/ballot'
 import type { UpFetch } from 'up-fetch'
 import { normalizeQuestionChoiceMeta } from './choice-meta'
 import { normalizeQuestionStatus, normalizeVotingProcess } from './election-status'
@@ -46,14 +48,58 @@ function toMultiLang(value: LocalizedInput | undefined): MultiLangString | undef
   return typeof value === 'string' ? { default: value } : value
 }
 
-/** Normalize every human-facing string in a voting process draft to a language map. */
+/**
+ * Keep a question's ballot config castable, and refuse it when it cannot be.
+ *
+ * The backend derives the on-chain vote options from a named `type` (or copies a
+ * raw `ballotProtocol` verbatim), and for `multichoice` that derivation is the
+ * **dense** layout — one 0/1 field per choice, `maxTotalCost = maxChoices` — while
+ * still mapping `typeSetup.uniqueChoices` onto the on-chain `uniqueValues`. Those
+ * two cannot both hold: the scrutinizer applies `uniqueValues` to raw field values,
+ * so a 0/1 vector over more than two choices always repeats one and the ballot is
+ * dropped at tally. The election then accepts votes and reports an all-zero result
+ * (saas-backend `account/ballot.go`, `VoteTypeFromQuestion`).
+ *
+ * So:
+ * - **Named `multichoice`**: drop `uniqueChoices`. It is lossless — a dense layout
+ *   gives each choice its own field, so a voter cannot pick the same choice twice
+ *   whatever the flag says — and it is the only value that yields a castable
+ *   election. Note this means the question reads back with `uniqueChoices: false`.
+ * - **Raw `ballotProtocol`**: throw. The caller asked for a specific protocol and
+ *   there is no way to guess which side of the contradiction they meant, so failing
+ *   at creation beats publishing an election that silently discards every vote.
+ */
+function normalizeQuestionBallotConfig(
+  question: VotingProcessQuestionRequest,
+  index: number
+): VotingProcessQuestionRequest {
+  if (question.ballotProtocol) {
+    const unsatisfiable = unsatisfiableProtocolReason(question.ballotProtocol)
+    if (unsatisfiable) {
+      throw new Error(`Question ${index}: unsatisfiable ballotProtocol — ${unsatisfiable}`)
+    }
+    return question
+  }
+
+  if (question.type === 'multichoice' && question.typeSetup?.uniqueChoices) {
+    return { ...question, typeSetup: { ...question.typeSetup, uniqueChoices: false } }
+  }
+
+  return question
+}
+
+/**
+ * Normalize a voting process draft for the API: every human-facing string to a
+ * language map, and every question's ballot config to one that can actually be
+ * tallied (see {@link normalizeQuestionBallotConfig}).
+ */
 function normalizeVotingProcessRequest(req: CreateVotingProcessRequest): CreateVotingProcessRequest {
   return {
     ...req,
     title: toMultiLang(req.title)!,
     description: toMultiLang(req.description),
-    questions: req.questions?.map((q) => ({
-      ...q,
+    questions: req.questions?.map((q, i) => ({
+      ...normalizeQuestionBallotConfig(q, i),
       title: toMultiLang(q.title)!,
       description: toMultiLang(q.description),
       choices: q.choices?.map((c) => ({ ...c, title: toMultiLang(c.title)! })),

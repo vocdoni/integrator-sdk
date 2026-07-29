@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@vocdoni/api-types": "workspace:*",
+    "@vocdoni/ballot": "workspace:*",
     "up-fetch": "^2.5.0"
   },
   "devDependencies": {

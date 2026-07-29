@@ -129,6 +129,25 @@ describe('encodeBallot', () => {
       expect(() => encodeBallot(election, [[0, 1, 2]])).toThrow(/too many selections/i)
     })
 
+    it('refuses an election whose uniqueChoices cannot be satisfied (pigeonhole)', () => {
+      // 5 choices, 3 fields, but maxValue 1 only offers the values 0 and 1 —
+      // no ballot can fill three fields without repeating one, so every vote
+      // would be dropped at tally.
+      const election = createElection({ maxCount: 3, maxValue: 1, uniqueChoices: true })
+      expect(() => encodeBallot(election, [[0, 2]])).toThrow(/cannot encode a ballot for this election/)
+    })
+
+    it('leaves a satisfiable uniqueChoices election alone', () => {
+      // Pick-slot multichoice: maxValue 7 >= maxCount 3, so ascending sentinels fit.
+      const election = createElection({ maxCount: 3, maxValue: 7, uniqueChoices: true })
+      expect(encodeBallot(election, [[1]])).toEqual([1, 5, 6])
+    })
+
+    it('leaves budget/quadratic alone (maxValue 0 means unbounded, not one value)', () => {
+      const election = createElection({ maxValue: 0, costExponent: 2, maxCount: 5, uniqueChoices: true })
+      expect(encodeBallot(election, [[1, 2, 3, 4, 5]])).toEqual([1, 2, 3, 4, 5])
+    })
+
     it('handles the 2-option edge case (maxValue === 1)', () => {
       // This is a documented ambiguity: 2-option multichoice can produce maxValue === 1
       // When uniqueChoices is false and maxValue === 1, it's treated as approval
@@ -301,8 +320,9 @@ describe('encodeQuestionBallot', () => {
     // Named multichoice derives maxCount = numChoices, maxValue = 1, and
     // maxTotalCost = maxChoices — a dense 0/1 field per choice. Pick-slot values
     // (choice values + abstain sentinels) would exceed maxValue and get silently
-    // discarded by the chain at tally.
-    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: true })
+    // discarded by the chain at tally. uniqueValues MUST be false here: with it
+    // set the protocol is unsatisfiable and the encoder refuses (see below).
+    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: false })
 
     it('encodes picks as a dense 0/1 vector, not pick-slots', () => {
       expect(
@@ -322,11 +342,68 @@ describe('encodeQuestionBallot', () => {
       ).toThrow(/at most 2/)
     })
 
-    it('encodes dense for uniqueValues === false the same way', () => {
-      const repeatable = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: false })
+    it('encodes dense whatever maxTotalCost says, as long as the picks fit', () => {
+      const roomy = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 3, uniqueValues: false })
       expect(
-        encodeQuestionBallot({ ballotProtocol: repeatable, type: 'multichoice', choices }, [0, 2])
-      ).toEqual([1, 0, 1])
+        encodeQuestionBallot({ ballotProtocol: roomy, type: 'multichoice', choices }, [0, 1, 2])
+      ).toEqual([1, 1, 1])
     })
+  })
+
+  describe('unsatisfiable configs are refused instead of silently discarded at tally', () => {
+    // Regression for the live processes 6a69c4ea06ae8a7235e3183b /
+    // 6a6912fef6bfe54e0369bc3a on saas-api-dev: 4 choices, maxChoices 4,
+    // uniqueChoices true. The backend derived maxCount 4 / maxValue 1 /
+    // maxTotalCost 4 with voteMode.uniqueValues true; every dense 0/1 ballot
+    // repeats a value, so the scrutinizer dropped all of them and the tally came
+    // back all zeros while voteCount said 2.
+    const fourChoices = Array.from({ length: 4 }, (_, j) => ({ title: { default: `C${j}` }, value: j }))
+
+    it('throws for a named multichoice question with typeSetup.uniqueChoices (no protocol on the read)', () => {
+      expect(() =>
+        encodeQuestionBallot(
+          {
+            type: 'multichoice',
+            typeSetup: { minChoices: 0, maxChoices: 4, uniqueChoices: true },
+            choices: fourChoices,
+          },
+          [0, 2]
+        )
+      ).toThrow(/uniqueValues is true on a dense 0\/1 ballot/)
+    })
+
+    it('throws even for a single pick — the layout, not the pick count, is what breaks', () => {
+      expect(() =>
+        encodeQuestionBallot(
+          {
+            type: 'multichoice',
+            typeSetup: { minChoices: 0, maxChoices: 4, uniqueChoices: true },
+            choices: fourChoices,
+          },
+          [1]
+        )
+      ).toThrow(/discards it at tally/)
+    })
+
+    it('throws for an explicit dense ballotProtocol with uniqueValues', () => {
+      const broken = bp({ maxCount: 4, maxValue: 1, maxTotalCost: 4, uniqueValues: true })
+      expect(() =>
+        encodeQuestionBallot({ ballotProtocol: broken, type: 'multichoice', choices: fourChoices }, [0, 2])
+      ).toThrow(/uniqueValues is true on a dense 0\/1 ballot/)
+    })
+
+    it('encodes the same question fine once uniqueChoices is false', () => {
+      expect(
+        encodeQuestionBallot(
+          {
+            type: 'multichoice',
+            typeSetup: { minChoices: 0, maxChoices: 4, uniqueChoices: false },
+            choices: fourChoices,
+          },
+          [0, 2]
+        )
+      ).toEqual([1, 0, 1, 0])
+    })
+
   })
 })

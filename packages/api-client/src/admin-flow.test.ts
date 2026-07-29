@@ -166,6 +166,122 @@ describe('admin / integrator client methods', () => {
       expect(body.questions[0].choices[0].title).toEqual({ default: 'No' })
       expect(body.questions[0].choices[1].title).toEqual({ default: 'Yes', es: 'Sí' })
     })
+
+    describe('multichoice ballot config', () => {
+      // The backend derives the dense 0/1 layout for `multichoice` but still maps
+      // typeSetup.uniqueChoices onto the on-chain uniqueValues, which the
+      // scrutinizer applies to raw field values — the combination discards every
+      // ballot at tally. This is the config the two broken dev processes were
+      // created with (4 choices, maxChoices 4, uniqueChoices true).
+      const postDraft = () => {
+        let body: any
+        server.use(
+          http.post(`${BASE_URL}/processes`, async ({ request }) => {
+            body = await request.json()
+            return HttpResponse.json({ processId: 'draft-mc' })
+          }),
+        )
+        return () => body
+      }
+
+      const multichoiceDraft = (uniqueChoices: boolean) => ({
+        orgAddress: ORG,
+        title: 'MC',
+        questions: [
+          {
+            title: 'Pick up to 4',
+            choices: Array.from({ length: 4 }, (_, v) => ({ title: `C${v}`, value: v })),
+            type: 'multichoice' as const,
+            typeSetup: { minChoices: 0, maxChoices: 4, uniqueChoices },
+          },
+        ],
+      })
+
+      it('forces typeSetup.uniqueChoices to false so the election can be tallied', async () => {
+        const body = postDraft()
+        await client.elections.create(multichoiceDraft(true))
+        expect(body().questions[0].typeSetup).toEqual({
+          minChoices: 0,
+          maxChoices: 4,
+          uniqueChoices: false,
+        })
+      })
+
+      it('leaves the rest of typeSetup and an already-false flag untouched', async () => {
+        const body = postDraft()
+        await client.elections.create(multichoiceDraft(false))
+        expect(body().questions[0].typeSetup).toEqual({
+          minChoices: 0,
+          maxChoices: 4,
+          uniqueChoices: false,
+        })
+      })
+
+      it('does not touch singlechoice typeSetup', async () => {
+        const body = postDraft()
+        await client.elections.create({
+          orgAddress: ORG,
+          title: 'SC',
+          questions: [
+            {
+              title: 'Pick one',
+              choices: [{ title: 'A', value: 0 }],
+              type: 'singlechoice',
+              typeSetup: { minChoices: 0, maxChoices: 0, uniqueChoices: true },
+            },
+          ],
+        })
+        expect(body().questions[0].typeSetup.uniqueChoices).toBe(true)
+      })
+
+      it('rejects an explicitly unsatisfiable ballotProtocol instead of creating a zero-tally election', async () => {
+        await expect(
+          client.elections.create({
+            orgAddress: ORG,
+            title: 'Broken',
+            questions: [
+              {
+                title: 'Pick up to 4',
+                choices: Array.from({ length: 4 }, (_, v) => ({ title: `C${v}`, value: v })),
+                ballotProtocol: {
+                  maxCount: 4,
+                  maxValue: 1,
+                  maxVoteOverwrites: 0,
+                  costExponent: 1,
+                  maxTotalCost: 4,
+                  uniqueValues: true,
+                  costFromWeight: false,
+                },
+              },
+            ],
+          }),
+        ).rejects.toThrow(/Question 0: unsatisfiable ballotProtocol/)
+      })
+
+      it('accepts a dense ballotProtocol with uniqueValues false', async () => {
+        const body = postDraft()
+        await client.elections.create({
+          orgAddress: ORG,
+          title: 'Fine',
+          questions: [
+            {
+              title: 'Pick up to 4',
+              choices: Array.from({ length: 4 }, (_, v) => ({ title: `C${v}`, value: v })),
+              ballotProtocol: {
+                maxCount: 4,
+                maxValue: 1,
+                maxVoteOverwrites: 0,
+                costExponent: 1,
+                maxTotalCost: 4,
+                uniqueValues: false,
+                costFromWeight: false,
+              },
+            },
+          ],
+        })
+        expect(body().questions[0].ballotProtocol.uniqueValues).toBe(false)
+      })
+    })
   })
 
   describe('elections.update', () => {

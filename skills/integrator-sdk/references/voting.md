@@ -125,15 +125,38 @@ For approval questions that cap the number of approvals, `ballotProtocol.maxTota
 
 This is also the layout the backend derives for the named `multichoice`
 question type (`maxTotalCost = typeSetup.maxChoices`). `maxValue = 1` always
-means this binary format — `uniqueValues` does not change the wire layout, and
-`encodeQuestionBallot` encodes it as the dense 0/1 vector either way.
+means this binary format.
+
+> ⚠️ **`uniqueValues` must be `false` on this layout.** It does not change the
+> wire format — the scrutinizer applies it to the *raw field values*, and a 0/1
+> vector over more than two options always repeats one of them (even a single
+> pick, `[1, 0, 0, 0]`, repeats `0`). Every ballot is then discarded during
+> aggregation: the election keeps counting `voteCount` while the tally stays all
+> zeros. Uniqueness is already implicit here — each choice is its own field, so
+> a voter *cannot* pick the same option twice.
+>
+> `client.elections.create/update` forces `typeSetup.uniqueChoices` to `false`
+> for `type: 'multichoice'` and throws on an explicitly unsatisfiable
+> `ballotProtocol`; `encodeQuestionBallot` refuses to encode a ballot for such a
+> question rather than casting a vote that will never count. To check a question
+> you did not create:
+>
+> ```ts
+> import { unsatisfiableQuestionReason } from '@vocdoni/ballot'
+>
+> const reason = unsatisfiableQuestionReason(question)
+> if (reason) console.error('this question can never be tallied:', reason)
+> ```
 
 ### Ranked / rated (unique values)
 
 `ballotProtocol.maxCount = numOptions`, `ballotProtocol.maxValue = maxRank`,
 `ballotProtocol.uniqueValues = true`
 
-Each option is ranked; values must not repeat.
+Each option is ranked; values must not repeat. This is the one layout where
+`uniqueValues` is satisfiable — `maxValue` has to leave at least `maxCount`
+distinct values (`maxValue >= maxCount - 1`), or no ballot can fill the fields
+without repeating one.
 
 ```ts
 // 3 candidates; ranked 1st, 3rd, 2nd (0-indexed)

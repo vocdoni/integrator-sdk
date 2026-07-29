@@ -8,9 +8,17 @@ export type {
 } from './types.js'
 
 export { BallotType } from './types.js'
+export type { ProtocolBounds } from './protocol.js'
 
 // Re-export functions
-export { inferBallotType, inferQuestionBallotType } from './infer.js'
+export { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
+export {
+  isUnsatisfiableProtocol,
+  isUnsatisfiableQuestion,
+  unsatisfiableProtocolReason,
+  unsatisfiableQuestionReason,
+  voteTypeBounds,
+} from './protocol.js'
 export { encodeBallot, encodeQuestionBallot } from './encode.js'
 export { decodeResults, decodeQuestionResults } from './decode.js'
 export { validateSelections } from './validate.js'
