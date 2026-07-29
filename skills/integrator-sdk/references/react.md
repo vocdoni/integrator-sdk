@@ -271,12 +271,15 @@ Components that open a confirmation dialog (`<ElectionQuestions />` via its
 them share a single dialog boundary — a provider you mount takes precedence.
 
 **Extended choices** — `<ElectionQuestions />` renders a question in the
-`extended` presentation (and the `grid` layout when there are images) as soon as
-any of its choices carries `choice.meta` — the per-choice image/description the
-API client folds in from the question's `metadata.choices` on read (see
-[[client]]). Questions without it keep the plain `basic`/`list` rendering. When
-you hand `<ElectionProvider>` a prefetched `election`, it runs the same
-normalization, so extended choices show on the first paint too.
+`extended` presentation as soon as any of its choices has a non-empty
+`meta.description` or `meta.image` — the per-choice image/description the API
+client folds in from the question's `metadata.choices` on read (see [[client]]).
+It switches to the `grid` layout (and drops `compact` on the choice controls)
+when any choice has an image, `default` or `thumbnail`. Empty and
+whitespace-only strings do not count, so a stored `"description": ""` keeps the
+plain `basic`/`list` rendering, as does a question with no `metadata.choices` at
+all. When you hand `<ElectionProvider>` a prefetched `election`, it runs the
+same normalization, so extended choices show on the first paint too.
 
 **Slot customization** — every component accepts a slot override for rendering:
 
