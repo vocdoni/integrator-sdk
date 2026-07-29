@@ -53,9 +53,9 @@
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",
-    "@vocdoni/api-client": "workspace:*",
-    "@vocdoni/api-types": "workspace:*",
-    "@vocdoni/api-voting": "workspace:*",
+    "@vocdoni/api-client": "workspace:^",
+    "@vocdoni/api-types": "workspace:^",
+    "@vocdoni/api-voting": "workspace:^",
     "react": ">=18.0.0"
   },
   "devDependencies": {
