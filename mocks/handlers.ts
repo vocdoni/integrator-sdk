@@ -289,6 +289,10 @@ export const handlers = [
     HttpResponse.json({ weight: MOCK_WEIGHT_HEX }),
   ),
 
+  // Consumed sign info — nothing voted by default; override per test to hand
+  // the voter back their per-question nullifiers.
+  http.post(`${BASE}/processes/:processId/sign-info`, () => HttpResponse.json({ consumed: [] })),
+
   http.get(`${BASE}/processes/:processId/questions/:questionId`, ({ params }) =>
     HttpResponse.json({
       ...mockProcess.questions[0],

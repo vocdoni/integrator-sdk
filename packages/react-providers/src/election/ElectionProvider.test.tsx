@@ -279,6 +279,106 @@ describe('ElectionProvider', () => {
     expect(voteId).toBe('nullifier-batch-job-0-0')
     expect(result.current.election.voteId).toBe('nullifier-batch-job-0-0')
     expect(result.current.election.voteStatus).toEqual({ 'q-0': 'confirmed', 'q-1': 'confirmed' })
+    // …and EVERY question's vote id is exposed, not just the first.
+    expect(result.current.election.voteIds).toEqual({
+      'q-0': 'nullifier-batch-job-0-0',
+      'q-1': 'nullifier-batch-job-0-1',
+    })
+  })
+
+  it('recovers every vote id from sign-info when a voted voter connects', async () => {
+    const UPSTREAM_A = 'aa'.repeat(32)
+    const UPSTREAM_B = 'bb'.repeat(32)
+    let signInfoCalls = 0
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) =>
+        HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          questions: [
+            { ...mockProcess.questions[0], id: 'q-0', upstreamId: UPSTREAM_A },
+            { ...mockProcess.questions[0], id: 'q-1', upstreamId: UPSTREAM_B },
+          ],
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/check`, () =>
+        HttpResponse.json({
+          belongsToProcess: true,
+          weight: MOCK_WEIGHT_HEX,
+          questions: [
+            { questionId: 'q-0', upstreamId: UPSTREAM_A, canVote: false, hasVoted: true },
+            { questionId: 'q-1', upstreamId: UPSTREAM_B, canVote: false, hasVoted: true },
+          ],
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign-info`, () => {
+        signInfoCalls++
+        return HttpResponse.json({
+          consumed: [
+            { questionId: 'q-0', upstreamId: UPSTREAM_A, address: '0xa', nullifier: 'null-a', at: '2024-01-01T00:00:00Z' },
+            { questionId: 'q-1', upstreamId: UPSTREAM_B, address: '0xb', nullifier: 'null-b', at: '2024-01-01T00:00:00Z' },
+          ],
+        })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+
+    // A returning voter never called vote() in this session, yet holds both ids.
+    await waitFor(() =>
+      expect(result.current.election.voteIds).toEqual({ 'q-0': 'null-a', 'q-1': 'null-b' }),
+    )
+    expect(signInfoCalls).toBe(1)
+    // The legacy single field is seeded too, instead of staying empty on reload.
+    expect(result.current.election.voteId).toBe('null-a')
+  })
+
+  it('skips the sign-info recovery when the voter has voted nothing', async () => {
+    let signInfoCalls = 0
+    server.use(
+      http.post(`http://localhost/processes/:processId/sign-info`, () => {
+        signInfoCalls++
+        return HttpResponse.json({ consumed: [] })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    expect(signInfoCalls).toBe(0)
+    expect(result.current.election.voteIds).toEqual({})
+  })
+
+  it('keeps membership when the sign-info recovery fails', async () => {
+    server.use(
+      http.post(`http://localhost/processes/:processId/check`, () =>
+        HttpResponse.json({
+          belongsToProcess: true,
+          weight: MOCK_WEIGHT_HEX,
+          questions: mockProcess.questions.map((q) => ({
+            questionId: q.id,
+            upstreamId: q.upstreamId,
+            canVote: false,
+            hasVoted: true,
+          })),
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign-info`, () =>
+        HttpResponse.json({ error: 'sign-info is down' }, { status: 500 }),
+      ),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+
+    await waitFor(() => expect(result.current.election.hasVoted).toBe(true))
+    expect(result.current.election.isInCensus).toBe(true)
+    expect(result.current.election.voteIds).toEqual({})
   })
 
   it('refuses to cast a cleartext ballot for a secret question without published keys', async () => {
@@ -537,6 +637,9 @@ describe('ElectionProvider', () => {
     expect((partial.failed[0].error as Error).message).toBe('tx dropped by chain')
     // voteStatus mirrors the per-envelope truth.
     expect(result.current.election.voteStatus).toEqual({ 'q-0': 'confirmed', 'q-1': 'failed' })
+    // The id that DID land is exposed — a partial cast must not lose it.
+    expect(result.current.election.voteIds).toEqual({ 'q-0': 'nullifier-job-0' })
+    expect(result.current.election.voteId).toBe('nullifier-job-0')
   })
 
   it('a synchronously rejected batch is a plain retryable error — zero votes, no PartialVoteError', async () => {
@@ -849,5 +952,6 @@ describe('ElectionProvider', () => {
     expect(result.current.election.weight).toBeNull()
     expect(result.current.election.hasVoted).toBe(false)
     expect(result.current.election.voteId).toBeNull()
+    expect(result.current.election.voteIds).toEqual({})
   })
 })

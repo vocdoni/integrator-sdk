@@ -120,6 +120,7 @@ console.log('nullifier:', job.result?.voteID)
 - **Ballot encoding is per-question.** Use `encodeQuestionBallot(question, answers)` from `@vocdoni/ballot` to produce each question's `number[]`, then pass `number[][]` to `vote()`.
 - **The vote tx is signed by an ephemeral key, not the voter's wallet.** `EphemeralSigner` generates a fresh secp256k1 keypair per vote; the CSP signs its Ethereum address. This decouples the voter's identity from the on-chain signature.
 - **Relaying is async.** `elections.vote()` returns a `jobId`. Poll `jobs.waitFor(jobId)` to get the vote nullifier (`voteID`). The `VotingClient.vote()` method returns the jobId; the React `useElection().vote()` awaits the full job for each question.
+- **One nullifier per question, not per process.** A voter who answered N questions holds N vote ids. Read them all from `useElection().voteIds` (`Record<questionId, string>`) — the older single `voteId` is deprecated and only ever shows one. Server-side, `processes.signInfo(id, { authToken })` returns the same set as `consumed[]`.
 
 ## A note on api-client stability
 

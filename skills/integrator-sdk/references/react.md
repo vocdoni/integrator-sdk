@@ -137,9 +137,29 @@ const {
   voting,        // boolean — true while vote() is in flight (success OR error settles it)
   voteStatus,    // Record<questionId, 'signing'|'submitting'|'confirming'|'confirmed'|'failed'>
                  //   per-question progress of the current/last vote() call (already-voted → 'confirmed')
-  voteId,        // string | null — nullifier after a successful vote
+  voteIds,       // Record<questionId, string> — EVERY vote id (nullifier) the voter holds
+  voteId,        // string | null — DEPRECATED: only ever one of them; read voteIds
   clearVoter,    // () => void — clears the auth session and vote state
 } = useElection()
+```
+
+**One vote id per question.** Votes are relayed per question, so a voter who
+answered 5 questions holds 5 nullifiers. `voteIds` carries all of them keyed by
+question id; the legacy `voteId` exposes just the first and is deprecated.
+`voteIds` is filled from three places:
+
+- the outcomes of a successful `vote()`;
+- the questions that **did** land when `vote()` throws `PartialVoteError` — a
+  partial cast never loses the ids it produced;
+- on connect, `POST /processes/{id}/sign-info` (only when the check reports
+  something voted), so a voter returning after a reload still sees every id.
+  A failure there is swallowed: membership stays resolved, `voteIds` stays empty.
+
+```tsx
+const { election, voteIds } = useElection()
+election.questions
+  .filter((q) => voteIds[q.id])
+  .map((q) => `${q.title.default}: ${voteIds[q.id]}`)
 ```
 
 ### Voter authentication
@@ -263,7 +283,17 @@ Key election components (all from `@vocdoni/react-components`):
 | `<VoteButton />` | Submit button; auto-disabled when `!isAbleToVote` |
 | `<VoteWeight />` | Voter's census weight |
 | `<ElectionResults />` | Results histogram; respects `secretUntilTheEnd` |
+| `<Voted />` | The voter's vote ids — one line per voted question |
 | `<ElectionEnvelope />` | Vote envelope / nullifier display |
+
+**`<Voted />`** renders one entry per question the voter cast, in process order,
+each pairing the question's title with its vote id (rendered as a link). Its
+`Voted` slot gets both a `votes: VotedVote[]` array
+(`{ questionId, questionTitle, voteId, description }`) to lay out yourself and a
+joined `description` node, so overrides written against the old single-string
+`description` keep showing every id. With a single voted question it renders the
+plain `vote.voted_description` sentence, exactly as before; with more, it uses
+`vote.voted_question_description` (`Your vote id for "{{ title }}" is {{ id }}.`).
 
 Components that open a confirmation dialog (`<ElectionQuestions />` via its
 `QuestionsFormProvider`, `<ActionCancel />`, `<ActionEnd />`) mount their own
@@ -313,9 +343,19 @@ function VoterAuth() {
 }
 
 function VotingForm() {
-  const { election, status, isAbleToVote, vote, hasVoted, voteId } = useElection()
+  const { election, status, isAbleToVote, vote, hasVoted, voteIds } = useElection()
   if (!election) return <p>Loading…</p>
-  if (hasVoted) return <p>Your vote: {voteId}</p>
+  // One vote id per question — never just voteIds[questions[0].id].
+  if (hasVoted)
+    return (
+      <ul>
+        {election.questions.map((q) => (
+          <li key={q.id}>
+            {typeof q.title === 'string' ? q.title : q.title.default}: {voteIds[q.id]}
+          </li>
+        ))}
+      </ul>
+    )
   if (status !== 'ONGOING') return <p>Voting is not open</p>
 
   // Process text is a language map ({ default, … }); resolve it for display.
