@@ -199,14 +199,14 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
                   { title: 'C', value: 2 },
                 ],
                 type: 'multichoice',
-                // Deliberately `true` — the backend propagates it into the
-                // on-chain UniqueChoices, and the scrutinizer applies uniqueness
-                // to the raw 0/1 fields of the derived dense layout, so with it
-                // set every multi-pick ballot is silently discarded at tally
-                // (saas-backend derivation bug in account/ballot.go). The client
-                // forces it back to false on create, and the tally assertion
-                // below is what proves that mitigation still works end to end.
-                typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: true },
+                // uniqueChoices MUST be false here. On the dense layout this type
+                // derives, uniqueness is vacuous (each choice is its own 0/1 field)
+                // and fatal above two choices: every ballot repeats a value and is
+                // discarded at tally, so the election counts votes and reports zero
+                // (saas-backend#619). Both this client and the backend now reject
+                // `true` outright — the client-side rejection is unit-tested in
+                // admin-flow.test.ts; sending it here would just fail creation.
+                typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: false },
               },
             ],
           },
@@ -405,15 +405,15 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             unsatisfiableQuestionReason(pub),
             `${d.label} public question has an unsatisfiable ballot config`,
           ).toBeNull()
-          // The multichoice question is created with uniqueChoices: true on
-          // purpose (see the draft above); the client must have rewritten it,
-          // so it reads back false. Without that, the on-chain uniqueValues
-          // would discard every ballot and the tally assertion below would
-          // come back all zeros.
+          // No multichoice question may come back with uniqueChoices set: on the
+          // dense layout it derives, that combination discards every ballot at
+          // tally (saas-backend#619). Asserted on the READ rather than trusting
+          // what we sent, so a backend that started echoing or inventing the flag
+          // would fail here instead of silently zeroing the tally below.
           if (pub.type === 'multichoice') {
             expect(
               pub.typeSetup?.uniqueChoices,
-              `${d.label} multichoice kept uniqueChoices — its votes will not be tallied`,
+              `${d.label} multichoice reports uniqueChoices — its votes will not be tallied`,
             ).toBe(false)
           }
           if (q.secretUntilTheEnd) {

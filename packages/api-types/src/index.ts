@@ -468,10 +468,9 @@ export interface QuestionTypeSetup {
    * the on-chain `voteMode.uniqueValues`, which the scrutinizer applies to raw
    * field values — a 0/1 vector over more than two choices always repeats a value,
    * so every ballot is discarded at tally and the election reports zeros while
-   * still counting `voteCount`. `@vocdoni/api-client` forces it to `false` on
-   * create/update (uniqueness is implicit in the dense layout, so nothing is
-   * lost), which is why a multichoice question reads back with `uniqueChoices:
-   * false` regardless of what was sent. Detect an already-created broken question
+   * still counting `voteCount`. Both the API and `@vocdoni/api-client` reject it
+   * on create/update rather than correcting it — a ranked ballot is expressed as a
+   * raw {@link BallotProtocol} instead. Detect an already-created broken question
    * with `unsatisfiableQuestionReason` from `@vocdoni/ballot`.
    */
   uniqueChoices: boolean
@@ -762,7 +761,7 @@ export interface VotingProcessQuestionRequest {
    * Type-specific configuration. Required for `"multichoice"`, which validates
    * `1 <= maxChoices <= choices.length` and `minChoices <= maxChoices`.
    * `"singlechoice"` ignores it. See {@link QuestionTypeSetup.uniqueChoices} for
-   * why `@vocdoni/api-client` forces that one flag to `false` on multichoice.
+   * why that one flag is rejected on multichoice.
    */
   typeSetup?: QuestionTypeSetup
   secretUntilTheEnd?: boolean

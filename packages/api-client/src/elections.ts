@@ -49,61 +49,57 @@ function toMultiLang(value: LocalizedInput | undefined): MultiLangString | undef
 }
 
 /**
- * Keep a question's ballot config castable, and refuse it when it cannot be.
+ * Reject a question whose ballot config could never be tallied, before it is sent.
  *
- * The backend derives the on-chain vote options from a named `type` (or copies a
- * raw `ballotProtocol` verbatim), and for `multichoice` that derivation is the
- * **dense** layout — one 0/1 field per choice, `maxTotalCost = maxChoices` — while
- * still mapping `typeSetup.uniqueChoices` onto the on-chain `uniqueValues`. Those
- * two cannot both hold: the scrutinizer applies `uniqueValues` to raw field values,
- * so a 0/1 vector over more than two choices always repeats one and the ballot is
- * dropped at tally. The election then accepts votes and reports an all-zero result
- * (saas-backend `account/ballot.go`, `VoteTypeFromQuestion` — vocdoni/saas-backend#619).
+ * Both checks mirror what the backend now enforces, so this fails fast and locally
+ * instead of round-tripping — and, critically, it does NOT paper over the API's
+ * answer. An earlier revision of this client silently rewrote
+ * `typeSetup.uniqueChoices` to `false`; that would now swallow a deliberate 400 and
+ * leave the caller believing a config the backend rejected had been accepted.
  *
- * This is a MITIGATION for that upstream bug, not a fix: it only protects callers
- * going through this client. Drop it once #619 lands and the backend stops
- * propagating the flag.
- *
- * So:
- * - **Named `multichoice`**: drop `uniqueChoices`. It is lossless — a dense layout
- *   gives each choice its own field, so a voter cannot pick the same choice twice
- *   whatever the flag says — and it is the only value that yields a castable
- *   election. Note this means the question reads back with `uniqueChoices: false`.
- * - **Raw `ballotProtocol`**: throw. The caller asked for a specific protocol and
- *   there is no way to guess which side of the contradiction they meant, so failing
- *   at creation beats publishing an election that silently discards every vote.
+ * - **Named `multichoice` + `uniqueChoices`**: rejected. The type derives the dense
+ *   layout (one 0/1 field per choice), where uniqueness is both vacuous — a voter
+ *   cannot select the same choice twice — and fatal above two choices, since every
+ *   ballot then repeats a value and is discarded at tally, leaving an all-zero
+ *   result. The backend rejects it at the API boundary with the same reasoning
+ *   (`api/processes.go`, and see saas-backend#619); a ranked ballot is expressed as
+ *   a raw `ballotProtocol` instead.
+ * - **Raw `ballotProtocol`**: rejected when unsatisfiable, matching the backend's
+ *   `ValidateBallotProtocol` exactly — unsatisfiability only, never plausibility, so
+ *   every shape a voter could actually satisfy stays expressible.
  */
-function normalizeQuestionBallotConfig(
-  question: VotingProcessQuestionRequest,
-  index: number
-): VotingProcessQuestionRequest {
+function validateQuestionBallotConfig(question: VotingProcessQuestionRequest, index: number): void {
   if (question.ballotProtocol) {
     const unsatisfiable = unsatisfiableProtocolReason(question.ballotProtocol)
     if (unsatisfiable) {
       throw new Error(`Question ${index}: unsatisfiable ballotProtocol — ${unsatisfiable}`)
     }
-    return question
+    return
   }
 
   if (question.type === 'multichoice' && question.typeSetup?.uniqueChoices) {
-    return { ...question, typeSetup: { ...question.typeSetup, uniqueChoices: false } }
+    throw new Error(
+      `Question ${index}: uniqueChoices is not supported for multichoice, where each choice is ` +
+        'an independent yes/no field — a voter already cannot select one twice, and a ' +
+        'unique-values ballot over those fields admits no vote at all, tallying every election ' +
+        'to zero. Set it false, or use a ballotProtocol for a ranked ballot'
+    )
   }
-
-  return question
 }
 
 /**
- * Normalize a voting process draft for the API: every human-facing string to a
- * language map, and every question's ballot config to one that can actually be
- * tallied (see {@link normalizeQuestionBallotConfig}).
+ * Normalize a voting process draft for the API: every human-facing string becomes a
+ * language map. Question ballot configs are validated, never rewritten — see
+ * {@link validateQuestionBallotConfig} for why silently correcting them is wrong.
  */
 function normalizeVotingProcessRequest(req: CreateVotingProcessRequest): CreateVotingProcessRequest {
+  req.questions?.forEach(validateQuestionBallotConfig)
   return {
     ...req,
     title: toMultiLang(req.title)!,
     description: toMultiLang(req.description),
-    questions: req.questions?.map((q, i) => ({
-      ...normalizeQuestionBallotConfig(q, i),
+    questions: req.questions?.map((q) => ({
+      ...q,
       title: toMultiLang(q.title)!,
       description: toMultiLang(q.description),
       choices: q.choices?.map((c) => ({ ...c, title: toMultiLang(c.title)! })),

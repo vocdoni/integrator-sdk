@@ -15,13 +15,12 @@ ballot was rejected during aggregation while the vote still counted towards
 `voteCount`, producing elections that reported an all-zero tally with
 `finalResults: true`.
 
-- `@vocdoni/api-client`: `elections.create` / `elections.update` now force
-  `typeSetup.uniqueChoices` to `false` on `multichoice` questions (lossless — the dense
-  layout already gives each choice its own field, so a voter cannot pick one twice), and
-  throw when a raw `ballotProtocol` is unsatisfiable instead of publishing an election
-  that cannot be tallied. Multichoice questions consequently read back with
-  `uniqueChoices: false` regardless of what was sent. Adds `@vocdoni/ballot` as a
-  dependency.
+- `@vocdoni/api-client`: `elections.create` / `elections.update` now reject
+  `typeSetup.uniqueChoices` on `multichoice` questions, and reject a raw
+  `ballotProtocol` that is unsatisfiable, instead of publishing an election that cannot
+  be tallied. Both checks mirror what the API itself enforces, so this fails fast and
+  locally without masking the server's answer — a ranked ballot is expressed as a raw
+  `ballotProtocol` instead. Adds `@vocdoni/ballot` as a dependency.
 - `@vocdoni/ballot`: new `unsatisfiableProtocolReason`, `unsatisfiableQuestionReason`,
   `isUnsatisfiableProtocol`, `isUnsatisfiableQuestion`, `voteTypeBounds` and the
   `ProtocolBounds` type, plus `isDenseBallotProtocol` is now exported.

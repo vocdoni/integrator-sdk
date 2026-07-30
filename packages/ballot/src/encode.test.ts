@@ -369,7 +369,7 @@ describe('encodeQuestionBallot', () => {
           },
           [0, 2]
         )
-      ).toThrow(/uniqueValues is true on a dense 0\/1 ballot/)
+      ).toThrow(/only 2 distinct value\(s\) for 4 ballot fields/)
     })
 
     it('throws even for a single pick — the layout, not the pick count, is what breaks', () => {
@@ -382,14 +382,14 @@ describe('encodeQuestionBallot', () => {
           },
           [1]
         )
-      ).toThrow(/even a single pick/)
+      ).toThrow(/only 2 distinct value\(s\) for 4 ballot fields/)
     })
 
     it('throws for an explicit dense ballotProtocol with uniqueValues', () => {
       const broken = bp({ maxCount: 4, maxValue: 1, maxTotalCost: 4, uniqueValues: true })
       expect(() =>
         encodeQuestionBallot({ ballotProtocol: broken, type: 'multichoice', choices: fourChoices }, [0, 2])
-      ).toThrow(/uniqueValues is true on a dense 0\/1 ballot/)
+      ).toThrow(/only 2 distinct value\(s\) for 4 ballot fields/)
     })
 
     it('encodes the same question fine once uniqueChoices is false', () => {

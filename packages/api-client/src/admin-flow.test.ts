@@ -197,14 +197,19 @@ describe('admin / integrator client methods', () => {
         ],
       })
 
-      it('forces typeSetup.uniqueChoices to false so the election can be tallied', async () => {
-        const body = postDraft()
-        await client.elections.create(multichoiceDraft(true))
-        expect(body().questions[0].typeSetup).toEqual({
-          minChoices: 0,
-          maxChoices: 4,
-          uniqueChoices: false,
-        })
+      it('rejects typeSetup.uniqueChoices instead of silently rewriting it', async () => {
+        // Rewriting it to false would swallow the 400 the backend returns for this
+        // config, leaving the caller believing a rejected question was accepted.
+        postDraft()
+        await expect(client.elections.create(multichoiceDraft(true))).rejects.toThrow(
+          /uniqueChoices is not supported for multichoice/,
+        )
+      })
+
+      it('rejects it on update too, not just create', async () => {
+        await expect(
+          client.elections.update('draft-mc', multichoiceDraft(true)),
+        ).rejects.toThrow(/uniqueChoices is not supported for multichoice/)
       })
 
       it('leaves the rest of typeSetup and an already-false flag untouched', async () => {

@@ -32,23 +32,21 @@ describe('unsatisfiableProtocolReason', () => {
     const reason = unsatisfiableProtocolReason(
       bp({ maxCount: 4, maxValue: 1, maxTotalCost: 4, uniqueValues: true })
     )
-    expect(reason).toMatch(/dense 0\/1 ballot/)
-    // Above two fields nothing survives at all — the reason must say so.
-    expect(reason).toMatch(/even a single pick/)
+    expect(reason).toMatch(/only 2 distinct value\(s\) for 4 ballot fields/)
     expect(reason).toMatch(/all-zero result/)
+    // maxValue 1 is worth naming explicitly — it is the shape this guard exists for.
+    expect(reason).toMatch(/dense 0\/1 multichoice layout/)
     expect(isUnsatisfiableProtocol(bp({ maxCount: 4, maxValue: 1, uniqueValues: true }))).toBe(true)
   })
 
-  it('rejects the dense layout at its smallest multi-field size, for the right reason', () => {
-    // maxCount 2 admits [0,1] / [1,0] only — a voter can neither pick both nor
-    // neither, which maxTotalCost 2 says they may. That is a DIFFERENT failure
-    // from the >2 case: here some ballots do tally, so the message must not
-    // claim every ballot repeats a value or that the result is all zero.
-    const reason = unsatisfiableProtocolReason(bp({ maxCount: 2, maxValue: 1, uniqueValues: true }))
-    expect(reason).toMatch(/dense 0\/1 ballot/)
-    expect(reason).toMatch(/neither pick both choices nor abstain/)
-    expect(reason).not.toMatch(/even a single pick/)
-    expect(reason).not.toMatch(/all-zero result/)
+  it('ACCEPTS the two-field dense layout, matching the backend', () => {
+    // maxCount 2 / maxValue 1 admits [0,1] and [1,0], so it is satisfiable — and
+    // it is how a two-option ranked ballot is expressed. The backend's
+    // ValidateBallotProtocol checks unsatisfiability only, never plausibility,
+    // so rejecting here would refuse a protocol the API accepts.
+    expect(unsatisfiableProtocolReason(bp({ maxCount: 2, maxValue: 1, uniqueValues: true }))).toBeNull()
+    // The named multichoice type cannot reach this shape anyway: uniqueChoices
+    // is rejected outright at creation.
   })
 
   it('rejects any protocol with fewer distinct values than fields (pigeonhole)', () => {
@@ -89,7 +87,7 @@ describe('unsatisfiableQuestionReason', () => {
     const broken = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: true })
     expect(
       unsatisfiableQuestionReason({ ballotProtocol: broken, type: 'multichoice', choices: choices(3) })
-    ).toMatch(/dense 0\/1 ballot/)
+    ).toMatch(/only 2 distinct value\(s\) for 3 ballot fields/)
   })
 
   it('detects the broken derivation from type + typeSetup alone', () => {
@@ -101,7 +99,7 @@ describe('unsatisfiableQuestionReason', () => {
         typeSetup: { minChoices: 0, maxChoices: 4, uniqueChoices: true },
         choices: choices(4),
       })
-    ).toMatch(/dense 0\/1 ballot/)
+    ).toMatch(/only 2 distinct value\(s\) for 4 ballot fields/)
     expect(
       isUnsatisfiableQuestion({
         type: 'multichoice',

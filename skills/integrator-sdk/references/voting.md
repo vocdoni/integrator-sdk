@@ -135,8 +135,8 @@ means this binary format.
 > zeros. Uniqueness is already implicit here — each choice is its own field, so
 > a voter *cannot* pick the same option twice.
 >
-> `client.elections.create/update` forces `typeSetup.uniqueChoices` to `false`
-> for `type: 'multichoice'` and throws on an explicitly unsatisfiable
+> `client.elections.create/update` rejects `typeSetup.uniqueChoices` on
+> `type: 'multichoice'` (as the API itself does) and throws on an unsatisfiable
 > `ballotProtocol`; `encodeQuestionBallot` refuses to encode a ballot for such a
 > question rather than casting a vote that will never count. To check a question
 > you did not create:
