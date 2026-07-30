@@ -1,6 +1,6 @@
 ---
-'@vocdoni/api-client': minor
-'@vocdoni/ballot': minor
+'@vocdoni/api-client': patch
+'@vocdoni/ballot': patch
 '@vocdoni/api-types': patch
 ---
 
