@@ -19,7 +19,8 @@ creates all of its own data — org, members, group, census, processes, votes �
 so there are no dev-DB fixtures to rot. It runs in CI
 (`.github/workflows/integration.yml`) against a disposable saas-api + vochain
 container on every pull request, on pushes to `main`, and on a nightly
-schedule. The whole job takes ~3.5 minutes.
+schedule. The whole job takes ~7 minutes (~5.7 min of it the suite itself:
+9 on-chain elections and 36 votes, each a CSP sign + relay + job poll).
 
 To run the same stack locally:
 
@@ -94,4 +95,6 @@ asserted here rather than only the two named question types.
 The key's organization must be an **integrator** with scopes `managed:write` +
 `members:write` + `voting:write`, and quota for ≥4 processes / ≥9 on-chain
 elections / ≥300 census size. The suite creates real on-chain elections and
-casts 36 real votes, so expect it to take several minutes.
+casts 36 real votes, so expect it to take ~6 minutes. (The disposable stack
+above provisions all of that for you — this only applies when pointing
+`INTEGRATION_API_URL` at a shared environment.)

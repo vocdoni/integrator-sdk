@@ -562,6 +562,8 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
     },
     // 4 processes / 9 on-chain elections / 36 votes, each vote a CSP sign + relay
     // + job poll, plus publish jobs and the indexer lag before the tally settles.
-    1800000,
+    // Kept under the CI job's timeout-minutes (25) so a hang surfaces as a test
+    // failure with the suite's own diagnostics, not as a killed runner.
+    1200000,
   )
 })
