@@ -33,15 +33,22 @@ describe('unsatisfiableProtocolReason', () => {
       bp({ maxCount: 4, maxValue: 1, maxTotalCost: 4, uniqueValues: true })
     )
     expect(reason).toMatch(/dense 0\/1 ballot/)
+    // Above two fields nothing survives at all — the reason must say so.
+    expect(reason).toMatch(/even a single pick/)
+    expect(reason).toMatch(/all-zero result/)
     expect(isUnsatisfiableProtocol(bp({ maxCount: 4, maxValue: 1, uniqueValues: true }))).toBe(true)
   })
 
-  it('rejects the dense layout at its smallest multi-field size', () => {
+  it('rejects the dense layout at its smallest multi-field size, for the right reason', () => {
     // maxCount 2 admits [0,1] / [1,0] only — a voter can neither pick both nor
-    // neither, which maxTotalCost 2 says they may.
-    expect(unsatisfiableProtocolReason(bp({ maxCount: 2, maxValue: 1, uniqueValues: true }))).toMatch(
-      /dense 0\/1 ballot/
-    )
+    // neither, which maxTotalCost 2 says they may. That is a DIFFERENT failure
+    // from the >2 case: here some ballots do tally, so the message must not
+    // claim every ballot repeats a value or that the result is all zero.
+    const reason = unsatisfiableProtocolReason(bp({ maxCount: 2, maxValue: 1, uniqueValues: true }))
+    expect(reason).toMatch(/dense 0\/1 ballot/)
+    expect(reason).toMatch(/neither pick both choices nor abstain/)
+    expect(reason).not.toMatch(/even a single pick/)
+    expect(reason).not.toMatch(/all-zero result/)
   })
 
   it('rejects any protocol with fewer distinct values than fields (pigeonhole)', () => {

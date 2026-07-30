@@ -382,7 +382,7 @@ describe('encodeQuestionBallot', () => {
           },
           [1]
         )
-      ).toThrow(/discards it at tally/)
+      ).toThrow(/even a single pick/)
     })
 
     it('throws for an explicit dense ballotProtocol with uniqueValues', () => {

@@ -343,6 +343,19 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         // it is live, so they may be absent the moment publish returns — poll
         // the process read until every secret question carries them.
         if (d.secret) {
+          // Assert the round-trip BEFORE anything that keys off the flag. Every
+          // secrecy check here — and the `question.secretUntilTheEnd ? keys :
+          // undefined` that seals the ballot at vote time — reads the
+          // BACKEND-reported flag. If the read ever stopped echoing it,
+          // `missingKeys()` would be false over an empty filter, the poll would
+          // exit at once, the expectation below would pass vacuously, keyCount
+          // would be 0, and 4 votes would be cast in CLEARTEXT on an election
+          // that asked to be secret — with nothing in the suite failing.
+          expect(
+            info.questions.filter((q) => q.secretUntilTheEnd).length,
+            `${d.label} process read does not report secretUntilTheEnd — ballots would be cast in cleartext`,
+          ).toBeGreaterThan(0)
+
           const missingKeys = () =>
             info.questions.some((q) => q.secretUntilTheEnd && !q.encryptionKeys?.length)
           const deadline = Date.now() + 120000
@@ -351,9 +364,17 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             info = await admin.elections.get(draftId)
           }
           expect(missingKeys(), `secret process has no encryption keys (${d.label})`).toBe(false)
-          const keyCount = info.questions
-            .filter((q) => q.secretUntilTheEnd)
-            .reduce((n, q) => n + (q.encryptionKeys?.length ?? 0), 0)
+          const secretQuestions = info.questions.filter((q) => q.secretUntilTheEnd)
+          // Shape, not just presence: a key that is not a hex string with an
+          // integer index cannot seal a ballot, and `length > 0` would not notice.
+          for (const q of secretQuestions) {
+            for (const k of q.encryptionKeys ?? []) {
+              expect(Number.isInteger(k.index), `${d.label} key index is not an integer`).toBe(true)
+              expect(k.key, `${d.label} key is not hex`).toMatch(/^[0-9a-f]+$/i)
+            }
+          }
+          const keyCount = secretQuestions.reduce((n, q) => n + (q.encryptionKeys?.length ?? 0), 0)
+          expect(keyCount, `${d.label} resolved no encryption keys`).toBeGreaterThan(0)
           step(`5. encryption keys ready — ${keyCount} key(s) for ${d.label}`)
         }
 

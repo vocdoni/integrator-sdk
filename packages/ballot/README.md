@@ -140,9 +140,11 @@ the whole ballot is rejected during aggregation. The vote still counts towards
 Some configs can therefore never be tallied:
 
 - **Dense `0/1` layout + `uniqueValues`** (`maxValue === 1`, `maxCount > 1`) — one field
-  per choice means only the values `0` and `1` exist, so any ballot over more than two
-  fields repeats one. Even a single pick (`[1, 0, 0, 0]`) repeats `0`. This is what the
-  backend derives for a `multichoice` question created with
+  per choice means only the values `0` and `1` exist. Above two choices no ballot
+  survives: even a single pick (`[1, 0, 0, 0]`) repeats `0`, so the tally is all zero.
+  At exactly two choices only `[0, 1]` and `[1, 0]` pass, so the voter can neither pick
+  both nor abstain and those ballots are dropped even though `maxTotalCost` allows them.
+  This is what the backend derives for a `multichoice` question created with
   `typeSetup.uniqueChoices: true`.
 - **Pigeonhole** (`uniqueValues`, `0 < maxValue + 1 < maxCount`) — fewer distinct legal
   values than fields to fill.

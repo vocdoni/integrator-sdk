@@ -19,8 +19,11 @@ export type ProtocolBounds = Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uni
  *
  * - **Dense 0/1 layout + `uniqueValues`** (`maxValue === 1`, `maxCount > 1`): the
  *   layout is one field per choice, so the only field values that exist are 0 and 1.
- *   Any ballot covering more than two fields repeats one of them — even a single pick
- *   (`[1, 0, 0, 0]`) repeats `0`. Unsatisfiable for *any* number of picks.
+ *   Above two choices no ballot survives at all — even a single pick
+ *   (`[1, 0, 0, 0]`) repeats `0`. At exactly two choices the check is satisfiable
+ *   but destructive: only `[0, 1]` and `[1, 0]` pass, so the voter can neither pick
+ *   both nor abstain, and any ballot that does is dropped while `maxTotalCost`
+ *   advertises those picks as allowed. Rejected in both cases.
  * - **Pigeonhole** (`uniqueValues`, `0 < maxValue + 1 < maxCount`): fewer distinct
  *   legal values than fields to fill.
  *
@@ -33,12 +36,21 @@ export function unsatisfiableProtocolReason(bp: ProtocolBounds): string | null {
   if (bp.maxValue === 0) return null
 
   if (isDenseBallotProtocol(bp)) {
+    // The consequence genuinely differs at the boundary, so say which one applies
+    // rather than giving a creator a reason that is false for their question.
+    const why =
+      bp.maxCount > 2
+        ? `no ballot over ${bp.maxCount} fields can avoid repeating one of them — even a single ` +
+          'pick ([1, 0, 0, …]) repeats 0 — and the scrutinizer discards every vote, leaving an ' +
+          'all-zero result'
+        : 'with exactly two fields only [0, 1] and [1, 0] pass the uniqueness check: a voter can ' +
+          'neither pick both choices nor abstain, and those ballots are discarded at tally even ' +
+          'though maxTotalCost advertises them as allowed'
     return (
       `uniqueValues is true on a dense 0/1 ballot (maxValue 1, maxCount ${bp.maxCount}): ` +
-      'each choice is its own 0/1 field, so any ballot over more than two fields repeats a ' +
-      'value and the scrutinizer discards it at tally — the election would count votes and ' +
-      'report an all-zero result. Uniqueness is already implicit in this layout: create the ' +
-      'question with uniqueValues/typeSetup.uniqueChoices false'
+      `each choice is its own 0/1 field, so ${why}. Uniqueness is already implicit in this ` +
+      'layout — a voter cannot select the same choice twice — so create the question with ' +
+      'uniqueValues/typeSetup.uniqueChoices false'
     )
   }
 
