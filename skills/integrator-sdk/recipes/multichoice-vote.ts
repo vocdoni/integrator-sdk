@@ -35,6 +35,9 @@
  *   question.ballotProtocol.uniqueValues = true
  *   selections = rank value per option in choice order, e.g. [2, 0, 3, 1]
  *   (must be a permutation of 0..numOptions-1 — no repeated ranks)
+ *   HIGHER WINS: top pick gets numOptions-1, last pick gets 0. The only shipped
+ *   aggregation is index-weighted, so ranking with 0 as "best" inverts the winner.
+ *   ⚠️ decodeQuestionResults cannot read a ranking back — integrator-sdk#22.
  *
  * ─── Format D: Legacy pick-slot multichoice (raw ballotProtocol only) ──────
  *   question.ballotProtocol.maxCount = maximum number of picks allowed
@@ -94,7 +97,8 @@ const SELECTIONS_BY_QUESTION: Record<string, number[]> = {
   // Format B — multichoice / approval: pick options 0, 2 and 4
   // '<questionId>': [0, 2, 4],
 
-  // Format C — ranked: 4 options ranked 3rd, 1st, 4th, 2nd (0-indexed ranks 2,0,3,1)
+  // Format C — ranked, 4 options, voter's order C2 > C0 > C3 > C1.
+  // Scores in choice order, highest wins: C0=2, C1=0, C2=3, C3=1
   // '<questionId>': [2, 0, 3, 1],
 
   // Format D — legacy pick-slot multichoice: pick options 1 and 3

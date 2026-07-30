@@ -158,15 +158,39 @@ Each option is ranked; values must not repeat. This is the one layout where
 distinct values (`maxValue >= maxCount - 1`), or no ballot can fill the fields
 without repeating one.
 
+The array is one **rank per option, in choice order** — the field index is the
+option, the value is its score. **Higher wins**: give your top pick
+`numOptions - 1` and your last pick `0`. That orientation matters, because the
+only shipped aggregation (see below) is index-weighted, so ranking with `0` as
+"best" silently inverts the winner.
+
 ```ts
-// 3 candidates; ranked 1st, 3rd, 2nd (0-indexed)
-choices: [0, 2, 1]
+// 3 candidates, voter ranks C2 > C0 > C1.
+// C0 -> 1 (middle), C1 -> 0 (last), C2 -> 2 (top)
+choices: [1, 0, 2]
 ```
 
-> Ranked ballots **encode** correctly through `encodeQuestionBallot`, but
-> `decodeQuestionResults` has no ranked branch — it reports how many voters
-> ranked each option, not the resulting order. Aggregate the raw matrix yourself
-> for Borda/positional scoring.
+> ⚠️ **Ranked is only half-supported** — see
+> [integrator-sdk#22](https://github.com/vocdoni/integrator-sdk/issues/22).
+> `encodeQuestionBallot` passes the array through correctly and the chain
+> tallies it, but `decodeQuestionResults` has **no ranked branch**: it labels the
+> question `multichoice` and reports how many voters ranked each option (the same
+> number for every option), plus a meaningless `abstain` bucket. The ranking is
+> not recoverable through the SDK.
+>
+> The protocol alone cannot distinguish ranked from a pick-slot multichoice that
+> fills every slot — they are byte-identical — which is why this needs an
+> explicit signal rather than better inference.
+>
+> Until then, aggregate the raw matrix yourself. Borda, matching
+> `saas-integrator-demo`:
+>
+> ```ts
+> const scores = results.map((field) => field.reduce((sum, count, rank) => sum + Number(count) * rank, 0))
+> ```
+>
+> Note `react-components` will render such a question as a checkbox group
+> requiring exactly `numOptions` picks, not a rank widget.
 
 ### Budget / quadratic (per-option amounts)
 

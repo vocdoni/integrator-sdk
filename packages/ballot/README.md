@@ -123,12 +123,19 @@ scrutinizer to *discrete aggregation*: it accumulates `Σ amount × weight` into
 "The results are aggregated, so we use only the first column of the results matrix").
 Reading such a row as a histogram yields zero for every option.
 
-> **Ranked ballots are encodable but not decodable as a ranking.** A ranked protocol
-> (`uniqueValues: true`, `maxValue >= maxCount - 1`) encodes correctly — pass one rank
-> per option in choice order — but there is no ranked branch in the decoder: it is
-> labelled `multichoice`, so `decodeResults` reports *how many voters ranked each
-> option* (plus an always-zero `abstain` bucket), not the resulting order. Aggregate
-> the raw matrix yourself if you need Borda/positional scoring.
+> **Ranked ballots are encodable but not decodable as a ranking** —
+> [integrator-sdk#22](https://github.com/vocdoni/integrator-sdk/issues/22). A ranked
+> protocol (`uniqueValues: true`, `maxValue >= maxCount - 1`) encodes correctly — pass
+> one score per option in choice order, **higher wins** — but there is no ranked branch
+> in the decoder: it is labelled `multichoice`, so `decodeResults` reports *how many
+> voters ranked each option* (plus an always-zero `abstain` bucket), not the resulting
+> order.
+>
+> The protocol cannot be told apart from a pick-slot multichoice that fills every slot —
+> the two are byte-identical, with field index meaning *option* in one and *slot* in the
+> other — so this needs an explicit signal, not better inference. Until then, aggregate
+> the raw matrix yourself:
+> `results.map((f) => f.reduce((s, c, rank) => s + Number(c) * rank, 0))`.
 
 ## Unsatisfiable ballot configs
 
