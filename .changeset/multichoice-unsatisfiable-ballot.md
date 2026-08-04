@@ -49,19 +49,3 @@ ballot was rejected during aggregation while the vote still counted towards
 Already-published elections with this config cannot be repaired — their votes are on
 chain but were never aggregated. The derivation bug itself is upstream
 (vocdoni/saas-backend#619), so processes created outside this SDK are still affected.
-
----
-
-Also fixes budget / quadratic results decoding to the same symptom, found while
-extending the integration suite to cover every supported ballot type.
-
-`maxValue === 0` does not just mark budget/quadratic — it switches the scrutinizer to
-*discrete aggregation*: it accumulates `Σ amount × weight` into column 0 of each
-option's row and leaves the row one cell wide, rather than building a histogram.
-`decodeResults` / `decodeQuestionResults` index-weighted that row (`Σ value × count`),
-which reads the sole column at index 0 and therefore returned **0 for every option** on
-every budget and quadratic election. They now read the aggregated cell.
-
-Verified live: a 4-option budget question where 3 voters each allocated `[4, 0, 6, 0]`
-returns `[["12"],["0"],["18"],["0"]]` on chain and now decodes to `[12, 0, 18, 0]`
-instead of `[0, 0, 0, 0]`.
