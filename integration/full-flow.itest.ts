@@ -70,17 +70,26 @@ interface ProcessSpec {
    */
   tally: number[]
   /**
-   * Per-question override of `choices`/`tally`, positionally aligned with
-   * `questions`. Used by the ballot-protocol matrix process, whose questions each
+   * Per-question override of `choices`/`tally`, keyed by the question's (unique)
+   * title. Used by the ballot-protocol matrix process, whose questions each
    * exercise a different ballot type and therefore need their own selections.
    */
-  perQuestion?: Array<{ choices: number[]; tally: number[] }>
+  perQuestion?: Array<{ title: string; choices: number[]; tally: number[] }>
 }
 
 /** The selections + expected tally for one question of a process. */
 const specFor = (p: ProcessSpec, questionId: string) => {
-  const index = p.questions.findIndex((q) => q.id === questionId)
-  return p.perQuestion?.[index] ?? { choices: p.choices, tally: p.tally }
+  if (!p.perQuestion) return { choices: p.choices, tally: p.tally }
+  // Keyed by title, not read-back position: the API is not contractually bound to
+  // echo questions in creation order, and the matrix's two approval entries carry
+  // identical specs, so a positional swap between them would pass silently. A miss
+  // throws instead of falling back — a fallback here would vote an empty ballot.
+  const question = p.questions.find((q) => q.id === questionId)
+  const spec = p.perQuestion.find((entry) => entry.title === question?.title?.default)
+  if (!spec) {
+    throw new Error(`no perQuestion spec titled "${question?.title?.default}" (question ${questionId})`)
+  }
+  return spec
 }
 
 suite('full election lifecycle (live — creates an org, processes and votes)', () => {
@@ -250,17 +259,24 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           secret: false,
           choices: [],
           tally: [],
+          // Entries are matched to questions by title (see specFor) — the two
+          // approval specs are identical, so a positional pairing could swap
+          // them silently if the read-back order ever changed.
           perQuestion: [
             // approval — dense 0/1 vector, uncapped.
-            { choices: [0, 2], tally: [VOTERS.length, 0, VOTERS.length, 0] },
+            { title: 'Approval', choices: [0, 2], tally: [VOTERS.length, 0, VOTERS.length, 0] },
             // approval capped by maxTotalCost (2 picks costs exactly 2).
-            { choices: [0, 2], tally: [VOTERS.length, 0, VOTERS.length, 0] },
+            { title: 'Approval (max 2)', choices: [0, 2], tally: [VOTERS.length, 0, VOTERS.length, 0] },
             // legacy pick-slot multichoice: 3 slots, 2 picks, one abstain
             // sentinel padded in. uniqueValues is TRUE here and satisfiable
             // (maxValue 6 >= maxCount 3) — this is the case the guard must NOT
             // reject, and the ballot [0, 2, 4] does carry three distinct values.
             // Decoding appends the unified abstain bucket, hence the 5th entry.
-            { choices: [0, 2], tally: [VOTERS.length, 0, VOTERS.length, 0, VOTERS.length] },
+            {
+              title: 'Multichoice pick-slot',
+              choices: [0, 2],
+              tally: [VOTERS.length, 0, VOTERS.length, 0, VOTERS.length],
+            },
             // ranked: one score per option, no repeats, highest wins — voter's
             // order is C2 > C0 > C3 > C1.
             //
@@ -273,14 +289,16 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             // ranking assertion when #22 lands; locked in meanwhile so the
             // behaviour cannot change silently.
             {
+              title: 'Ranked',
               choices: [2, 0, 3, 1],
               tally: [VOTERS.length, VOTERS.length, VOTERS.length, VOTERS.length, 0],
             },
             // budget: per-option amounts, maxValue 0 → the chain aggregates
             // Σ amount × weight into one cell per option.
-            { choices: [4, 0, 6, 0], tally: [4 * VOTERS.length, 0, 6 * VOTERS.length, 0] },
+            { title: 'Budget', choices: [4, 0, 6, 0], tally: [4 * VOTERS.length, 0, 6 * VOTERS.length, 0] },
             // quadratic: same aggregation, cost is Σ amount² (12 <= 16).
             {
+              title: 'Quadratic',
               choices: [2, 0, 2, 2],
               tally: [2 * VOTERS.length, 0, 2 * VOTERS.length, 2 * VOTERS.length],
             },
@@ -411,10 +429,13 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           // what we sent, so a backend that started echoing or inventing the flag
           // would fail here instead of silently zeroing the tally below.
           if (pub.type === 'multichoice') {
+            // .not.toBe(true), not .toBe(false): a read that legitimately omits
+            // typeSetup would fail a `false` equality with a message blaming the
+            // flag — only an explicit `true` is the broken config.
             expect(
               pub.typeSetup?.uniqueChoices,
               `${d.label} multichoice reports uniqueChoices — its votes will not be tallied`,
-            ).toBe(false)
+            ).not.toBe(true)
           }
           if (q.secretUntilTheEnd) {
             expect(
@@ -542,16 +563,24 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       // for cleartext questions — a secret question's matrix stays hidden until
       // the encryption keys are revealed at the end.
       const VOTES_PER_QUESTION = VOTERS.length
-      for (const p of processes) {
-        let results = await voterClient.elections.getResults(p.draftId)
+      // All three public tally surfaces ride the same indexer but are separate
+      // endpoints — give each one the same convergence window rather than
+      // asserting a one-shot read, so plain indexer lag cannot masquerade as a
+      // cross-surface divergence failure.
+      const pollUntil = async <T>(read: () => Promise<T>, settled: (value: T) => boolean): Promise<T> => {
+        let value = await read()
         const deadline = Date.now() + 120000
-        while (
-          results.questions.some((q) => (q.voteCount ?? 0) < VOTES_PER_QUESTION) &&
-          Date.now() < deadline
-        ) {
+        while (!settled(value) && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 3000))
-          results = await voterClient.elections.getResults(p.draftId)
+          value = await read()
         }
+        return value
+      }
+      for (const p of processes) {
+        const results = await pollUntil(
+          () => voterClient.elections.getResults(p.draftId),
+          (r) => r.questions.every((q) => (q.voteCount ?? 0) >= VOTES_PER_QUESTION),
+        )
         expect(results.questions.length).toBe(p.questions.length)
         for (const q of results.questions) {
           expect(q.voteCount, `${p.label} live voteCount lagging`).toBe(VOTES_PER_QUESTION)
@@ -579,7 +608,10 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         // three DECODE to the same numbers, not just that they carry a
         // voteCount — a voter app reading whichever one diverged would render a
         // wrong tally with nothing failing anywhere.
-        const single = await voterClient.elections.get(p.draftId)
+        const single = await pollUntil(
+          () => voterClient.elections.get(p.draftId),
+          (s) => s.questions.every((q) => (q.results?.voteCount ?? 0) >= VOTES_PER_QUESTION),
+        )
         for (const q of single.questions) {
           expect(q.results?.voteCount, `${p.label} single read misses live results`).toBe(
             VOTES_PER_QUESTION,
@@ -592,7 +624,10 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             `${p.label} / "${q.title?.default}" process-read tally differs from /results`,
           ).toEqual(expected)
 
-          const pubQ = await voterClient.processes.getQuestion(p.draftId, q.id)
+          const pubQ = await pollUntil(
+            () => voterClient.processes.getQuestion(p.draftId, q.id),
+            (pq) => (pq.results?.voteCount ?? 0) >= VOTES_PER_QUESTION,
+          )
           expect(
             pubQ.results?.voteCount,
             `${p.label} question read misses live results`,
