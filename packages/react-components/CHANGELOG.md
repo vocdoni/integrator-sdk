@@ -1,5 +1,76 @@
 # @vocdoni/react-components
 
+## 2.1.1
+
+### Patch Changes
+
+- e7a7dae: Stop creating multichoice elections whose votes are silently discarded at tally.
+
+  The backend derives the **dense** layout for `type: 'multichoice'` (one 0/1 field per
+  choice, `maxTotalCost = typeSetup.maxChoices`) while also mapping
+  `typeSetup.uniqueChoices` onto the on-chain `voteMode.uniqueValues`. The scrutinizer
+  applies `uniqueValues` to the raw field values, so a 0/1 vector over more than two
+  choices always repeats one — even a single pick, `[1, 0, 0, 0]`, repeats `0`. Every
+  ballot was rejected during aggregation while the vote still counted towards
+  `voteCount`, producing elections that reported an all-zero tally with
+  `finalResults: true`.
+
+  - `@vocdoni/api-client`: `elections.create` / `elections.update` now reject
+    `typeSetup.uniqueChoices` on `multichoice` questions, and reject a raw
+    `ballotProtocol` that is unsatisfiable, instead of publishing an election that cannot
+    be tallied. Both checks mirror what the API itself enforces, so this fails fast and
+    locally without masking the server's answer — a ranked ballot is expressed as a raw
+    `ballotProtocol` instead. Adds `@vocdoni/ballot` as a dependency.
+  - `@vocdoni/ballot`: new `unsatisfiableProtocolReason`, `unsatisfiableQuestionReason`,
+    `isUnsatisfiableProtocol`, `isUnsatisfiableQuestion`, `voteTypeBounds`,
+    `assertEncodedBallot` and the `ProtocolBounds` type, plus `isDenseBallotProtocol` is
+    now exported. `encodeBallot`, `encodeQuestionBallot` and `validateSelections` throw
+    on an unsatisfiable config rather than encoding a ballot that will never count.
+    `unsatisfiableQuestionReason` works off `type` + `typeSetup` too, so a UI can flag an
+    already-created broken question from a public read (which omits the derived protocol).
+
+    The guard covers the _product_ as well as the config: both encoders now run
+    `assertEncodedBallot` on every ballot they build and throw when a field exceeds
+    `maxValue` or repeats a value the protocol requires unique (duplicate ranks on a
+    ranked ballot, both picks of a two-field dense unique layout, an out-of-range
+    single-choice value) — a satisfiable config still admits ballots the chain accepts,
+    counts in `voteCount`, and silently drops during aggregation, and a vote must either
+    count or fail loudly. `validateSelections` mirrors the same rules on raw selections
+    (duplicate unique picks, repeated amounts on a legacy unique budget shape), and
+    `unsatisfiableProtocolReason` returns `null` on malformed bounds instead of a
+    NaN-laden reason.
+
+  - `@vocdoni/api-types`: documents the constraint on `BallotProtocol.uniqueValues` and
+    `QuestionTypeSetup.uniqueChoices`.
+  - `@vocdoni/react-components`: the vote form catches these encode-time rejections and
+    marks the offending question invalid instead of letting them escape `handleSubmit`
+    as an unhandled promise rejection on an already-broken election.
+
+  Already-published elections with this config cannot be repaired — their votes are on
+  chain but were never aggregated. The derivation bug itself is upstream
+  (vocdoni/saas-backend#619), so processes created outside this SDK are still affected.
+
+- 242f6f0: Promote `@vocdoni/ballot` and `@vocdoni/api-voting` to 1.0.0.
+
+  No API changes in either package — this is a versioning fix.
+
+  While they sat on `0.x`, every additive change forced a **major** on the React
+  packages. `^0.1.2` means `>=0.1.2 <0.2.0`, so a minor (`0.1.2` → `0.2.0`) is
+  _out of range_ for a caret dependent and gets majored. That defeats the
+  `onlyUpdatePeerDependentsWhenOutOfRange` fix, which only helps when the bump is
+  genuinely in range — and for a `0.x` package a minor never is. The practical
+  effect was that adding an export to `@vocdoni/ballot` had to ship as a `patch`
+  just to avoid gratuitously majoring `@vocdoni/react-components`.
+
+  At `1.x`, `^1.0.0` covers every later minor, so additive changes cascade as
+  patches and can be declared honestly.
+
+  The React packages take only a **patch**: their peer ranges on these two
+  packages widen from `workspace:^` to `workspace:>=0.1.2 <2`, which spans both
+  the old and new majors. That is accurate rather than a workaround — 1.0.0
+  changes no API, so `react-components` really does work with both. Consumers on
+  `@vocdoni/react-components@^2` keep working with no range change.
+
 ## 2.1.0
 
 ### Minor Changes
