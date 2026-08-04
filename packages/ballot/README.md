@@ -58,6 +58,23 @@ export function unsatisfiableQuestionReason(question: {
 }): string | null
 export function isUnsatisfiableProtocol(bp: ProtocolBounds): boolean
 export function isUnsatisfiableQuestion(question: { /* as above */ }): boolean
+
+// The part of a ballot protocol the satisfiability rule reads.
+export type ProtocolBounds = Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uniqueValues'>
+
+// Read the satisfiability bounds off an election-level voteType.
+export function voteTypeBounds(
+  voteType: Pick<VoteType, 'maxCount' | 'maxValue' | 'uniqueChoices'>
+): ProtocolBounds
+
+// True for the dense 0/1 wire layout (one field per choice) — what the backend
+// derives for the named multichoice type.
+export function isDenseBallotProtocol(bp: Pick<BallotProtocol, 'maxCount' | 'maxValue'>): boolean
+
+// Assert an encoded wire ballot would survive the scrutinizer's per-field checks
+// (range + uniqueness). The encoders run it on everything they produce; call it
+// directly on a ballot built by hand. See "Unsatisfiable ballot configs" below.
+export function assertEncodedBallot(ballot: number[], bounds: ProtocolBounds): void
 ```
 
 ## Usage
@@ -146,22 +163,33 @@ the whole ballot is rejected during aggregation. The vote still counts towards
 
 Some configs can therefore never be tallied:
 
-- **Dense `0/1` layout + `uniqueValues`** (`maxValue === 1`, `maxCount > 1`) — one field
+- **Dense `0/1` layout + `uniqueValues`** (`maxValue === 1`, `maxCount > 2`) — one field
   per choice means only the values `0` and `1` exist. Above two choices no ballot
   survives: even a single pick (`[1, 0, 0, 0]`) repeats `0`, so the tally is all zero.
-  At exactly two choices only `[0, 1]` and `[1, 0]` pass, so the voter can neither pick
-  both nor abstain and those ballots are dropped even though `maxTotalCost` allows them.
   This is what the backend derives for a `multichoice` question created with
-  `typeSetup.uniqueChoices: true`.
+  `typeSetup.uniqueChoices: true`. At **exactly two** choices the config is *not*
+  unsatisfiable — `[0, 1]` and `[1, 0]` pass, which is a two-option ranked ballot, so
+  `unsatisfiableProtocolReason` deliberately returns `null` there (matching the
+  backend). Individual ballots that repeat a value (picking both, or abstaining as
+  `[0, 0]`) are refused at **encode** time instead — see below.
 - **Pigeonhole** (`uniqueValues`, `0 < maxValue + 1 < maxCount`) — fewer distinct legal
   values than fields to fill.
 
-`encodeBallot` / `encodeQuestionBallot` / `validateSelections` **throw** on such a config
-rather than producing a ballot that will be discarded, and
-`unsatisfiableProtocolReason` / `unsatisfiableQuestionReason` expose the check so a UI can
-detect an already-created broken question instead of rendering an empty result chart.
-`unsatisfiableQuestionReason` also works on a public question read, which omits the
-derived `ballotProtocol` — the contradiction is still visible in `type` + `typeSetup`.
+The scrutinizer's field checks also drop **individual ballots** whose config is fine:
+a value above `maxValue`, or a repeated value under `uniqueValues` (duplicate ranks on
+a ranked ballot, both picks of a two-field unique layout). Nothing downstream reports
+those either — the envelope is accepted, `voteCount` rises, the ballot never counts.
+
+So the guard runs at both levels: `encodeBallot` / `encodeQuestionBallot` /
+`validateSelections` **throw** on an unsatisfiable *config* rather than producing a
+ballot that will be discarded, and the encoders additionally run
+`assertEncodedBallot` on every ballot they *produce*, refusing one the chain would
+silently drop — a vote must either count or fail loudly, never mutate into silence.
+`unsatisfiableProtocolReason` / `unsatisfiableQuestionReason` expose the config check
+so a UI can detect an already-created broken question instead of rendering an empty
+result chart. `unsatisfiableQuestionReason` also works on a public question read,
+which omits the derived `ballotProtocol` — the contradiction is still visible in
+`type` + `typeSetup`.
 
 ## Installation
 

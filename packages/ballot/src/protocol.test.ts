@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  assertEncodedBallot,
   isUnsatisfiableProtocol,
   isUnsatisfiableQuestion,
   unsatisfiableProtocolReason,
@@ -71,6 +72,62 @@ describe('unsatisfiableProtocolReason', () => {
 
   it('accepts a single-field ballot', () => {
     expect(unsatisfiableProtocolReason(bp({ maxCount: 1, maxValue: 1, uniqueValues: true }))).toBeNull()
+  })
+
+  it('gives no verdict on malformed bounds instead of a NaN-laden reason', () => {
+    // Reachable only from untyped JS / hand-built objects; the earlier behavior
+    // fell through to "maxValue undefined allows only NaN distinct value(s)".
+    expect(
+      unsatisfiableProtocolReason({ maxCount: 4, maxValue: undefined, uniqueValues: true } as never)
+    ).toBeNull()
+    expect(unsatisfiableProtocolReason(bp({ maxCount: 4, maxValue: -1, uniqueValues: true }))).toBeNull()
+    expect(unsatisfiableProtocolReason(bp({ maxCount: 4.5, maxValue: 1, uniqueValues: true }))).toBeNull()
+    expect(
+      unsatisfiableProtocolReason({ maxValue: 1, uniqueValues: true } as never)
+    ).toBeNull()
+  })
+})
+
+describe('assertEncodedBallot', () => {
+  const bounds = (overrides: Partial<{ maxCount: number; maxValue: number; uniqueValues: boolean }> = {}) => ({
+    maxCount: 4,
+    maxValue: 3,
+    uniqueValues: false,
+    ...overrides,
+  })
+
+  it('passes a ballot within bounds', () => {
+    expect(() => assertEncodedBallot([0, 3, 1, 2], bounds())).not.toThrow()
+  })
+
+  it('rejects a value above maxValue — the chain would drop the whole ballot', () => {
+    expect(() => assertEncodedBallot([0, 4, 1, 2], bounds())).toThrow(/above maxValue 3/)
+  })
+
+  it('treats maxValue 0 as unbounded (budget/quadratic), not a zero cap', () => {
+    expect(() => assertEncodedBallot([12, 0, 400], bounds({ maxValue: 0 }))).not.toThrow()
+  })
+
+  it('rejects negative or fractional fields', () => {
+    expect(() => assertEncodedBallot([0, -1], bounds())).toThrow(/non-negative integers/)
+    expect(() => assertEncodedBallot([0, 1.5], bounds())).toThrow(/non-negative integers/)
+  })
+
+  it('rejects a repeated value under uniqueValues, naming both fields', () => {
+    expect(() => assertEncodedBallot([2, 0, 2, 1], bounds({ uniqueValues: true }))).toThrow(
+      /repeats value 2 \(fields 0 and 2\)/
+    )
+  })
+
+  it('still applies uniqueness when maxValue is 0', () => {
+    // The scrutinizer applies uniqueValues to raw field values regardless of the cap.
+    expect(() => assertEncodedBallot([5, 5], bounds({ maxValue: 0, uniqueValues: true }))).toThrow(
+      /repeats value 5/
+    )
+  })
+
+  it('allows repeats when uniqueValues is false', () => {
+    expect(() => assertEncodedBallot([1, 1, 0, 0], bounds())).not.toThrow()
   })
 })
 

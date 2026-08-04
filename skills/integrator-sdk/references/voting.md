@@ -138,8 +138,11 @@ means this binary format.
 > `client.elections.create/update` rejects `typeSetup.uniqueChoices` on
 > `type: 'multichoice'` (as the API itself does) and throws on an unsatisfiable
 > `ballotProtocol`; `encodeQuestionBallot` refuses to encode a ballot for such a
-> question rather than casting a vote that will never count. To check a question
-> you did not create:
+> question rather than casting a vote that will never count. The encoders also
+> check the ballot they *produce* (`assertEncodedBallot`): a field above
+> `maxValue` or a repeated value under `uniqueValues` throws instead of casting a
+> vote the chain accepts and never counts. To check a question you did not
+> create:
 >
 > ```ts
 > import { unsatisfiableQuestionReason } from '@vocdoni/ballot'
@@ -161,8 +164,10 @@ without repeating one.
 The array is one **rank per option, in choice order** — the field index is the
 option, the value is its score. **Higher wins**: give your top pick
 `numOptions - 1` and your last pick `0`. That orientation matters, because the
-only shipped aggregation (see below) is index-weighted, so ranking with `0` as
-"best" silently inverts the winner.
+SDK ships no ranked aggregation (see the caveat below) and the *manual* Borda
+snippet it recommends is index-weighted, so ranking with `0` as "best" silently
+inverts the winner. `encodeQuestionBallot` throws on a duplicate rank or a rank
+above `maxValue` — either would make the chain drop the whole ballot at tally.
 
 ```ts
 // 3 candidates, voter ranks C2 > C0 > C1.

@@ -57,7 +57,7 @@ export function validateSelections(
 
     case BallotType.Budget:
     case BallotType.Quadratic:
-      validateBudgetOrQuadratic(questions[0], perQuestion[0] ?? [])
+      validateBudgetOrQuadratic(voteType, questions[0], perQuestion[0] ?? [])
       break
 
     default:
@@ -119,12 +119,19 @@ function validateMultiChoice(voteType: VoteType, question: Question, selections:
     )
   }
 
+  const seen = new Set<number>()
   for (const value of selections) {
     if (!validValues.has(value)) {
       throw new Error(
         `Invalid choice value ${value} for multichoice ballot; must be one of [${Array.from(validValues).join(', ')}]`
       )
     }
+    // On a uniqueChoices ballot a repeated pick encodes to a repeated value, which the
+    // chain accepts and silently drops at tally — reject it here, where it is loud.
+    if (voteType.uniqueChoices && seen.has(value)) {
+      throw new Error(`Question 0: multichoice with uniqueChoices does not allow picking choice ${value} twice`)
+    }
+    seen.add(value)
   }
 }
 
@@ -134,9 +141,9 @@ function validateMultiChoice(voteType: VoteType, question: Question, selections:
  * These selections are per-option *amounts* (not choice indices): one non-negative
  * integer per option, in choice order. The total-cost bounds (maxTotalCost /
  * costExponent) are not part of the on-chain voteType surface here, so only the
- * per-option shape is validated.
+ * per-option shape and the per-field `maxValue` cap are validated.
  */
-function validateBudgetOrQuadratic(question: Question, selections: number[]): void {
+function validateBudgetOrQuadratic(voteType: VoteType, question: Question, selections: number[]): void {
   // Budget/quadratic require exactly one amount per option.
   if (selections.length !== question.choices.length) {
     throw new Error(
@@ -144,11 +151,21 @@ function validateBudgetOrQuadratic(question: Question, selections: number[]): vo
     )
   }
 
+  const seen = new Set<number>()
   for (const amount of selections) {
     if (!Number.isInteger(amount) || amount < 0) {
       throw new Error(
         `Invalid amount ${amount} for budget/quadratic ballot; amounts must be non-negative integers`
       )
     }
+    // The scrutinizer applies uniqueValues to raw field values whatever the
+    // aggregation mode, so a repeated amount on such an election (a legacy shape —
+    // the API no longer creates them) is a ballot it drops at tally.
+    if (voteType.uniqueChoices && seen.has(amount)) {
+      throw new Error(
+        `Invalid amount ${amount} for budget/quadratic ballot; this election requires every amount to be distinct`
+      )
+    }
+    seen.add(amount)
   }
 }

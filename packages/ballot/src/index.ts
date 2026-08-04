@@ -13,6 +13,7 @@ export type { ProtocolBounds } from './protocol.js'
 // Re-export functions
 export { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
 export {
+  assertEncodedBallot,
   isUnsatisfiableProtocol,
   isUnsatisfiableQuestion,
   unsatisfiableProtocolReason,

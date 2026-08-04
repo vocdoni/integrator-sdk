@@ -20,7 +20,17 @@ export type ProtocolBounds = Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uni
  * checks *unsatisfiability only, never plausibility*: a raw protocol is exactly how
  * the shapes with no named type are expressed, so anything a voter could actually
  * satisfy has to stay expressible. Diverging would mean rejecting protocols the API
- * accepts.
+ * accepts. Two scope notes on that mirror:
+ *
+ * - Neither side checks cost bounds, so a `uniqueValues` protocol whose *cheapest*
+ *   legal ballot exceeds a non-zero `maxTotalCost` (e.g. `maxCount: 4, maxValue: 3,
+ *   maxTotalCost: 3` — any permutation costs ≥ 0+1+2+3 = 6) passes here and at the
+ *   API, yet tallies to zero all the same. "Unsatisfiable" in this module means
+ *   *pigeonhole-unsatisfiable*, not "every possible way to never count".
+ * - The `maxValue === 0` carve-out below is client-only: the backend applies the
+ *   pigeonhole literally and rejects `uniqueValues` with `maxValue: 0` and
+ *   `maxCount > 1`. This function stays silent there and lets the API answer, so
+ *   the laxness fails slow (a 400 on create), never silent.
  *
  * The dense 0/1 multichoice layout (`maxValue === 1`) is the shape this exists for:
  * over more than two choices only 0 and 1 are available, so every ballot repeats a
@@ -33,6 +43,12 @@ export type ProtocolBounds = Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uni
  * always satisfiable there and is never reported.
  */
 export function unsatisfiableProtocolReason(bp: ProtocolBounds): string | null {
+  // Malformed bounds (missing, negative, fractional — reachable only from untyped JS
+  // or hand-built objects) get no verdict rather than a NaN-laden one: this function
+  // explains why a well-formed protocol can never be tallied; rejecting malformed
+  // input is the API's job, and it never reaches the chain.
+  if (!Number.isInteger(bp.maxCount) || bp.maxCount < 0) return null
+  if (!Number.isInteger(bp.maxValue) || bp.maxValue < 0) return null
   if (!bp.uniqueValues) return null
   // maxValue 0 is the budget/quadratic "unbounded value" marker, not a one-value range.
   if (bp.maxValue === 0) return null
@@ -59,6 +75,49 @@ export function isUnsatisfiableProtocol(bp: ProtocolBounds): boolean {
 /** Read the satisfiability bounds off an election-level {@link VoteType}. */
 export function voteTypeBounds(voteType: Pick<VoteType, 'maxCount' | 'maxValue' | 'uniqueChoices'>): ProtocolBounds {
   return { maxCount: voteType.maxCount, maxValue: voteType.maxValue, uniqueValues: voteType.uniqueChoices }
+}
+
+/**
+ * Assert an encoded wire ballot would survive the scrutinizer's per-field checks.
+ *
+ * {@link unsatisfiableProtocolReason} judges the *config*; this judges the *product*:
+ * every field a non-negative integer no greater than `maxValue` (when `maxValue > 0` —
+ * `0` is the budget/quadratic "unbounded" marker), and no repeated value under
+ * `uniqueValues`. A ballot violating either is not refused at cast time — the chain
+ * accepts the envelope, counts it in `voteCount`, and silently drops it during tally
+ * aggregation — so this is the last place the mistake can be loud. Encoders call it on
+ * everything they produce; call it directly on a ballot built by hand.
+ *
+ * @throws When a field is negative, fractional, above `maxValue`, or repeats a value
+ *   the protocol requires to be unique.
+ */
+export function assertEncodedBallot(ballot: number[], bounds: ProtocolBounds): void {
+  ballot.forEach((value, field) => {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(
+        `encoded ballot field ${field} is ${value}; ballot fields must be non-negative integers — ` +
+          'the chain would accept this vote and silently drop it at tally'
+      )
+    }
+    if (bounds.maxValue > 0 && value > bounds.maxValue) {
+      throw new Error(
+        `encoded ballot field ${field} is ${value}, above maxValue ${bounds.maxValue} — the chain ` +
+          'would accept this vote and silently drop it at tally'
+      )
+    }
+  })
+  if (!bounds.uniqueValues) return
+  const seen = new Map<number, number>()
+  ballot.forEach((value, field) => {
+    const first = seen.get(value)
+    if (first !== undefined) {
+      throw new Error(
+        `encoded ballot repeats value ${value} (fields ${first} and ${field}), but uniqueValues ` +
+          'requires every field distinct — the chain would accept this vote and silently drop it at tally'
+      )
+    }
+    seen.set(value, field)
+  })
 }
 
 /**
