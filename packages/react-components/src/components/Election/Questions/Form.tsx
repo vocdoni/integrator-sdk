@@ -54,10 +54,23 @@ const QuestionsFormProviderInner = ({ children }: PropsWithChildren<QuestionsFor
       return [parseInt(raw, 10)]
     })
 
-    // Encode each question's ballot using its own ballot protocol.
-    const encodedBallots = election.questions.map((q, i) =>
-      encodeQuestionBallot(q, selections[i] ?? [])
-    )
+    // Encode each question's ballot using its own ballot protocol. Encoding throws
+    // rather than produce a ballot the chain would accept and silently drop at tally
+    // (unsatisfiable config, out-of-range value, repeated unique pick) — mark the
+    // offending question invalid and abort, instead of letting the rejection escape
+    // handleSubmit as an unhandled promise on a vote that was never going to count.
+    const encodedBallots: number[][] = []
+    for (const [index, question] of election.questions.entries()) {
+      try {
+        encodedBallots.push(encodeQuestionBallot(question, selections[index] ?? []))
+      } catch (error) {
+        fmethods.setError(index.toString(), {
+          type: 'encode',
+          message: error instanceof Error ? error.message : String(error),
+        })
+        return false
+      }
+    }
 
     // Reserved `memo.{index}` form fields become per-question vote memos
     // (free-text notes, e.g. an open "Other" answer) — register one as
