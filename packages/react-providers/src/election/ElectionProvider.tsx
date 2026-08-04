@@ -13,6 +13,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -146,6 +147,29 @@ export type ElectionResultsQueryOptions = Omit<
   'queryKey' | 'queryFn' | 'enabled' | 'initialData'
 >
 
+/**
+ * Tuning for the vote relay's unknown-outcome reconciliation. When the relay
+ * response is lost (network error, proxy-authored 502/504) the backend may
+ * still have accepted and enqueued the batch, so the provider polls the
+ * voter's `check()` state before declaring failure. Mainly for tests.
+ */
+export interface VoteReconcileOptions {
+  /** How many `check()` polls before giving up. Default 8. */
+  attempts?: number
+  /** Delay between polls, in milliseconds. Default 2500. */
+  intervalMs?: number
+}
+
+export interface VoteOptions {
+  reconcile?: VoteReconcileOptions
+  /**
+   * How long to wait for the relay job before falling back to voter-state
+   * reconciliation, in milliseconds. Defaults to the api-client's job wait
+   * default (60s).
+   */
+  jobTimeoutMs?: number
+}
+
 export interface ElectionProviderBaseProps {
   children: ReactNode
   /** Election ID (the voting process Mongo ObjectID) — fetches the election on mount. */
@@ -167,6 +191,8 @@ export interface ElectionProviderBaseProps {
    * for live tallies.
    */
   resultsQueryOptions?: ElectionResultsQueryOptions
+  /** Vote relay tuning — see {@link VoteOptions}. */
+  voteOptions?: VoteOptions
 }
 
 /** At least one of `id` or `election` must be provided. */
@@ -212,6 +238,7 @@ export function ElectionProvider({
   election: prefetched,
   queryOptions,
   resultsQueryOptions,
+  voteOptions,
 }: ElectionProviderProps) {
   const { client } = useClient()
 
@@ -428,24 +455,6 @@ export function ElectionProvider({
         setVoteStatus((st) => ({ ...st, [question.id]: 'submitting' }))
       }
 
-      // Relay the whole batch in ONE call (saas-backend#610). The backend
-      // validates it synchronously and accepts or rejects it AS A UNIT, so a
-      // throw here means zero votes are on chain — a plain, fully-retryable
-      // error, never a partial vote.
-      let jobId: string
-      try {
-        ;({ jobId } = await client.elections.voteBatch({
-          votes: signed.map(({ txPayload }) => ({ txPayload })),
-        }))
-      } catch (err) {
-        setVoteStatus((st) => {
-          const next = { ...st }
-          for (const { question } of signed) next[question.id] = 'failed'
-          return next
-        })
-        throw err
-      }
-
       // One job covers the batch; its per-envelope entries settle one by one
       // while the job is pending — mirror every poll into voteStatus so UIs
       // can show per-question confirmation progress.
@@ -462,26 +471,134 @@ export function ElectionProvider({
           return next
         })
       }
-      setVoteStatus((st) => {
-        const next = { ...st }
-        for (const { question } of signed) next[question.id] = 'confirming'
-        return next
-      })
+
+      const markAllFailed = () =>
+        setVoteStatus((st) => {
+          const next = { ...st }
+          for (const { question } of signed) next[question.id] = 'failed'
+          return next
+        })
+
+      // Recover the nullifiers of consumed CSP signatures — the vote ids of
+      // whatever actually landed — used when the relay outcome had to be
+      // reconciled from voter state instead of a job result.
+      const recoverVoteIds = async (): Promise<Record<string, string>> => {
+        const info = await client.processes
+          .signInfo(election.id, { authToken: session.authToken! })
+          .catch(() => null)
+        return Object.fromEntries((info?.consumed ?? []).map((c) => [c.questionId, c.nullifier]))
+      }
+
+      // The relay outcome is UNKNOWN (response lost): the backend may have
+      // accepted and enqueued the batch before the reply was dropped. Poll the
+      // authoritative voter state — check()'s per-question hasVoted — for a
+      // bounded window; envelopes settle one by one, so keep polling while
+      // votes keep appearing. Returns synthesized per-envelope outcomes when
+      // anything landed, null when the window closes with nothing on chain.
+      const reconcileUnknownOutcome = async (relayError: unknown): Promise<VoteJobResult[] | null> => {
+        const attempts = voteOptions?.reconcile?.attempts ?? 8
+        const intervalMs = voteOptions?.reconcile?.intervalMs ?? 2500
+        let landed = new Set<string>()
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, intervalMs))
+          try {
+            const checked = await session.check()
+            landed = new Set(checked.questions.filter((q) => q.hasVoted).map((q) => q.questionId))
+          } catch {
+            continue
+          }
+          if (signed.every(({ question }) => landed.has(question.id))) break
+        }
+        if (!signed.some(({ question }) => landed.has(question.id))) return null
+
+        const ids = await recoverVoteIds()
+        return signed.map(({ question }) =>
+          landed.has(question.id)
+            ? ({ status: 'completed', voteID: ids[question.id] ?? '' } as VoteJobResult)
+            : ({
+                status: 'failed',
+                error: relayError instanceof Error ? relayError.message : String(relayError),
+              } as VoteJobResult),
+        )
+      }
+
+      // A response the origin server authored — a 4xx validation error or a
+      // backend 5xx like the queue-full 503 — means the batch was definitively
+      // rejected AS A UNIT and zero votes are on chain. A missing response
+      // (network error) or a proxy-authored 502/504 leaves the outcome unknown.
+      const isUnknownRelayOutcome = (err: unknown) =>
+        !(err instanceof VocdoniApiError) || err.status === 502 || err.status === 504
+
+      // Relay the whole batch in ONE call (saas-backend#610). The backend
+      // validates it synchronously, so a definitive rejection means zero votes
+      // are on chain — a plain, fully-retryable error, never a partial vote.
+      // An unknown outcome is reconciled against voter state before being
+      // reported as anything.
+      let reconciled: VoteJobResult[] | null = null
+      let jobId: string | null = null
+      try {
+        ;({ jobId } = await client.elections.voteBatch({
+          votes: signed.map(({ txPayload }) => ({ txPayload })),
+        }))
+      } catch (err) {
+        if (!isUnknownRelayOutcome(err)) {
+          markAllFailed()
+          throw err
+        }
+        setVoteStatus((st) => {
+          const next = { ...st }
+          for (const { question } of signed) next[question.id] = 'confirming'
+          return next
+        })
+        reconciled = await reconcileUnknownOutcome(err)
+        if (!reconciled) {
+          markAllFailed()
+          throw err
+        }
+        applyOutcomes(reconciled)
+      }
+
+      if (!reconciled) {
+        setVoteStatus((st) => {
+          const next = { ...st }
+          for (const { question } of signed) next[question.id] = 'confirming'
+          return next
+        })
+      }
 
       // The job completes only when EVERY envelope landed and fails otherwise;
       // a failed job still carries the per-vote outcomes, so read them from
-      // the JobFailedError instead of rethrowing.
+      // the JobFailedError instead of rethrowing. A reconciled unknown outcome
+      // already carries its synthesized outcomes and has no job to wait for.
       let outcomes: VoteJobResult[]
-      try {
-        const job = await client.jobs.waitFor(jobId, {
-          expectType: 'relay_votes',
-          onPoll: (j) => applyOutcomes(j.result?.votes),
-        })
-        outcomes = job.result?.votes ?? []
-      } catch (err) {
-        if (!(err instanceof JobFailedError)) throw err
-        outcomes = err.job.result?.votes ?? []
-        applyOutcomes(outcomes)
+      if (reconciled) {
+        outcomes = reconciled
+      } else {
+        try {
+          const job = await client.jobs.waitFor(jobId!, {
+            expectType: 'relay_votes',
+            timeoutMs: voteOptions?.jobTimeoutMs,
+            onPoll: (j) => applyOutcomes(j.result?.votes),
+          })
+          outcomes = job.result?.votes ?? []
+        } catch (err) {
+          if (err instanceof JobFailedError) {
+            outcomes = err.job.result?.votes ?? []
+            applyOutcomes(outcomes)
+          } else {
+            // The wait gave up (timeout, poll failure) while the job may still
+            // be running: an unknown outcome, not a failure. Reconcile against
+            // voter state rather than vanishing with statuses stuck at
+            // 'confirming'.
+            const rec = await reconcileUnknownOutcome(err)
+            if (!rec) {
+              markAllFailed()
+              throw err
+            }
+            outcomes = rec
+            applyOutcomes(outcomes)
+          }
+        }
       }
 
       const succeeded: Array<{ questionId: string; voteId: string }> = []
@@ -497,6 +614,35 @@ export function ElectionProvider({
           })
         }
       })
+
+      // A job-reported failure isn't authoritative: an envelope can be refused
+      // on relay ("nullifier already exists" after a duplicate) while the
+      // voter's vote IS on chain. Exonerate against the voter state before
+      // surfacing anything; if the check itself is down, keep the job verdict.
+      if (failed.length > 0) {
+        try {
+          const checked = await session.check()
+          const onChain = new Set(checked.questions.filter((q) => q.hasVoted).map((q) => q.questionId))
+          if (failed.some((f) => onChain.has(f.questionId))) {
+            const ids = await recoverVoteIds()
+            const exonerated = new Set<string>()
+            for (let i = failed.length - 1; i >= 0; i--) {
+              const { questionId } = failed[i]
+              if (!onChain.has(questionId)) continue
+              failed.splice(i, 1)
+              exonerated.add(questionId)
+              succeeded.push({ questionId, voteId: ids[questionId] ?? '' })
+            }
+            setVoteStatus((st) => {
+              const next = { ...st }
+              for (const questionId of exonerated) next[questionId] = 'confirmed'
+              return next
+            })
+          }
+        } catch {
+          // voter state unavailable — the job verdict is the best truth we have
+        }
+      }
 
       // Whatever landed is the voter's, failures included: expose those ids
       // before the throw path so a partial cast doesn't lose them.
@@ -527,19 +673,32 @@ export function ElectionProvider({
       setVoteId(resultVoteId)
       return resultVoteId
     },
-    [election, session, chainId, client, voterQuestions],
+    [election, session, chainId, client, voterQuestions, voteOptions],
   )
 
   // Public vote(): the cast wrapped in the in-flight flag, so UIs can show a
   // "processing your vote" state and guard against double submits. The flag
   // clears on settle either way — including a PartialVoteError, where the UI
   // is expected to offer a retry, not stay stuck "processing".
+  //
+  // The ref hard-guards overlapping calls: a second vote() while the first is
+  // still relaying would re-sign the same questions with a FRESH ephemeral
+  // signer and race the in-flight batch — the "resume skips voted questions"
+  // check only reflects votes already on chain, not the confirmation window.
+  const castInFlightRef = useRef(false)
   const vote = useCallback(
     async (encodedBallots: number[][], memos?: (string | undefined)[]): Promise<string> => {
+      if (castInFlightRef.current) {
+        throw new Error(
+          'A vote for this process is still being relayed — wait for it to settle before voting again',
+        )
+      }
+      castInFlightRef.current = true
       setVoting(true)
       try {
         return await castVotes(encodedBallots, memos)
       } finally {
+        castInFlightRef.current = false
         setVoting(false)
       }
     },

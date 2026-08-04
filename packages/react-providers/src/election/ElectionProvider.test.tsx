@@ -19,6 +19,21 @@ function wrapper({ children }: { children: React.ReactNode }) {
 
 const useVoter = () => ({ election: useElection() })
 
+// Same wrapper, but with a test-fast reconciliation window and job wait for
+// the unknown-relay-outcome paths.
+function reconcilingWrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <TestProvider>
+      <ElectionProvider
+        id={mockProcess.id}
+        voteOptions={{ jobTimeoutMs: 400, reconcile: { attempts: 3, intervalMs: 25 } }}
+      >
+        {children}
+      </ElectionProvider>
+    </TestProvider>
+  )
+}
+
 async function connect(result: { current: ReturnType<typeof useVoter> }) {
   await act(async () => {
     await result.current.election.auth0({ memberNumber: '5' })
@@ -937,6 +952,330 @@ describe('ElectionProvider', () => {
     await waitFor(() => expect(electionCalls).toBeGreaterThanOrEqual(2))
     await waitFor(() => expect(resultsCalls).toBeGreaterThanOrEqual(2))
     unmount()
+  })
+
+  it('reconciles a lost relay response against the voter state instead of reporting failure', async () => {
+    // The POST /votes response is lost at the network level AFTER the backend
+    // accepted and enqueued the batch: the votes land on chain, but the client
+    // never learns the jobId. The provider must reconcile through check() +
+    // sign-info before declaring failure.
+    let relayReached = false
+    server.use(
+      http.post(`http://localhost/votes`, () => {
+        relayReached = true
+        return HttpResponse.error()
+      }),
+      http.post(`http://localhost/processes/:processId/check`, () =>
+        HttpResponse.json({
+          belongsToProcess: true,
+          weight: MOCK_WEIGHT_HEX,
+          questions: mockProcess.questions.map((q) => ({
+            questionId: q.id,
+            upstreamId: q.upstreamId,
+            canVote: true,
+            hasVoted: relayReached,
+          })),
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign-info`, () =>
+        HttpResponse.json({
+          consumed: relayReached
+            ? mockProcess.questions.map((q) => ({ questionId: q.id, nullifier: `reconciled-${q.id}` }))
+            : [],
+        }),
+      ),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper: reconcilingWrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    let voteId = ''
+    await act(async () => {
+      voteId = await result.current.election.vote([[0]])
+    })
+
+    expect(voteId).toBe('reconciled-q-0')
+    expect(result.current.election.voteStatus).toEqual({ 'q-0': 'confirmed' })
+    expect(result.current.election.voteIds).toEqual({ 'q-0': 'reconciled-q-0' })
+    expect(result.current.election.hasVoted).toBe(true)
+  })
+
+  it('reports failure when the lost-relay reconciliation window closes with nothing on chain', async () => {
+    // Network error AND the backend really never enqueued anything: after the
+    // bounded reconciliation window the original error surfaces and every
+    // question is truthfully failed.
+    let checkPolls = 0
+    server.use(
+      http.post(`http://localhost/votes`, () => HttpResponse.error()),
+      http.post(`http://localhost/processes/:processId/check`, () => {
+        checkPolls++
+        return HttpResponse.json({
+          belongsToProcess: true,
+          weight: MOCK_WEIGHT_HEX,
+          questions: mockProcess.questions.map((q) => ({
+            questionId: q.id,
+            upstreamId: q.upstreamId,
+            canVote: true,
+            hasVoted: false,
+          })),
+        })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper: reconcilingWrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    const before = checkPolls
+    let thrown: unknown
+    await act(async () => {
+      thrown = await result.current.election.vote([[0]]).catch((err) => err)
+    })
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect(thrown).not.toBeInstanceOf(PartialVoteError)
+    expect(result.current.election.voteStatus).toEqual({ 'q-0': 'failed' })
+    expect(result.current.election.hasVoted).toBe(false)
+    // The window was actually used: pre-flight check + the reconcile polls.
+    expect(checkPolls - before).toBe(1 + 3)
+  })
+
+  it('reconciles a partially landed batch after a lost relay response into a PartialVoteError', async () => {
+    const UPSTREAM_A = 'aa'.repeat(32)
+    const UPSTREAM_B = 'bb'.repeat(32)
+    let relayReached = false
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) =>
+        HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          questions: [
+            { ...mockProcess.questions[0], id: 'q-0', upstreamId: UPSTREAM_A },
+            { ...mockProcess.questions[0], id: 'q-1', upstreamId: UPSTREAM_B },
+          ],
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign`, () =>
+        HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX }),
+      ),
+      http.post(`http://localhost/votes`, () => {
+        relayReached = true
+        return HttpResponse.error()
+      }),
+      // Only q-0 ever lands on chain.
+      http.post(`http://localhost/processes/:processId/check`, () =>
+        HttpResponse.json({
+          belongsToProcess: true,
+          weight: MOCK_WEIGHT_HEX,
+          questions: [
+            { questionId: 'q-0', upstreamId: UPSTREAM_A, canVote: true, hasVoted: relayReached },
+            { questionId: 'q-1', upstreamId: UPSTREAM_B, canVote: true, hasVoted: false },
+          ],
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign-info`, () =>
+        HttpResponse.json({
+          consumed: relayReached ? [{ questionId: 'q-0', nullifier: 'reconciled-q-0' }] : [],
+        }),
+      ),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper: reconcilingWrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    let thrown: unknown
+    await act(async () => {
+      thrown = await result.current.election.vote([[0], [1]]).catch((err) => err)
+    })
+
+    expect(thrown).toBeInstanceOf(PartialVoteError)
+    const partial = thrown as PartialVoteError
+    expect(partial.succeeded).toEqual([{ questionId: 'q-0', voteId: 'reconciled-q-0' }])
+    expect(partial.failed.map((f) => f.questionId)).toEqual(['q-1'])
+    expect(result.current.election.voteStatus).toEqual({ 'q-0': 'confirmed', 'q-1': 'failed' })
+    expect(result.current.election.voteIds).toEqual({ 'q-0': 'reconciled-q-0' })
+  })
+
+  it('exonerates a job-reported envelope failure when the vote is actually on chain', async () => {
+    // The relay job reports q-1 failed ("nullifier already exists" — e.g. a
+    // duplicate relay), but the voter state proves the vote IS on chain. The
+    // job verdict must be reconciled against check() before surfacing failure.
+    const UPSTREAM_A = 'aa'.repeat(32)
+    const UPSTREAM_B = 'bb'.repeat(32)
+    let relayReached = false
+    server.use(
+      http.get(`http://localhost/processes/:id`, ({ params }) =>
+        HttpResponse.json({
+          ...mockProcess,
+          id: params.id as string,
+          questions: [
+            { ...mockProcess.questions[0], id: 'q-0', upstreamId: UPSTREAM_A },
+            { ...mockProcess.questions[0], id: 'q-1', upstreamId: UPSTREAM_B },
+          ],
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign`, () =>
+        HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX }),
+      ),
+      http.post(`http://localhost/votes`, () => {
+        relayReached = true
+        return HttpResponse.json({ jobId: 'batch-job-exonerate' }, { status: 202 })
+      }),
+      http.get(`http://localhost/jobs/:jobId`, ({ params }) =>
+        HttpResponse.json({
+          jobId: params.jobId as string,
+          status: 'failed',
+          type: 'relay_votes',
+          errors: ['1/2 votes failed'],
+          result: {
+            votes: [
+              { processId: UPSTREAM_A, nullifier: 'null-0', status: 'completed', voteID: 'nullifier-job-0' },
+              { processId: UPSTREAM_B, nullifier: 'null-1', status: 'failed', error: 'nullifier already exists' },
+            ],
+          },
+        }),
+      ),
+      // The voter state tells the truth: once the relay ran, BOTH votes are on
+      // chain, whatever the job verdict says.
+      http.post(`http://localhost/processes/:processId/check`, () =>
+        HttpResponse.json({
+          belongsToProcess: true,
+          weight: MOCK_WEIGHT_HEX,
+          questions: [
+            { questionId: 'q-0', upstreamId: UPSTREAM_A, canVote: true, hasVoted: relayReached },
+            { questionId: 'q-1', upstreamId: UPSTREAM_B, canVote: true, hasVoted: relayReached },
+          ],
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign-info`, () =>
+        HttpResponse.json({
+          consumed: relayReached
+            ? [
+                { questionId: 'q-0', nullifier: 'nullifier-job-0' },
+                { questionId: 'q-1', nullifier: 'nullifier-job-1' },
+              ]
+            : [],
+        }),
+      ),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper: reconcilingWrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    let voteId = ''
+    await act(async () => {
+      voteId = await result.current.election.vote([[0], [1]])
+    })
+
+    expect(voteId).toBe('nullifier-job-0')
+    expect(result.current.election.voteStatus).toEqual({ 'q-0': 'confirmed', 'q-1': 'confirmed' })
+    expect(result.current.election.voteIds).toEqual({ 'q-0': 'nullifier-job-0', 'q-1': 'nullifier-job-1' })
+    expect(result.current.election.hasVoted).toBe(true)
+  })
+
+  it('refuses a second vote() while the first is still being relayed', async () => {
+    let signCalls = 0
+    server.use(
+      http.post(`http://localhost/processes/:processId/sign`, () => {
+        signCalls++
+        return HttpResponse.json({ signature: MOCK_CSP_SIGNATURE, weight: MOCK_WEIGHT_HEX })
+      }),
+      // Slow relay: the first vote stays in flight long enough to overlap.
+      http.post(`http://localhost/votes`, async ({ request }) => {
+        const body = (await request.json()) as { votes: Array<{ txPayload: string }> }
+        await new Promise((r) => setTimeout(r, 150))
+        const jobId = `batch-job-${mockBatchJobs.size}`
+        mockBatchJobs.set(jobId, body.votes.length)
+        return HttpResponse.json({ jobId }, { status: 202 })
+      }),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    let first!: Promise<string>
+    act(() => {
+      first = result.current.election.vote([[0]])
+    })
+
+    // Overlapping call: refused outright — it must not re-sign or re-relay,
+    // which would race the in-flight batch with a fresh ephemeral signer.
+    await act(async () => {
+      await expect(result.current.election.vote([[0]])).rejects.toThrow(/still being relayed/)
+    })
+
+    let voteId = ''
+    await act(async () => {
+      voteId = await first
+    })
+    expect(voteId).toMatch(/^nullifier-batch-job-/)
+    expect(signCalls).toBe(1)
+
+    expect(result.current.election.hasVoted).toBe(true)
+  })
+
+  it('reconciles a relay job that outlives the wait instead of vanishing silently', async () => {
+    // The batch is accepted but the job never settles within the wait window
+    // (slow chain). The provider must not give up with statuses stuck at
+    // 'confirming' — it reconciles against the voter state, which by then
+    // reports the votes on chain.
+    let relayReached = false
+    server.use(
+      http.post(`http://localhost/votes`, () => {
+        relayReached = true
+        return HttpResponse.json({ jobId: 'batch-job-slow' }, { status: 202 })
+      }),
+      // The job stays pending forever, from the client's point of view.
+      http.get(`http://localhost/jobs/:jobId`, ({ params }) =>
+        HttpResponse.json({
+          jobId: params.jobId as string,
+          status: 'pending',
+          type: 'relay_votes',
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/check`, () =>
+        HttpResponse.json({
+          belongsToProcess: true,
+          weight: MOCK_WEIGHT_HEX,
+          questions: mockProcess.questions.map((q) => ({
+            questionId: q.id,
+            upstreamId: q.upstreamId,
+            canVote: true,
+            hasVoted: relayReached,
+          })),
+        }),
+      ),
+      http.post(`http://localhost/processes/:processId/sign-info`, () =>
+        HttpResponse.json({
+          consumed: relayReached
+            ? mockProcess.questions.map((q) => ({ questionId: q.id, nullifier: `slowjob-${q.id}` }))
+            : [],
+        }),
+      ),
+    )
+
+    const { result } = renderHook(useVoter, { wrapper: reconcilingWrapper })
+    await waitFor(() => expect(result.current.election.election).not.toBeNull())
+    await connect(result)
+    await waitFor(() => expect(result.current.election.isAbleToVote).toBe(true))
+
+    let voteId = ''
+    await act(async () => {
+      voteId = await result.current.election.vote([[0]])
+    })
+
+    expect(voteId).toBe('slowjob-q-0')
+    expect(result.current.election.voteStatus).toEqual({ 'q-0': 'confirmed' })
+    expect(result.current.election.hasVoted).toBe(true)
   })
 
   it('clearVoter resets connection and vote state', async () => {
