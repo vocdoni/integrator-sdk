@@ -1,6 +1,6 @@
 import type { VotingProcessQuestion } from '@vocdoni/api-types'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
-import { decodeQuestionResults, encodeQuestionBallot } from '@vocdoni/ballot'
+import { decodeQuestionResults, encodeQuestionBallot, unsatisfiableQuestionReason } from '@vocdoni/ballot'
 import { apiKey, makeAdminClient, makeClient } from './helpers'
 
 // End-to-end organizer→voter flow, SaaS-only, driven entirely through the SDK
@@ -9,9 +9,12 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 //   2. loads a 100-member memberbase (memberNumber 1..100)
 //   3. reads the auto-created "All members" group
 //   4. builds + publishes a CSP census from that group
-//   5. creates and publishes 3 processes (single-choice, multi-choice, and a
+//   5. creates and publishes 4 processes (single-choice, multi-choice, a
 //      secretUntilTheEnd single-choice — its per-question encryption keys are
-//      polled after publish, per saas-backend#594) sharing that one group
+//      polled after publish, per saas-backend#594 — and a ballot-protocol
+//      matrix covering every remaining type @vocdoni/ballot supports: approval,
+//      capped approval, pick-slot multichoice, ranked, budget and quadratic)
+//      sharing that one group
 //      census, then proves the PUBLIC voter surface for each: drafts 404 on the
 //      token-less process read (draft gating, saas-backend#599) while published
 //      processes are fully public — chainId, questions, census size/totalWeight
@@ -24,7 +27,10 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 //      off the PUBLIC process read; the secret question's ballots are sealed
 //      with its encryption keys, and each vote resolves a distinct nullifier
 //   7. reads the live per-question tallies (QuestionResults, saas-backend#596/
-//      #599) publicly and checks the vote counts
+//      #599) publicly and checks the vote counts AND the decoded per-choice
+//      tallies — the latter is the only thing that proves a vote was actually
+//      counted, since the chain increments voteCount even for ballots the
+//      scrutinizer discards during aggregation
 //
 // This is deliberately the ONLY integration suite: anything needing a live
 // backend gets asserted inside this lifecycle (it creates all its own data, so
@@ -32,9 +38,10 @@ import { apiKey, makeAdminClient, makeClient } from './helpers'
 // disposable saas-api + vochain container on every PR/push.
 //
 // Opt-in: needs INTEGRATION_API_KEY (a `vsk_…` key whose org is an integrator
-// with scopes managed:write + members:write + voting:write, and quota for >=3
-// processes / >=200 census). It creates real on-chain elections and votes, so it
-// is excluded from the default run.
+// with scopes managed:write + members:write + voting:write, and quota for >=4
+// processes / >=9 on-chain elections / >=200 census). It creates real on-chain
+// elections and casts 36 real votes, so it is excluded from the default run and
+// takes several minutes.
 const suite = apiKey ? describe : describe.skip
 
 const MEMBER_COUNT = 100
@@ -62,6 +69,27 @@ interface ProcessSpec {
    * chain silently discards, or a decoder misreading the histogram, fails here.
    */
   tally: number[]
+  /**
+   * Per-question override of `choices`/`tally`, keyed by the question's (unique)
+   * title. Used by the ballot-protocol matrix process, whose questions each
+   * exercise a different ballot type and therefore need their own selections.
+   */
+  perQuestion?: Array<{ title: string; choices: number[]; tally: number[] }>
+}
+
+/** The selections + expected tally for one question of a process. */
+const specFor = (p: ProcessSpec, questionId: string) => {
+  if (!p.perQuestion) return { choices: p.choices, tally: p.tally }
+  // Keyed by title, not read-back position: the API is not contractually bound to
+  // echo questions in creation order, and the matrix's two approval entries carry
+  // identical specs, so a positional swap between them would pass silently. A miss
+  // throws instead of falling back — a fallback here would vote an empty ballot.
+  const question = p.questions.find((q) => q.id === questionId)
+  const spec = p.perQuestion.find((entry) => entry.title === question?.title?.default)
+  if (!spec) {
+    throw new Error(`no perQuestion spec titled "${question?.title?.default}" (question ${questionId})`)
+  }
+  return spec
 }
 
 suite('full election lifecycle (live — creates an org, processes and votes)', () => {
@@ -125,7 +153,14 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       // endDate is required; omitting startDate makes each election start
       // immediately on publish, so the voters below can cast right away.
       const endDate = new Date(Date.now() + 2 * 60 * 60_000).toISOString()
-      const drafts: Array<{ label: string; secret: boolean; choices: number[]; tally: number[]; body: Parameters<typeof admin.elections.create>[0] }> = [
+      const drafts: Array<{
+        label: string
+        secret: boolean
+        choices: number[]
+        tally: number[]
+        perQuestion?: ProcessSpec['perQuestion']
+        body: Parameters<typeof admin.elections.create>[0]
+      }> = [
         {
           label: 'single-choice',
           secret: false,
@@ -173,12 +208,13 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
                   { title: 'C', value: 2 },
                 ],
                 type: 'multichoice',
-                // uniqueChoices MUST stay false: the backend propagates it into
-                // the on-chain UniqueChoices, and the scrutinizer applies
-                // uniqueness to the raw 0/1 fields of the derived dense layout —
-                // with it set, every multi-pick ballot is silently discarded at
-                // tally (saas-backend derivation bug; the tally assertion below
-                // would catch it).
+                // uniqueChoices MUST be false here. On the dense layout this type
+                // derives, uniqueness is vacuous (each choice is its own 0/1 field)
+                // and fatal above two choices: every ballot repeats a value and is
+                // discarded at tally, so the election counts votes and reports zero
+                // (saas-backend#619). Both this client and the backend now reject
+                // `true` outright — the client-side rejection is unit-tested in
+                // admin-flow.test.ts; sending it here would just fail creation.
                 typeSetup: { maxChoices: 2, minChoices: 1, uniqueChoices: false },
               },
             ],
@@ -206,6 +242,93 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
                 secretUntilTheEnd: true,
               },
             ],
+          },
+        },
+        // Every remaining ballot type @vocdoni/ballot can encode and decode, in
+        // one process — one question per protocol, each with its own selections
+        // and expected tally. The named types above only reach two of them
+        // (singlechoice, dense multichoice); the rest are only expressible via a
+        // raw `ballotProtocol`, and each has a distinct wire layout AND a
+        // distinct results layout, so nothing here is redundant with the others.
+        //
+        // This exists because voteCount cannot tell a counted vote from a
+        // discarded one — only a decoded tally can, and every protocol decodes
+        // differently. Two silent all-zero-results bugs were found exactly here.
+        {
+          label: 'ballot protocol matrix',
+          secret: false,
+          choices: [],
+          tally: [],
+          // Entries are matched to questions by title (see specFor) — the two
+          // approval specs are identical, so a positional pairing could swap
+          // them silently if the read-back order ever changed.
+          perQuestion: [
+            // approval — dense 0/1 vector, uncapped.
+            { title: 'Approval', choices: [0, 2], tally: [VOTERS.length, 0, VOTERS.length, 0] },
+            // approval capped by maxTotalCost (2 picks costs exactly 2).
+            { title: 'Approval (max 2)', choices: [0, 2], tally: [VOTERS.length, 0, VOTERS.length, 0] },
+            // legacy pick-slot multichoice: 3 slots, 2 picks, one abstain
+            // sentinel padded in. uniqueValues is TRUE here and satisfiable
+            // (maxValue 6 >= maxCount 3) — this is the case the guard must NOT
+            // reject, and the ballot [0, 2, 4] does carry three distinct values.
+            // Decoding appends the unified abstain bucket, hence the 5th entry.
+            {
+              title: 'Multichoice pick-slot',
+              choices: [0, 2],
+              tally: [VOTERS.length, 0, VOTERS.length, 0, VOTERS.length],
+            },
+            // ranked: one score per option, no repeats, highest wins — voter's
+            // order is C2 > C0 > C3 > C1.
+            //
+            // ⚠️ PLACEHOLDER EXPECTATION — see integrator-sdk#22. The decoder has
+            // no ranked branch: it labels this multichoice and reports "how many
+            // voters ranked each option", so every option shows the full voter
+            // count plus a zero abstain bucket. The tally below therefore proves
+            // the ballot round-trips, NOT that the ranking is readable — the
+            // winner (C2) is not recoverable from it. Replace this with a real
+            // ranking assertion when #22 lands; locked in meanwhile so the
+            // behaviour cannot change silently.
+            {
+              title: 'Ranked',
+              choices: [2, 0, 3, 1],
+              tally: [VOTERS.length, VOTERS.length, VOTERS.length, VOTERS.length, 0],
+            },
+            // budget: per-option amounts, maxValue 0 → the chain aggregates
+            // Σ amount × weight into one cell per option.
+            { title: 'Budget', choices: [4, 0, 6, 0], tally: [4 * VOTERS.length, 0, 6 * VOTERS.length, 0] },
+            // quadratic: same aggregation, cost is Σ amount² (12 <= 16).
+            {
+              title: 'Quadratic',
+              choices: [2, 0, 2, 2],
+              tally: [2 * VOTERS.length, 0, 2 * VOTERS.length, 2 * VOTERS.length],
+            },
+          ],
+          body: {
+            orgAddress,
+            census: { authFields: ['memberNumber'], groupId },
+            title: 'Ballot protocol matrix',
+            endDate,
+            questions: (
+              [
+                ['Approval', { maxCount: 4, maxValue: 1 }],
+                ['Approval (max 2)', { maxCount: 4, maxValue: 1, maxTotalCost: 2 }],
+                ['Multichoice pick-slot', { maxCount: 3, maxValue: 6, uniqueValues: true }],
+                ['Ranked', { maxCount: 4, maxValue: 3, uniqueValues: true }],
+                ['Budget', { maxCount: 4, maxValue: 0, costExponent: 1, maxTotalCost: 10 }],
+                ['Quadratic', { maxCount: 4, maxValue: 0, costExponent: 2, maxTotalCost: 16 }],
+              ] as const
+            ).map(([title, bp]) => ({
+              title,
+              choices: Array.from({ length: 4 }, (_, v) => ({ title: `C${v}`, value: v })),
+              ballotProtocol: {
+                maxVoteOverwrites: 0,
+                maxTotalCost: 0,
+                costExponent: 1,
+                uniqueValues: false,
+                costFromWeight: false,
+                ...bp,
+              },
+            })),
           },
         },
       ]
@@ -243,6 +366,19 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
         // it is live, so they may be absent the moment publish returns — poll
         // the process read until every secret question carries them.
         if (d.secret) {
+          // Assert the round-trip BEFORE anything that keys off the flag. Every
+          // secrecy check here — and the `question.secretUntilTheEnd ? keys :
+          // undefined` that seals the ballot at vote time — reads the
+          // BACKEND-reported flag. If the read ever stopped echoing it,
+          // `missingKeys()` would be false over an empty filter, the poll would
+          // exit at once, the expectation below would pass vacuously, keyCount
+          // would be 0, and 4 votes would be cast in CLEARTEXT on an election
+          // that asked to be secret — with nothing in the suite failing.
+          expect(
+            info.questions.filter((q) => q.secretUntilTheEnd).length,
+            `${d.label} process read does not report secretUntilTheEnd — ballots would be cast in cleartext`,
+          ).toBeGreaterThan(0)
+
           const missingKeys = () =>
             info.questions.some((q) => q.secretUntilTheEnd && !q.encryptionKeys?.length)
           const deadline = Date.now() + 120000
@@ -251,9 +387,17 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             info = await admin.elections.get(draftId)
           }
           expect(missingKeys(), `secret process has no encryption keys (${d.label})`).toBe(false)
-          const keyCount = info.questions
-            .filter((q) => q.secretUntilTheEnd)
-            .reduce((n, q) => n + (q.encryptionKeys?.length ?? 0), 0)
+          const secretQuestions = info.questions.filter((q) => q.secretUntilTheEnd)
+          // Shape, not just presence: a key that is not a hex string with an
+          // integer index cannot seal a ballot, and `length > 0` would not notice.
+          for (const q of secretQuestions) {
+            for (const k of q.encryptionKeys ?? []) {
+              expect(Number.isInteger(k.index), `${d.label} key index is not an integer`).toBe(true)
+              expect(k.key, `${d.label} key is not hex`).toMatch(/^[0-9a-f]+$/i)
+            }
+          }
+          const keyCount = secretQuestions.reduce((n, q) => n + (q.encryptionKeys?.length ?? 0), 0)
+          expect(keyCount, `${d.label} resolved no encryption keys`).toBeGreaterThan(0)
           step(`5. encryption keys ready — ${keyCount} key(s) for ${d.label}`)
         }
 
@@ -272,6 +416,27 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             pub.ballotProtocol ?? pub.type,
             `${d.label} public question has neither ballotProtocol nor type`,
           ).toBeTruthy()
+          // No question may ship a ballot config the scrutinizer can never
+          // tally — that is the all-zero-results failure mode, and it is
+          // invisible until the votes are already lost.
+          expect(
+            unsatisfiableQuestionReason(pub),
+            `${d.label} public question has an unsatisfiable ballot config`,
+          ).toBeNull()
+          // No multichoice question may come back with uniqueChoices set: on the
+          // dense layout it derives, that combination discards every ballot at
+          // tally (saas-backend#619). Asserted on the READ rather than trusting
+          // what we sent, so a backend that started echoing or inventing the flag
+          // would fail here instead of silently zeroing the tally below.
+          if (pub.type === 'multichoice') {
+            // .not.toBe(true), not .toBe(false): a read that legitimately omits
+            // typeSetup would fail a `false` equality with a message blaming the
+            // flag — only an explicit `true` is the broken config.
+            expect(
+              pub.typeSetup?.uniqueChoices,
+              `${d.label} multichoice reports uniqueChoices — its votes will not be tallied`,
+            ).not.toBe(true)
+          }
           if (q.secretUntilTheEnd) {
             expect(
               pub.encryptionKeys?.length,
@@ -307,6 +472,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
           secret: d.secret,
           choices: d.choices,
           tally: d.tally,
+          perQuestion: d.perQuestion,
         })
       }
 
@@ -366,7 +532,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
               processId: status.upstreamId!,
               // Encode the raw selections into the question's wire ballot —
               // the same codec path react-components voters go through.
-              choices: encodeQuestionBallot(question!, p.choices),
+              choices: encodeQuestionBallot(question!, specFor(p, status.questionId).choices),
               chainId: chainId!,
               signer,
               cspSignature: sign.signature!,
@@ -397,16 +563,24 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
       // for cleartext questions — a secret question's matrix stays hidden until
       // the encryption keys are revealed at the end.
       const VOTES_PER_QUESTION = VOTERS.length
-      for (const p of processes) {
-        let results = await voterClient.elections.getResults(p.draftId)
+      // All three public tally surfaces ride the same indexer but are separate
+      // endpoints — give each one the same convergence window rather than
+      // asserting a one-shot read, so plain indexer lag cannot masquerade as a
+      // cross-surface divergence failure.
+      const pollUntil = async <T>(read: () => Promise<T>, settled: (value: T) => boolean): Promise<T> => {
+        let value = await read()
         const deadline = Date.now() + 120000
-        while (
-          results.questions.some((q) => (q.voteCount ?? 0) < VOTES_PER_QUESTION) &&
-          Date.now() < deadline
-        ) {
+        while (!settled(value) && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 3000))
-          results = await voterClient.elections.getResults(p.draftId)
+          value = await read()
         }
+        return value
+      }
+      for (const p of processes) {
+        const results = await pollUntil(
+          () => voterClient.elections.getResults(p.draftId),
+          (r) => r.questions.every((q) => (q.voteCount ?? 0) >= VOTES_PER_QUESTION),
+        )
         expect(results.questions.length).toBe(p.questions.length)
         for (const q of results.questions) {
           expect(q.voteCount, `${p.label} live voteCount lagging`).toBe(VOTES_PER_QUESTION)
@@ -424,22 +598,54 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
             const decoded = decodeQuestionResults(question!, q.results!)
             expect(
               decoded.map((c) => c.votes),
-              `${p.label} decoded tally mismatch`,
-            ).toEqual(p.tally)
+              `${p.label} / "${question!.title?.default}" decoded tally mismatch ` +
+                `(raw ${JSON.stringify(q.results)})`,
+            ).toEqual(specFor(p, q.questionId).tally)
           }
         }
-        // The same live tally rides the public single reads (process + question).
-        const single = await voterClient.elections.get(p.draftId)
+        // Three public surfaces serve the same tally: GET /processes/{id}/results
+        // (above), the process read, and the single-question read. Assert all
+        // three DECODE to the same numbers, not just that they carry a
+        // voteCount — a voter app reading whichever one diverged would render a
+        // wrong tally with nothing failing anywhere.
+        const single = await pollUntil(
+          () => voterClient.elections.get(p.draftId),
+          (s) => s.questions.every((q) => (q.results?.voteCount ?? 0) >= VOTES_PER_QUESTION),
+        )
         for (const q of single.questions) {
           expect(q.results?.voteCount, `${p.label} single read misses live results`).toBe(
             VOTES_PER_QUESTION,
           )
+          if (p.secret) continue
+          const expected = specFor(p, q.id).tally
+
+          expect(
+            decodeQuestionResults(q, q.results?.results ?? []).map((c) => c.votes),
+            `${p.label} / "${q.title?.default}" process-read tally differs from /results`,
+          ).toEqual(expected)
+
+          const pubQ = await pollUntil(
+            () => voterClient.processes.getQuestion(p.draftId, q.id),
+            (pq) => (pq.results?.voteCount ?? 0) >= VOTES_PER_QUESTION,
+          )
+          expect(
+            pubQ.results?.voteCount,
+            `${p.label} question read misses live results`,
+          ).toBe(VOTES_PER_QUESTION)
+          expect(
+            decodeQuestionResults(pubQ, pubQ.results?.results ?? []).map((c) => c.votes),
+            `${p.label} / "${q.title?.default}" question-read tally differs from /results`,
+          ).toEqual(expected)
         }
         step(`7. live results verified — ${p.label} (${VOTES_PER_QUESTION} votes per question)`)
       }
 
       step(`done — ${nullifiers.size} votes cast across ${questionCount} on-chain processes`)
     },
-    600000,
+    // 4 processes / 9 on-chain elections / 36 votes, each vote a CSP sign + relay
+    // + job poll, plus publish jobs and the indexer lag before the tally settles.
+    // Kept under the CI job's timeout-minutes (25) so a hang surfaces as a test
+    // failure with the suite's own diagnostics, not as a killed runner.
+    1200000,
   )
 })

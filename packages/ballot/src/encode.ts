@@ -3,6 +3,13 @@ import { BallotType, type BallotSelections } from './types.js'
 import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
 import { normalizeSelections } from './selections.js'
 import { requiredAbstainMaxValue } from './abstain.js'
+import {
+  assertEncodedBallot,
+  unsatisfiableProtocolReason,
+  unsatisfiableQuestionReason,
+  voteTypeBounds,
+  type ProtocolBounds,
+} from './protocol.js'
 
 /**
  * Encode high-level voter selections into the on-chain ballot array format.
@@ -21,34 +28,53 @@ import { requiredAbstainMaxValue } from './abstain.js'
  * @param input - Election config with questions and voteType
  * @param selections - Per-question choice values (single/multi) or per-option amounts (budget/quadratic)
  * @returns The ballot array as numbers
+ * @throws When the election's ballot config is unsatisfiable — see
+ *   {@link unsatisfiableProtocolReason} — or when the encoded ballot itself would
+ *   violate the protocol's per-field bounds (a value above `maxValue`, or a repeat
+ *   under `uniqueChoices` — see {@link assertEncodedBallot}). Either way the chain
+ *   would accept the vote and drop it at tally, so refuse rather than cast a vote
+ *   that silently never counts.
  */
 export function encodeBallot(
   input: Pick<Election, 'questions' | 'voteType'>,
   selections: BallotSelections
 ): number[] {
   const { questions, voteType } = input
+  const bounds = voteTypeBounds(voteType)
+  const unsatisfiable = unsatisfiableProtocolReason(bounds)
+  if (unsatisfiable) {
+    throw new Error(`cannot encode a ballot for this election: ${unsatisfiable}`)
+  }
   const ballotType = inferBallotType(input)
   const perQuestion = normalizeSelections(input, selections)
 
-  switch (ballotType) {
-    case BallotType.SingleChoice:
-      return encodeSingleChoice(questions, perQuestion)
+  const ballot = ((): number[] => {
+    switch (ballotType) {
+      case BallotType.SingleChoice:
+        return encodeSingleChoice(questions, perQuestion)
 
-    case BallotType.Approval:
-      // approval: dense 0/1 vector, confirmed correct vs vochain scrutinizer
-      // (NOT the legacy Form.tsx index list, which is buggy for >2 options)
-      return encodeApproval(questions[0], perQuestion[0] ?? [])
+      case BallotType.Approval:
+        // approval: dense 0/1 vector, confirmed correct vs vochain scrutinizer
+        // (NOT the legacy Form.tsx index list, which is buggy for >2 options)
+        return encodeApproval(questions[0], perQuestion[0] ?? [])
 
-    case BallotType.MultiChoice:
-      return encodeMultiChoice(voteType, questions[0], perQuestion[0] ?? [])
+      case BallotType.MultiChoice:
+        return encodeMultiChoice(voteType, questions[0], perQuestion[0] ?? [])
 
-    case BallotType.Budget:
-    case BallotType.Quadratic:
-      return encodeBudgetOrQuadratic(perQuestion[0] ?? [])
+      case BallotType.Budget:
+      case BallotType.Quadratic:
+        return encodeBudgetOrQuadratic(perQuestion[0] ?? [])
 
-    default:
-      throw new Error(`Unknown ballot type: ${ballotType}`)
-  }
+      default:
+        throw new Error(`Unknown ballot type: ${ballotType}`)
+    }
+  })()
+
+  // The config being satisfiable does not make this ballot satisfying: a stray
+  // selection value or a duplicated unique pick still yields a ballot the chain
+  // accepts and never counts, so check the product, not just the config.
+  assertEncodedBallot(ballot, bounds)
+  return ballot
 }
 
 /**
@@ -154,54 +180,106 @@ function ballotProtocolToVoteType(bp: BallotProtocol): VoteType {
 }
 
 /**
+ * The protocol bounds a question's encoded ballot is judged against on chain: its raw
+ * `ballotProtocol` when it carries one (the protocol overrides the named type at
+ * creation), otherwise the named type's canonical derivation, mirroring saas-backend's
+ * `BallotProtocolFromType` — `singlechoice` is one field whose `maxValue` covers the
+ * highest `Choice.value` (values need not be contiguous), `multichoice` is the dense
+ * 0/1 layout. A question with neither half has no derivable bounds.
+ */
+function questionProtocolBounds(question: {
+  ballotProtocol?: BallotProtocol
+  type?: string
+  typeSetup?: QuestionTypeSetup
+  choices: Choice[]
+}): ProtocolBounds | null {
+  if (question.ballotProtocol) return question.ballotProtocol
+  switch (question.type) {
+    case 'singlechoice':
+      return {
+        maxCount: 1,
+        maxValue: Math.max(0, ...question.choices.map((choice) => choice.value)),
+        uniqueValues: false,
+      }
+    case 'multichoice':
+      return {
+        maxCount: question.choices.length,
+        maxValue: 1,
+        uniqueValues: question.typeSetup?.uniqueChoices ?? false,
+      }
+    default:
+      return null
+  }
+}
+
+/**
  * Encode a single question's ballot using its own {@link BallotProtocol}.
  *
  * @param question - The question with `ballotProtocol` and `choices`
  * @param selections - The voter's raw selections for this question
+ * @throws When the question's ballot config is unsatisfiable — see
+ *   {@link unsatisfiableQuestionReason} — or when the encoded ballot itself would
+ *   violate the question's protocol bounds (a value above `maxValue`, or a repeat
+ *   under `uniqueValues` — see {@link assertEncodedBallot}). Every such ballot is
+ *   dropped by the scrutinizer at tally while still counting towards `voteCount`,
+ *   so refuse instead of letting the voter cast a vote that never counts.
  */
 export function encodeQuestionBallot(
   question: { ballotProtocol?: BallotProtocol; type?: string; typeSetup?: QuestionTypeSetup; choices: Choice[] },
   selections: number[]
 ): number[] {
+  const unsatisfiable = unsatisfiableQuestionReason(question)
+  if (unsatisfiable) {
+    throw new Error(`cannot encode a ballot for this question: ${unsatisfiable}`)
+  }
   const ballotType = inferQuestionBallotType(question)
   const fakeQuestion: Question = { title: { default: '' }, choices: question.choices }
 
-  switch (ballotType) {
-    case BallotType.SingleChoice:
-      if (selections.length !== 1) {
-        throw new Error(`single-choice requires exactly one choice (got ${selections.length})`)
-      }
-      return [selections[0]]
-
-    case BallotType.Approval:
-      return encodeApproval(fakeQuestion, selections)
-
-    case BallotType.MultiChoice: {
-      const bp = question.ballotProtocol
-      // Named multichoice derives the dense layout on chain (one 0/1 field per
-      // choice, maxTotalCost = typeSetup.maxChoices bounding the picks) —
-      // encode dense, not pick-slot. Pick-slot values (choice values, abstain
-      // sentinels >= numChoices) would exceed maxValue = 1 and the chain
-      // silently discards them at tally. Public reads of named-type questions
-      // may omit the protocol entirely; the layout is still fully determined
-      // by the type, with the pick bound read from typeSetup.
-      if (!bp || isDenseBallotProtocol(bp)) {
-        const cap = bp?.maxTotalCost || question.typeSetup?.maxChoices || 0
-        if (cap > 0 && selections.length > cap) {
-          throw new Error(
-            `multichoice: too many selections (${selections.length}); at most ${cap} allowed`
-          )
+  const ballot = ((): number[] => {
+    switch (ballotType) {
+      case BallotType.SingleChoice:
+        if (selections.length !== 1) {
+          throw new Error(`single-choice requires exactly one choice (got ${selections.length})`)
         }
+        return [selections[0]]
+
+      case BallotType.Approval:
         return encodeApproval(fakeQuestion, selections)
+
+      case BallotType.MultiChoice: {
+        const bp = question.ballotProtocol
+        // Named multichoice derives the dense layout on chain (one 0/1 field per
+        // choice, maxTotalCost = typeSetup.maxChoices bounding the picks) —
+        // encode dense, not pick-slot. Pick-slot values (choice values, abstain
+        // sentinels >= numChoices) would exceed maxValue = 1 and the chain
+        // silently discards them at tally. Public reads of named-type questions
+        // may omit the protocol entirely; the layout is still fully determined
+        // by the type, with the pick bound read from typeSetup.
+        if (!bp || isDenseBallotProtocol(bp)) {
+          const cap = bp?.maxTotalCost || question.typeSetup?.maxChoices || 0
+          if (cap > 0 && selections.length > cap) {
+            throw new Error(
+              `multichoice: too many selections (${selections.length}); at most ${cap} allowed`
+            )
+          }
+          return encodeApproval(fakeQuestion, selections)
+        }
+        return encodeMultiChoice(ballotProtocolToVoteType(bp), fakeQuestion, selections)
       }
-      return encodeMultiChoice(ballotProtocolToVoteType(bp), fakeQuestion, selections)
+
+      case BallotType.Budget:
+      case BallotType.Quadratic:
+        return encodeBudgetOrQuadratic(selections)
+
+      default:
+        throw new Error(`Unknown ballot type: ${ballotType}`)
     }
+  })()
 
-    case BallotType.Budget:
-    case BallotType.Quadratic:
-      return encodeBudgetOrQuadratic(selections)
-
-    default:
-      throw new Error(`Unknown ballot type: ${ballotType}`)
-  }
+  // A satisfiable config still admits unsatisfying ballots — duplicate ranks on a
+  // unique-values protocol, an amount above maxValue, a stray selection value. The
+  // chain accepts all of those and never counts them, so check the product too.
+  // Without derivable bounds only the fields' basic shape can be checked.
+  assertEncodedBallot(ballot, questionProtocolBounds(question) ?? { maxCount: ballot.length, maxValue: 0, uniqueValues: false })
+  return ballot
 }

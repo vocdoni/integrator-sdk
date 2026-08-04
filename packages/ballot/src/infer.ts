@@ -45,8 +45,9 @@ export function inferBallotType(input: Pick<Election, 'questions' | 'voteType'>)
   // A pick-slot layout needs maxValue >= numChoices - 1 to address every choice, so
   // maxValue === 1 can only ever be the dense layout. uniqueChoices does not change the
   // wire format — the scrutinizer applies it to raw field values, which makes it
-  // unsatisfiable for dense multi-pick ballots; that is an election-config bug the
-  // codec cannot route around by switching layouts.
+  // unsatisfiable for dense multi-pick ballots. Switching layouts cannot route around
+  // that, so the codec rejects such an election outright instead of encoding a ballot
+  // that would be discarded at tally — see unsatisfiableProtocolReason.
   if (voteType.maxValue === 1) {
     return BallotType.Approval
   }

@@ -46,6 +46,35 @@ export function validateSelections(
 export function multichoiceReservesAbstain(
   input: Pick<Election, 'questions' | 'voteType'>
 ): boolean
+
+// Why a ballot config admits no usable ballot, or null when it is fine.
+// See "Unsatisfiable ballot configs" below.
+export function unsatisfiableProtocolReason(bp: ProtocolBounds): string | null
+export function unsatisfiableQuestionReason(question: {
+  ballotProtocol?: BallotProtocol
+  type?: string
+  typeSetup?: QuestionTypeSetup
+  choices: Choice[]
+}): string | null
+export function isUnsatisfiableProtocol(bp: ProtocolBounds): boolean
+export function isUnsatisfiableQuestion(question: { /* as above */ }): boolean
+
+// The part of a ballot protocol the satisfiability rule reads.
+export type ProtocolBounds = Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uniqueValues'>
+
+// Read the satisfiability bounds off an election-level voteType.
+export function voteTypeBounds(
+  voteType: Pick<VoteType, 'maxCount' | 'maxValue' | 'uniqueChoices'>
+): ProtocolBounds
+
+// True for the dense 0/1 wire layout (one field per choice) — what the backend
+// derives for the named multichoice type.
+export function isDenseBallotProtocol(bp: Pick<BallotProtocol, 'maxCount' | 'maxValue'>): boolean
+
+// Assert an encoded wire ballot would survive the scrutinizer's per-field checks
+// (range + uniqueness). The encoders run it on everything they produce; call it
+// directly on a ballot built by hand. See "Unsatisfiable ballot configs" below.
+export function assertEncodedBallot(ballot: number[], bounds: ProtocolBounds): void
 ```
 
 ## Usage
@@ -92,6 +121,75 @@ Only single-choice is ever multi-question, so a flat array is unambiguous:
   maxCount : 1)`); otherwise a partial selection throws and the voter must pick exactly
   `maxCount` choices. On the way back, `decodeResults` **unifies** all sentinel columns into a
   single trailing `{ choice: 'abstain', … }` bucket per multichoice question.
+
+## Decoding semantics
+
+`decodeResults` / `decodeQuestionResults` read the raw on-chain matrix, whose layout
+depends on the protocol:
+
+| Type | Matrix | Per-choice tally |
+|---|---|---|
+| single-choice | one row per question, one column per choice value | `results[q][choiceValue]` |
+| approval / dense multichoice | one row per option, `[notSelected, selected]` | `results[optionPos][1]` |
+| pick-slot multichoice | one row per pick-slot, columns are choice values | column sum across rows; sentinel columns (`>= choices.length`) unify into one `abstain` bucket |
+| budget / quadratic | one row per option, **one column** | `results[optionPos][0]` |
+
+The budget/quadratic row is a single cell because `maxValue === 0` switches the
+scrutinizer to *discrete aggregation*: it accumulates `Σ amount × weight` into column
+0 instead of bucketing a histogram (vocdoni-node `vochain/results/results.go` —
+"The results are aggregated, so we use only the first column of the results matrix").
+Reading such a row as a histogram yields zero for every option.
+
+> **Ranked ballots are encodable but not decodable as a ranking** —
+> [integrator-sdk#22](https://github.com/vocdoni/integrator-sdk/issues/22). A ranked
+> protocol (`uniqueValues: true`, `maxValue >= maxCount - 1`) encodes correctly — pass
+> one score per option in choice order, **higher wins** — but there is no ranked branch
+> in the decoder: it is labelled `multichoice`, so `decodeResults` reports *how many
+> voters ranked each option* (plus an always-zero `abstain` bucket), not the resulting
+> order.
+>
+> The protocol cannot be told apart from a pick-slot multichoice that fills every slot —
+> the two are byte-identical, with field index meaning *option* in one and *slot* in the
+> other — so this needs an explicit signal, not better inference. Until then, aggregate
+> the raw matrix yourself:
+> `results.map((f) => f.reduce((s, c, rank) => s + Number(c) * rank, 0))`.
+
+## Unsatisfiable ballot configs
+
+The vochain scrutinizer applies `uniqueValues` (`voteType.uniqueChoices`) to the **raw
+field values** of a ballot, not to "the choices a voter picked": one repeated value and
+the whole ballot is rejected during aggregation. The vote still counts towards
+`voteCount`, so a broken election looks like a working one that nobody voted in.
+
+Some configs can therefore never be tallied:
+
+- **Dense `0/1` layout + `uniqueValues`** (`maxValue === 1`, `maxCount > 2`) — one field
+  per choice means only the values `0` and `1` exist. Above two choices no ballot
+  survives: even a single pick (`[1, 0, 0, 0]`) repeats `0`, so the tally is all zero.
+  This is what the backend derives for a `multichoice` question created with
+  `typeSetup.uniqueChoices: true`. At **exactly two** choices the config is *not*
+  unsatisfiable — `[0, 1]` and `[1, 0]` pass, which is a two-option ranked ballot, so
+  `unsatisfiableProtocolReason` deliberately returns `null` there (matching the
+  backend). Individual ballots that repeat a value (picking both, or abstaining as
+  `[0, 0]`) are refused at **encode** time instead — see below.
+- **Pigeonhole** (`uniqueValues`, `0 < maxValue + 1 < maxCount`) — fewer distinct legal
+  values than fields to fill.
+
+The scrutinizer's field checks also drop **individual ballots** whose config is fine:
+a value above `maxValue`, or a repeated value under `uniqueValues` (duplicate ranks on
+a ranked ballot, both picks of a two-field unique layout). Nothing downstream reports
+those either — the envelope is accepted, `voteCount` rises, the ballot never counts.
+
+So the guard runs at both levels: `encodeBallot` / `encodeQuestionBallot` /
+`validateSelections` **throw** on an unsatisfiable *config* rather than producing a
+ballot that will be discarded, and the encoders additionally run
+`assertEncodedBallot` on every ballot they *produce*, refusing one the chain would
+silently drop — a vote must either count or fail loudly, never mutate into silence.
+`unsatisfiableProtocolReason` / `unsatisfiableQuestionReason` expose the config check
+so a UI can detect an already-created broken question instead of rendering an empty
+result chart. `unsatisfiableQuestionReason` also works on a public question read,
+which omits the derived `ballotProtocol` — the contradiction is still visible in
+`type` + `typeSetup`.
 
 ## Installation
 

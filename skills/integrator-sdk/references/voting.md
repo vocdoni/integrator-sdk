@@ -125,20 +125,96 @@ For approval questions that cap the number of approvals, `ballotProtocol.maxTota
 
 This is also the layout the backend derives for the named `multichoice`
 question type (`maxTotalCost = typeSetup.maxChoices`). `maxValue = 1` always
-means this binary format — `uniqueValues` does not change the wire layout, and
-`encodeQuestionBallot` encodes it as the dense 0/1 vector either way.
+means this binary format.
+
+> ⚠️ **`uniqueValues` must be `false` on this layout.** It does not change the
+> wire format — the scrutinizer applies it to the *raw field values*, and a 0/1
+> vector over more than two options always repeats one of them (even a single
+> pick, `[1, 0, 0, 0]`, repeats `0`). Every ballot is then discarded during
+> aggregation: the election keeps counting `voteCount` while the tally stays all
+> zeros. Uniqueness is already implicit here — each choice is its own field, so
+> a voter *cannot* pick the same option twice.
+>
+> `client.elections.create/update` rejects `typeSetup.uniqueChoices` on
+> `type: 'multichoice'` (as the API itself does) and throws on an unsatisfiable
+> `ballotProtocol`; `encodeQuestionBallot` refuses to encode a ballot for such a
+> question rather than casting a vote that will never count. The encoders also
+> check the ballot they *produce* (`assertEncodedBallot`): a field above
+> `maxValue` or a repeated value under `uniqueValues` throws instead of casting a
+> vote the chain accepts and never counts. To check a question you did not
+> create:
+>
+> ```ts
+> import { unsatisfiableQuestionReason } from '@vocdoni/ballot'
+>
+> const reason = unsatisfiableQuestionReason(question)
+> if (reason) console.error('this question can never be tallied:', reason)
+> ```
 
 ### Ranked / rated (unique values)
 
 `ballotProtocol.maxCount = numOptions`, `ballotProtocol.maxValue = maxRank`,
 `ballotProtocol.uniqueValues = true`
 
-Each option is ranked; values must not repeat.
+Each option is ranked; values must not repeat. This is the one layout where
+`uniqueValues` is satisfiable — `maxValue` has to leave at least `maxCount`
+distinct values (`maxValue >= maxCount - 1`), or no ballot can fill the fields
+without repeating one.
+
+The array is one **rank per option, in choice order** — the field index is the
+option, the value is its score. **Higher wins**: give your top pick
+`numOptions - 1` and your last pick `0`. That orientation matters, because the
+SDK ships no ranked aggregation (see the caveat below) and the *manual* Borda
+snippet it recommends is index-weighted, so ranking with `0` as "best" silently
+inverts the winner. `encodeQuestionBallot` throws on a duplicate rank or a rank
+above `maxValue` — either would make the chain drop the whole ballot at tally.
 
 ```ts
-// 3 candidates; ranked 1st, 3rd, 2nd (0-indexed)
-choices: [0, 2, 1]
+// 3 candidates, voter ranks C2 > C0 > C1.
+// C0 -> 1 (middle), C1 -> 0 (last), C2 -> 2 (top)
+choices: [1, 0, 2]
 ```
+
+> ⚠️ **Ranked is only half-supported** — see
+> [integrator-sdk#22](https://github.com/vocdoni/integrator-sdk/issues/22).
+> `encodeQuestionBallot` passes the array through correctly and the chain
+> tallies it, but `decodeQuestionResults` has **no ranked branch**: it labels the
+> question `multichoice` and reports how many voters ranked each option (the same
+> number for every option), plus a meaningless `abstain` bucket. The ranking is
+> not recoverable through the SDK.
+>
+> The protocol alone cannot distinguish ranked from a pick-slot multichoice that
+> fills every slot — they are byte-identical — which is why this needs an
+> explicit signal rather than better inference.
+>
+> Until then, aggregate the raw matrix yourself. Borda, matching
+> `saas-integrator-demo`:
+>
+> ```ts
+> const scores = results.map((field) => field.reduce((sum, count, rank) => sum + Number(count) * rank, 0))
+> ```
+>
+> Note `react-components` will render such a question as a checkbox group
+> requiring exactly `numOptions` picks, not a rank widget.
+
+### Budget / quadratic (per-option amounts)
+
+`ballotProtocol.maxCount = numOptions`, `ballotProtocol.maxValue = 0`,
+`costExponent = 1` (budget) or `2` (quadratic), `maxTotalCost` caps the spend.
+
+The array has one element per option: the amount allocated to it, in choice
+order.
+
+```ts
+// 4 options; voter allocates 4 to option 0 and 6 to option 2
+choices: [4, 0, 6, 0]
+```
+
+`maxValue = 0` means "no upper bound per option" — and it also changes how the
+**results** come back. The scrutinizer switches to discrete aggregation: each
+option's row holds a single cell with `Σ amount × weight`, not a histogram.
+`decodeQuestionResults` handles that; if you read the matrix by hand, take
+`results[optionPosition][0]`.
 
 Prefer `encodeQuestionBallot(question, selections)` from `@vocdoni/ballot`
 over hand-building this array — it infers the ballot type from

@@ -155,30 +155,30 @@ describe('decodeResults', () => {
   })
 
   describe('budget / quadratic', () => {
-    it('tally is the index-weighted amount per option', () => {
-      // Quadratic worked example: ballots [2,2,2,0], [1,1,2,2], [0,3,1,1] over 4 options.
-      // Per-option histogram rows over allocated amounts.
+    // maxValue === 0 puts the scrutinizer in discrete-aggregation mode: it sums
+    // `value * weight` into column 0 of each field's row and never widens the row
+    // (results.go: "The results are aggregated, so we use only the first column").
+    // These matrices are the shape a live vochain actually returns — verified
+    // against saas-api-dev; an index-weighted read of them decodes to all zeros.
+    it('tally is the single aggregated cell per option', () => {
+      // Quadratic worked example: ballots [2,2,2,0], [1,1,2,2], [0,3,1,1] over 4
+      // options → per-option sums 3, 6, 5, 3.
       const decoded = decodeResults({
         voteType: vt({ maxCount: 4, maxValue: 0, costExponent: 2 }),
         questions: questions(1, 4),
-        results: [
-          ['1', '1', '1'], // opt0: amounts {0,1,2} once each → 0+1+2 = 3
-          ['0', '1', '1', '1'], // opt1: {1,2,3} → 1+2+3 = 6
-          ['0', '1', '2'], // opt2: {1}x1,{2}x2 → 1+4 = 5
-          ['1', '1', '1'], // opt3: {0,1,2} → 0+1+2 = 3
-        ],
+        results: [['3'], ['6'], ['5'], ['3']],
       })
       expect(decoded[0].map((c) => c.votes)).toEqual([3, 6, 5, 3])
     })
 
-    it('budget uses costExponent 1 but decodes the same index-weighted way', () => {
+    it('budget uses costExponent 1 but decodes the same aggregated way', () => {
       const decoded = decodeResults({
         voteType: vt({ maxCount: 3, maxValue: 0, costExponent: 1 }),
         questions: questions(1, 3),
         results: [
-          ['0', '0', '1'], // opt0: amount 2 once → 2
-          ['0', '2'], // opt1: amount 1 twice → 2
-          ['1'], // opt2: amount 0 once → 0
+          ['2'], // opt0: one voter allocated 2
+          ['2'], // opt1: two voters allocated 1 each
+          ['0'], // opt2: nothing allocated
         ],
       })
       expect(decoded[0].map((c) => c.votes)).toEqual([2, 2, 0])
@@ -190,17 +190,24 @@ describe('decodeResults', () => {
       const decoded = decodeResults({
         voteType: vt({ maxCount: 3, maxValue: 0, costExponent: 1 }),
         questions: questionWithValues([0, 4, 9]),
-        results: [
-          ['0', '0', '1'], // position 0 (value 0): amount 2 once → 2
-          ['0', '2'], // position 1 (value 4): amount 1 twice → 2
-          ['1'], // position 2 (value 9): amount 0 once → 0
-        ],
+        results: [['2'], ['2'], ['0']],
       })
       expect(decoded[0].map((c) => [c.choice, c.votes])).toEqual([
         [0, 2],
         [4, 2],
         [9, 0],
       ])
+    })
+
+    it('weights are already applied on chain — the cell is the total, not a count', () => {
+      // results.go worked example: ballots [1,2,3] w=10 and [0,3,1] w=5
+      // → [[1*10+0*5], [2*10+3*5], [3*10+1*5]] = [[10],[35],[35]].
+      const decoded = decodeResults({
+        voteType: vt({ maxCount: 3, maxValue: 0, costExponent: 1 }),
+        questions: questions(1, 3),
+        results: [['10'], ['35'], ['35']],
+      })
+      expect(decoded[0].map((c) => c.votes)).toEqual([10, 35, 35])
     })
   })
 

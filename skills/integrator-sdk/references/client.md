@@ -187,6 +187,11 @@ const draftId = await client.elections.create({
       // (which wins when both are given); omitting both is an error.
       // 'multichoice' requires typeSetup ({ maxChoices, minChoices, uniqueChoices });
       // 'singlechoice' ignores typeSetup.
+      // ⚠️ typeSetup.uniqueChoices MUST be false on 'multichoice' — the derived
+      // dense 0/1 layout makes it unsatisfiable and the chain would discard
+      // every ballot at tally. create/update reject it, as the API does, and
+      // throw on a raw ballotProtocol whose uniqueValues cannot be satisfied.
+      // A ranked ballot uses a ballotProtocol instead. See references/voting.md.
       type: 'singlechoice',
       choices: [{ title: 'No', value: 0 }, { title: 'Yes', value: 1 }],
     },

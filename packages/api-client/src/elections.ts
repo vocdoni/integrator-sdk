@@ -21,10 +21,12 @@ import type {
   ValidateProcessCensusRequest,
   ValidateProcessCensusResponse,
   VotingProcessListResponse,
+  VotingProcessQuestionRequest,
   VotingProcessResponse,
   VotingProcessResultsResponse,
   VotingProcessValidateResponse,
 } from '@vocdoni/api-types'
+import { unsatisfiableProtocolReason } from '@vocdoni/ballot'
 import type { UpFetch } from 'up-fetch'
 import { normalizeQuestionChoiceMeta } from './choice-meta'
 import { normalizeQuestionStatus, normalizeVotingProcess } from './election-status'
@@ -46,8 +48,52 @@ function toMultiLang(value: LocalizedInput | undefined): MultiLangString | undef
   return typeof value === 'string' ? { default: value } : value
 }
 
-/** Normalize every human-facing string in a voting process draft to a language map. */
+/**
+ * Reject a question whose ballot config could never be tallied, before it is sent.
+ *
+ * Both checks mirror what the backend now enforces, so this fails fast and locally
+ * instead of round-tripping — and, critically, it does NOT paper over the API's
+ * answer. An earlier revision of this client silently rewrote
+ * `typeSetup.uniqueChoices` to `false`; that would now swallow a deliberate 400 and
+ * leave the caller believing a config the backend rejected had been accepted.
+ *
+ * - **Named `multichoice` + `uniqueChoices`**: rejected. The type derives the dense
+ *   layout (one 0/1 field per choice), where uniqueness is both vacuous — a voter
+ *   cannot select the same choice twice — and fatal above two choices, since every
+ *   ballot then repeats a value and is discarded at tally, leaving an all-zero
+ *   result. The backend rejects it at the API boundary with the same reasoning
+ *   (`api/processes.go`, and see saas-backend#619); a ranked ballot is expressed as
+ *   a raw `ballotProtocol` instead.
+ * - **Raw `ballotProtocol`**: rejected when unsatisfiable, matching the backend's
+ *   `ValidateBallotProtocol` exactly — unsatisfiability only, never plausibility, so
+ *   every shape a voter could actually satisfy stays expressible.
+ */
+function validateQuestionBallotConfig(question: VotingProcessQuestionRequest, index: number): void {
+  if (question.ballotProtocol) {
+    const unsatisfiable = unsatisfiableProtocolReason(question.ballotProtocol)
+    if (unsatisfiable) {
+      throw new Error(`Question ${index}: unsatisfiable ballotProtocol — ${unsatisfiable}`)
+    }
+    return
+  }
+
+  if (question.type === 'multichoice' && question.typeSetup?.uniqueChoices) {
+    throw new Error(
+      `Question ${index}: uniqueChoices is not supported for multichoice, where each choice is ` +
+        'an independent yes/no field — a voter already cannot select one twice, and a ' +
+        'unique-values ballot over those fields admits no vote at all, tallying every election ' +
+        'to zero. Set it false, or use a ballotProtocol for a ranked ballot'
+    )
+  }
+}
+
+/**
+ * Normalize a voting process draft for the API: every human-facing string becomes a
+ * language map. Question ballot configs are validated, never rewritten — see
+ * {@link validateQuestionBallotConfig} for why silently correcting them is wrong.
+ */
 function normalizeVotingProcessRequest(req: CreateVotingProcessRequest): CreateVotingProcessRequest {
+  req.questions?.forEach(validateQuestionBallotConfig)
   return {
     ...req,
     title: toMultiLang(req.title)!,

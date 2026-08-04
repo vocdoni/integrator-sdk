@@ -446,12 +446,33 @@ export interface BallotProtocol {
   maxTotalCost: number
   maxValue: number
   maxVoteOverwrites: number
+  /**
+   * Every ballot field must carry a distinct value. Applied by the scrutinizer to
+   * the **raw field values**, not to "the choices a voter picked" — so it is
+   * unsatisfiable whenever there are fewer legal values than fields, and in
+   * particular on the dense 0/1 layout (`maxValue: 1`, `maxCount > 1`), where a
+   * ballot can only ever hold two distinct values. An unsatisfiable protocol
+   * produces an election that accepts votes and tallies zeros; check one with
+   * `unsatisfiableProtocolReason` from `@vocdoni/ballot` (which
+   * `@vocdoni/api-client` runs on every create/update).
+   */
   uniqueValues: boolean
 }
 
 export interface QuestionTypeSetup {
   maxChoices: number
   minChoices: number
+  /**
+   * ⚠️ Must be `false` for `"multichoice"`. The backend derives the **dense**
+   * layout for that type (one 0/1 field per choice) yet still maps this flag onto
+   * the on-chain `voteMode.uniqueValues`, which the scrutinizer applies to raw
+   * field values — a 0/1 vector over more than two choices always repeats a value,
+   * so every ballot is discarded at tally and the election reports zeros while
+   * still counting `voteCount`. Both the API and `@vocdoni/api-client` reject it
+   * on create/update rather than correcting it — a ranked ballot is expressed as a
+   * raw {@link BallotProtocol} instead. Detect an already-created broken question
+   * with `unsatisfiableQuestionReason` from `@vocdoni/ballot`.
+   */
   uniqueChoices: boolean
 }
 
@@ -739,7 +760,8 @@ export interface VotingProcessQuestionRequest {
   /**
    * Type-specific configuration. Required for `"multichoice"`, which validates
    * `1 <= maxChoices <= choices.length` and `minChoices <= maxChoices`.
-   * `"singlechoice"` ignores it.
+   * `"singlechoice"` ignores it. See {@link QuestionTypeSetup.uniqueChoices} for
+   * why that one flag is rejected on multichoice.
    */
   typeSetup?: QuestionTypeSetup
   secretUntilTheEnd?: boolean

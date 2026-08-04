@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { Election } from '@vocdoni/api-types'
-import { encodeBallot } from './encode.js'
-import { decodeResults } from './decode.js'
+import { encodeBallot, encodeQuestionBallot } from './encode.js'
+import { decodeQuestionResults, decodeResults } from './decode.js'
 
 /**
  * Encode → decode round-trips. Encoding a single voter's selections yields one
@@ -33,8 +33,17 @@ const createElection = (
   })),
 })
 
-/** One voter's ballot → rectangular one-hot histogram (results[field][value] = 1). */
-const histogramFromBallot = (ballot: number[]): string[][] => {
+/**
+ * One voter's ballot → the results matrix a vochain would hold after that vote.
+ *
+ * Two modes, matching `results.AddVote`:
+ * - `maxValue > 0`: histogram — `results[field][value] += weight`, so one voter
+ *   produces a one-hot row per field.
+ * - `maxValue === 0` (budget / quadratic): discrete aggregation — the value itself
+ *   is summed into `results[field][0]`, and the row stays one cell wide.
+ */
+const resultsFromBallot = (voteType: Election['voteType'], ballot: number[]): string[][] => {
+  if (voteType.maxValue === 0) return ballot.map((value) => [String(value)])
   const width = Math.max(...ballot, 0) + 1
   return ballot.map((value) => {
     const row = new Array(width).fill('0')
@@ -44,7 +53,9 @@ const histogramFromBallot = (ballot: number[]): string[][] => {
 }
 
 const votesOf = (election: Pick<Election, 'questions' | 'voteType' | 'results'>, ballot: number[]) =>
-  decodeResults({ ...election, results: histogramFromBallot(ballot) }).map((q) => q.map((c) => c.votes))
+  decodeResults({ ...election, results: resultsFromBallot(election.voteType, ballot) }).map((q) =>
+    q.map((c) => c.votes)
+  )
 
 describe('encode ↔ decode round-trip', () => {
   it('single-choice (multi-question)', () => {
@@ -82,6 +93,38 @@ describe('encode ↔ decode round-trip', () => {
     // Decode recovers the single real pick and unifies both sentinel columns (5 and 6)
     // into one abstain bucket of maxCount - picks = 2.
     expect(votesOf(election, ballot)).toEqual([[0, 0, 0, 1, 0, 2]])
+  })
+
+  it('named multichoice (dense) under the fixed config', () => {
+    // The shape of the affected live questions once uniqueChoices is off: 4
+    // choices, maxChoices 4. Two voters pick {0,2} and {2,3} — the dense matrix
+    // is one [notSelected, selected] row per choice.
+    const question = {
+      type: 'multichoice',
+      typeSetup: { minChoices: 0, maxChoices: 4, uniqueChoices: false },
+      choices: Array.from({ length: 4 }, (_, j) => ({ title: { default: `C${j}` }, value: j })),
+    }
+
+    const ballots = [encodeQuestionBallot(question, [0, 2]), encodeQuestionBallot(question, [2, 3])]
+    expect(ballots).toEqual([
+      [1, 0, 1, 0],
+      [0, 0, 1, 1],
+    ])
+
+    // Tally the two ballots the way the scrutinizer does: results[field][value].
+    const results = question.choices.map((_c, field) => {
+      const row = ['0', '0']
+      for (const ballot of ballots) row[ballot[field]] = String(Number(row[ballot[field]]) + 1)
+      return row
+    })
+    expect(results).toEqual([
+      ['1', '1'],
+      ['2', '0'],
+      ['0', '2'],
+      ['1', '1'],
+    ])
+
+    expect(decodeQuestionResults(question, results).map((c) => c.votes)).toEqual([1, 0, 2, 1])
   })
 
   it('budget', () => {

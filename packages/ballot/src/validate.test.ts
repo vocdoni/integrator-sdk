@@ -81,6 +81,16 @@ describe('validateSelections', () => {
     it('throws on an invalid choice, worded as a value (not an index)', () => {
       expect(() => validateSelections(election, [[0, 9]])).toThrow(/invalid choice value/i)
     })
+
+    it('allows a repeated pick when choices may repeat', () => {
+      expect(() => validateSelections(election, [[2, 2]])).not.toThrow()
+    })
+
+    it('throws on a repeated pick under uniqueChoices — it encodes to a dropped ballot', () => {
+      const unique = createElection({ maxCount: 3, maxValue: 6, uniqueChoices: true })
+      expect(() => validateSelections(unique, [[0, 2]])).not.toThrow()
+      expect(() => validateSelections(unique, [[2, 2]])).toThrow(/picking choice 2 twice/)
+    })
   })
 
   describe('budget / quadratic', () => {
@@ -108,6 +118,12 @@ describe('validateSelections', () => {
       const budget = createElection({ maxValue: 0, costExponent: 1 })
       expect(() => validateSelections(budget, [[10, -1, 0, 0, 0]])).toThrow(/non-negative integers/i)
       expect(() => validateSelections(budget, [[10, 1.5, 0, 0, 0]])).toThrow(/non-negative integers/i)
+    })
+
+    it('throws on a repeated amount when the election demands unique values (legacy shape)', () => {
+      const unique = createElection({ maxValue: 0, costExponent: 1, uniqueChoices: true })
+      expect(() => validateSelections(unique, [[10, 20, 30, 40, 50]])).not.toThrow()
+      expect(() => validateSelections(unique, [[10, 10, 30, 40, 50]])).toThrow(/every amount to be distinct/)
     })
   })
 

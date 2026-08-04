@@ -19,7 +19,8 @@ creates all of its own data — org, members, group, census, processes, votes �
 so there are no dev-DB fixtures to rot. It runs in CI
 (`.github/workflows/integration.yml`) against a disposable saas-api + vochain
 container on every pull request, on pushes to `main`, and on a nightly
-schedule. The whole job takes ~3.5 minutes.
+schedule. The whole job takes ~7 minutes (~5.7 min of it the suite itself:
+9 on-chain elections and 36 votes, each a CSP sign + relay + job poll).
 
 To run the same stack locally:
 
@@ -49,27 +50,40 @@ export those and run `pnpm test:integration` directly. If port `8080` (or
    jobs endpoint for the import.
 3. Read the auto-created "All members" group.
 4. Build and publish a CSP census from that group.
-5. Create and publish 3 processes (each embedding its census via
+5. Create and publish 4 processes (each embedding its census via
    `census: { groupId, authFields }` — publish rejects censusless processes) —
-   single-choice, multi-choice, and a `secretUntilTheEnd` single-choice whose
-   per-question encryption keys are polled after publish. For each, prove the
+   single-choice, multi-choice, a `secretUntilTheEnd` single-choice whose
+   per-question encryption keys are polled after publish, and a **ballot
+   protocol matrix** (6 questions: approval, capped approval, pick-slot
+   multichoice, ranked, budget, quadratic). For each, prove the
    **public voter surface** (saas-backend#599): the draft 404s on the
    token-less process read before publish; once published the process read is
    fully public — `chainId`, census `size`/`totalWeight`, questions — with
    `eligibleMemberIds` stripped; plus the token-less question read (choices,
    `ballotProtocol`/`type`, `upstreamId`, and the secret question's
-   `encryptionKeys`) and the public process list.
-6. Bundle every question's on-chain process; 3 members vote on every question
-   through the **legacy bundle CSP flow** — the secret question's ballots
-   sealed with its encryption keys.
-7. A 4th member votes every process through the **process-scoped CSP flow**
+   `encryptionKeys`) and the public process list. Also assert no question ships
+   an unsatisfiable ballot config, and that a multichoice question created with
+   `uniqueChoices: true` was normalized to `false`.
+6. 4 members vote on every question through the **process-scoped CSP flow**
    (`client.processes`: `authStep0` → `check` → `sign`), with `chainId` read
-   straight off the **public** process read — no integrator handoff.
-8. Assert one distinct vote nullifier per (member, question) — 12 in total.
-9. Read the live public tallies (`getResults` + single reads): every question
+   straight off the **public** process read — no integrator handoff. The secret
+   question's ballots are sealed with its encryption keys.
+7. Assert one distinct vote nullifier per (member, question) — 36 in total.
+8. Read the live public tallies (`getResults` + single reads): every question
    reaches `voteCount = 4` with `finalResults = false`, `maxVoters` = census
-   size, and a tally matrix for cleartext questions (a secret question's
-   matrix stays hidden until key reveal).
+   size, and — for cleartext questions — the **decoded per-choice tally**
+   matches the expected result exactly (a secret question's matrix stays hidden
+   until key reveal).
+
+### Why decoded tallies, not just `voteCount`
+
+`voteCount` counts accepted *envelopes*. The vochain scrutinizer validates the
+ballot separately, during aggregation, and a ballot it rejects is skipped with
+only a log line while `voteCount` keeps rising. A broken election is therefore
+indistinguishable from an unpopular one unless you decode the tally and compare
+it to what the voters actually picked. Two silent all-zero-results bugs were
+found exactly this way, which is why every supported ballot type is voted and
+asserted here rather than only the two named question types.
 
 ## Configuration
 
@@ -79,5 +93,8 @@ export those and run `pnpm test:integration` directly. If port `8080` (or
 | `INTEGRATION_API_KEY` | — (suite skips without it)         | Integrator API key (`vsk_…`)  |
 
 The key's organization must be an **integrator** with scopes `managed:write` +
-`members:write` + `voting:write`, and quota for ≥3 processes / ≥300 census
-size. The suite creates real on-chain elections and votes.
+`members:write` + `voting:write`, and quota for ≥4 processes / ≥9 on-chain
+elections / ≥300 census size. The suite creates real on-chain elections and
+casts 36 real votes, so expect it to take ~6 minutes. (The disposable stack
+above provisions all of that for you — this only applies when pointing
+`INTEGRATION_API_URL` at a shared environment.)
