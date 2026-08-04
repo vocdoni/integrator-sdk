@@ -9,7 +9,8 @@ vi.mock('../../../confirm/useConfirm', () => ({
   useConfirm: () => ({ confirm: () => Promise.resolve(true) }),
 }))
 
-import { QuestionsFormProvider } from './Form'
+import { act } from '@testing-library/react'
+import { QuestionsFormProvider, useQuestionsForm } from './Form'
 import { QuestionTip } from './Tip'
 
 let captured: any
@@ -20,6 +21,12 @@ const slots = {
       return null
     },
   },
+}
+
+let fmethods: ReturnType<typeof useQuestionsForm>['fmethods']
+const GrabForm = () => {
+  fmethods = useQuestionsForm().fmethods
+  return null
 }
 
 const oneQuestion = [
@@ -54,5 +61,35 @@ describe('QuestionTip (via inferQuestionBallotType)', () => {
     expect(
       renderTip(makeProcess({ questions: oneQuestion, voteType: { maxCount: 3, maxValue: 1 } })),
     ).toBeUndefined()
+  })
+
+  it("follows the voter's selections on the question's own field", () => {
+    const election = makeProcess({
+      questions: [oneQuestion[0], oneQuestion[0]],
+      voteType: { maxCount: 3, maxValue: 2, uniqueChoices: true },
+    })
+    state.election = election
+    captured = undefined
+    renderWithComponents(
+      <QuestionsFormProvider>
+        <GrabForm />
+        <QuestionTip question={election.questions[1]} index='1' />
+      </QuestionsFormProvider>,
+      slots,
+    )
+
+    expect(captured?.text).toContain('0')
+
+    act(() => {
+      fmethods.setValue('1', ['0', '2'])
+    })
+    expect(captured?.text).toContain('2')
+
+    // Selections on OTHER questions must not leak into this tip's count.
+    act(() => {
+      fmethods.setValue('0', ['1'])
+      fmethods.setValue('1', ['0', '1', '2'])
+    })
+    expect(captured?.text).toContain('3')
   })
 })

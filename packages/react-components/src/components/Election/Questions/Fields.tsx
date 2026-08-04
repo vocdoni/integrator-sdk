@@ -65,7 +65,7 @@ export const ElectionQuestion = ({ question, index }: QuestionProps) => {
           presentation={getQuestionPresentation(question)}
         />
       }
-      tip={<QuestionTip question={question} />}
+      tip={<QuestionTip question={question} index={index} />}
     />
   )
 }
