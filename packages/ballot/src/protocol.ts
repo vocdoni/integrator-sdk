@@ -35,9 +35,11 @@ export type ProtocolBounds = Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uni
  * The dense 0/1 multichoice layout (`maxValue === 1`) is the shape this exists for:
  * over more than two choices only 0 and 1 are available, so every ballot repeats a
  * value — even a single pick, `[1, 0, 0, 0]`, repeats `0`. Note that at *exactly* two
- * fields `[0, 1]` and `[1, 0]` do satisfy it, which is a two-option ranked ballot;
- * that is allowed here, matching the backend. The named `multichoice` type cannot
- * reach it either way, because the API rejects `typeSetup.uniqueChoices` outright.
+ * fields `[0, 1]` and `[1, 0]` do satisfy it — a satisfiable 2-option index-list
+ * multichoice (wire-identical to a 2-option ranked ballot; real ranked decoding is
+ * tracked separately in issue #22); that is allowed here, matching the backend. The
+ * named `multichoice` type cannot reach it either way, because the API rejects
+ * `typeSetup.uniqueChoices` outright.
  *
  * `maxValue === 0` means "no upper bound" (budget / quadratic), so uniqueness is
  * always satisfiable there and is never reported.

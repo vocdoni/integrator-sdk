@@ -61,7 +61,7 @@ describe('questionSelectionRange', () => {
   it('dense multichoice: max is maxTotalCost, min defaults to 1', () => {
     // Backend derivation for the named type: maxCount = numChoices, maxValue = 1,
     // maxTotalCost = maxChoices. maxCount is NOT the pick bound here.
-    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: true })
+    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: false })
     expect(questionSelectionRange({ ballotProtocol: dense, type: 'multichoice', choices })).toEqual({
       min: 1,
       max: 2,
@@ -69,12 +69,12 @@ describe('questionSelectionRange', () => {
   })
 
   it('dense multichoice: min comes from typeSetup.minChoices when present', () => {
-    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 3, uniqueValues: true })
+    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 3, uniqueValues: false })
     expect(
       questionSelectionRange({
         ballotProtocol: dense,
         type: 'multichoice',
-        typeSetup: { maxChoices: 3, minChoices: 2, uniqueChoices: true },
+        typeSetup: { maxChoices: 3, minChoices: 2, uniqueChoices: false },
         choices,
       })
     ).toEqual({ min: 2, max: 3 })
@@ -100,13 +100,21 @@ describe('questionSelectionRange', () => {
     })
   })
 
-  it('pick-slot multichoice: max is maxCount, min depends on abstain reservation', () => {
-    // Reserves abstain (maxValue 4 >= 3 - 1 + 2): partial picks allowed.
-    const withAbstain = bp({ maxCount: 2, maxValue: 4, uniqueValues: true })
-    expect(questionSelectionRange({ ballotProtocol: withAbstain, choices })).toEqual({ min: 1, max: 2 })
-    // No abstain reservation: must fill every slot.
-    const withoutAbstain = bp({ maxCount: 2, maxValue: 2, uniqueValues: false })
-    expect(questionSelectionRange({ ballotProtocol: withoutAbstain, choices })).toEqual({ min: 2, max: 2 })
+  it('pick-slot multichoice: max is maxCount, min follows minChoices', () => {
+    // maxCount is the pick bound. A partial selection is always encodable now (padded with
+    // sentinels when the protocol reserves headroom, returned short otherwise), so min
+    // follows typeSetup.minChoices rather than forcing a full maxCount slate.
+    const withHeadroom = bp({ maxCount: 3, maxValue: 5, uniqueValues: true })
+    expect(questionSelectionRange({ ballotProtocol: withHeadroom, choices })).toEqual({ min: 1, max: 3 })
+    const noHeadroom = bp({ maxCount: 3, maxValue: 2, uniqueValues: false })
+    expect(questionSelectionRange({ ballotProtocol: noHeadroom, choices })).toEqual({ min: 1, max: 3 })
+    expect(
+      questionSelectionRange({
+        ballotProtocol: noHeadroom,
+        typeSetup: { maxChoices: 3, minChoices: 2, uniqueChoices: false },
+        choices,
+      })
+    ).toEqual({ min: 2, max: 3 })
   })
 
   it('single-choice: exactly one', () => {

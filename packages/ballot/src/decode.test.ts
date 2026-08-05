@@ -99,9 +99,10 @@ describe('decodeResults', () => {
   })
 
   describe('multichoice', () => {
-    it('tally is the column sum across pick-slot fields, plus a zero abstain bucket', () => {
-      // 3 pick-slots (fields), each a histogram over the 5 choice values. No sentinel
-      // columns present → the trailing abstain bucket is 0.
+    it('tally is the column sum across pick-slot fields (no abstain bucket when impossible)', () => {
+      // 3 pick-slots (fields), each a histogram over the 5 choice values. No abstain headroom
+      // (maxValue 4 < numChoices 5), so abstention is structurally impossible and no abstain
+      // bucket is emitted — avoids a misleading always-empty "Abstention" field.
       const decoded = decodeResults({
         voteType: vt({ maxCount: 3, maxValue: 4 }),
         questions: questions(1, 5),
@@ -111,8 +112,8 @@ describe('decodeResults', () => {
           ['0', '0', '2', '0', '1'], // slot 2: choice 2 x2, choice 4 x1
         ],
       })
-      expect(decoded[0].map((c) => c.votes)).toEqual([3, 2, 2, 1, 1, 0])
-      expect(decoded[0].at(-1)).toMatchObject({ choice: 'abstain', votes: 0 })
+      expect(decoded[0].map((c) => c.votes)).toEqual([3, 2, 2, 1, 1])
+      expect(decoded[0].find((c) => c.choice === 'abstain')).toBeUndefined()
     })
 
     it('unifies repeated abstain sentinel columns into a single bucket (uniqueChoices false)', () => {
@@ -213,11 +214,13 @@ describe('decodeResults', () => {
 
   describe('empty / missing results', () => {
     it('returns a uniform zero-filled shape (never throws, no bare [])', () => {
-      // multichoice always carries a trailing abstain bucket, so its shape is choices + 1.
+      // multichoice carries a trailing abstain bucket only when it reserves headroom for
+      // sentinel values; without headroom it is just the choices.
       const cases: Array<[Election['voteType'], number]> = [
         [vt({ maxCount: 1, maxValue: 2 }), 3], // single-choice
         [vt({ maxCount: 3, maxValue: 1, uniqueChoices: false }), 3], // approval
-        [vt({ maxCount: 3, maxValue: 2 }), 4], // multichoice (3 choices + abstain)
+        [vt({ maxCount: 3, maxValue: 2 }), 3], // multichoice, no abstain headroom → choices only
+        [vt({ maxCount: 3, maxValue: 5 }), 4], // multichoice with abstain headroom → choices + 1
         [vt({ maxCount: 3, maxValue: 0, costExponent: 1 }), 3], // budget
       ]
       for (const [voteType, expectedLength] of cases) {
@@ -257,7 +260,7 @@ describe('decodeQuestionResults', () => {
     // Dense layout: one row per choice, [notSelected, selected]. 4 voters:
     // A picked by 1, B by 0, C by 2. The pick-slot decoder would instead sum
     // histogram columns by choice value and invent an abstain bucket.
-    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: true })
+    const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: false })
     const decoded = decodeQuestionResults(
       { ballotProtocol: dense, type: 'multichoice', choices },
       [
@@ -300,5 +303,75 @@ describe('decodeQuestionResults', () => {
       { choice: 2, votes: 2, percentage: (2 / 6) * 100 },
       { choice: 'abstain', votes: 1, percentage: (1 / 6) * 100 },
     ])
+  })
+
+  it('decodes a real index-list election by column sum, with no abstain bucket', () => {
+    // Live dev election 6a7316275fe6ad98c8c97a3c: 4 choices, maxCount 4, maxValue 3
+    // (=== numChoices-1, no abstain headroom). Ballots [0,1,2,3] and a short [1,2] produce
+    // this histogram; the column sum tallies each choice value across the 4 pick-slots.
+    const four = Array.from({ length: 4 }, (_, j) => ({ title: { default: `C${j}` }, value: j }))
+    const indexList = bp({
+      maxCount: 4,
+      maxValue: 3,
+      maxTotalCost: 0,
+      costExponent: 1,
+      uniqueValues: true,
+      maxVoteOverwrites: 0,
+      costFromWeight: false,
+    })
+    const decoded = decodeQuestionResults(
+      { ballotProtocol: indexList, choices: four },
+      [
+        ['1', '1', '0', '0'],
+        ['0', '1', '1', '0'],
+        ['0', '0', '1', '0'],
+        ['0', '0', '0', '1'],
+      ]
+    )
+    expect(decoded.map((c) => c.votes)).toEqual([1, 2, 2, 1])
+    expect(decoded.find((c) => c.choice === 'abstain')).toBeUndefined()
+  })
+
+  it('decodes a dense 4-choice matrix by the selected column', () => {
+    // Dense layout: one [notSelected, selected] row per choice. 4 voters across 4 choices.
+    const four = Array.from({ length: 4 }, (_, j) => ({ title: { default: `C${j}` }, value: j }))
+    const dense = bp({ maxCount: 4, maxValue: 1, maxTotalCost: 4, uniqueValues: false })
+    const decoded = decodeQuestionResults(
+      { ballotProtocol: dense, type: 'multichoice', choices: four },
+      [
+        ['1', '3'],
+        ['0', '4'],
+        ['0', '4'],
+        ['1', '3'],
+      ]
+    )
+    expect(decoded.map((c) => c.votes)).toEqual([3, 4, 4, 3])
+    expect(decoded.find((c) => c.choice === 'abstain')).toBeUndefined()
+  })
+
+  it('emits an abstain bucket only when the protocol reserves headroom', () => {
+    // Headroom (maxValue 7 >= numChoices-1+maxCount = 5): abstain bucket present even at 0.
+    const headroom = bp({ maxCount: 3, maxValue: 7, uniqueValues: true })
+    const withHeadroom = decodeQuestionResults(
+      { ballotProtocol: headroom, choices },
+      [
+        ['1', '0', '0', '0', '0', '0', '0'],
+        ['0', '1', '0', '0', '0', '0', '0'],
+        ['0', '0', '1', '0', '0', '0', '0'],
+      ]
+    )
+    expect(withHeadroom.find((c) => c.choice === 'abstain')).toMatchObject({ votes: 0 })
+
+    // No headroom (maxValue 2 < 5): abstention impossible, no bucket.
+    const noHeadroom = bp({ maxCount: 3, maxValue: 2, uniqueValues: true })
+    const withoutHeadroom = decodeQuestionResults(
+      { ballotProtocol: noHeadroom, choices },
+      [
+        ['1', '0', '0'],
+        ['0', '1', '0'],
+        ['0', '0', '1'],
+      ]
+    )
+    expect(withoutHeadroom.find((c) => c.choice === 'abstain')).toBeUndefined()
   })
 })

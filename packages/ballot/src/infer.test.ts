@@ -65,17 +65,9 @@ describe('inferBallotType', () => {
       })
     })
 
-    describe('Approval (maxValue === 1)', () => {
+    describe('Approval (maxValue === 1, uniqueChoices false)', () => {
       it('infers approval when maxValue === 1 and uniqueChoices === false', () => {
         const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: false })
-        expect(inferBallotType(election)).toBe(BallotType.Approval)
-      })
-
-      it('infers approval when maxValue === 1 even with uniqueChoices === true', () => {
-        // maxValue === 1 is always the dense 0/1 layout — a pick-slot layout needs
-        // maxValue >= numChoices - 1 to address every choice. uniqueChoices does not
-        // change the wire format.
-        const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: true })
         expect(inferBallotType(election)).toBe(BallotType.Approval)
       })
     })
@@ -91,10 +83,12 @@ describe('inferBallotType', () => {
         expect(inferBallotType(election)).toBe(BallotType.MultiChoice)
       })
 
-      it('handles the 2-option edge case (maxValue === 1 collides with approval)', () => {
-        // This is a documented ambiguity: 2-option multichoice can produce maxValue === 1
-        const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: false })
-        expect(inferBallotType(election)).toBe(BallotType.Approval)
+      it('infers multichoice for a 2-option index-list (maxValue === 1, uniqueChoices true)', () => {
+        // maxValue === 1 with uniqueChoices is a 2-option index-list (the only satisfiable
+        // such shape is maxCount === 2 — pigeonhole); uniqueChoices is what separates it
+        // from dense approval, which is always uniqueChoices: false.
+        const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: true })
+        expect(inferBallotType(election)).toBe(BallotType.MultiChoice)
       })
     })
   })
@@ -147,26 +141,37 @@ describe('inferQuestionBallotType', () => {
     ).toBe(BallotType.SingleChoice)
   })
 
-  describe('dense protocols (maxValue === 1, maxCount > 1)', () => {
-    // The backend derives this shape for the named multichoice type: one 0/1 field
-    // per choice, maxTotalCost bounding the picks. The named type keeps its semantic
-    // MultiChoice label; anything else is approval. uniqueValues never changes the
-    // inferred type — the wire layout is dense either way.
-    const dense = (uniqueValues: boolean) =>
-      bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues })
+  describe('dense protocols (maxValue === 1, maxCount > 1, uniqueValues false)', () => {
+    // The backend derives this shape for the named multichoice type: one 0/1 field per
+    // choice, maxTotalCost bounding the picks. The named type keeps its semantic MultiChoice
+    // label; anything else is approval. uniqueValues must be false here — dense + uniqueValues
+    // is the unsatisfiable pigeonhole shape rejected at creation, and at maxValue === 1 a
+    // uniqueValues protocol is instead a 2-option index-list (see the next describe).
+    const dense = () => bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: false })
 
     it('keeps the MultiChoice label for named multichoice questions', () => {
       expect(
-        inferQuestionBallotType({ ballotProtocol: dense(true), type: 'multichoice' })
-      ).toBe(BallotType.MultiChoice)
-      expect(
-        inferQuestionBallotType({ ballotProtocol: dense(false), type: 'multichoice' })
+        inferQuestionBallotType({ ballotProtocol: dense(), type: 'multichoice' })
       ).toBe(BallotType.MultiChoice)
     })
 
     it('infers approval for dense protocols without the multichoice type', () => {
-      expect(inferQuestionBallotType({ ballotProtocol: dense(false) })).toBe(BallotType.Approval)
-      expect(inferQuestionBallotType({ ballotProtocol: dense(true) })).toBe(BallotType.Approval)
+      expect(inferQuestionBallotType({ ballotProtocol: dense() })).toBe(BallotType.Approval)
+    })
+  })
+
+  describe('2-option index-list (maxValue === 1, uniqueValues true)', () => {
+    // The only satisfiable maxValue === 1 && uniqueValues shape is maxCount === 2
+    // (pigeonhole): two pick-slots holding values 0 and 1. It is an index-list multichoice
+    // (wire-identical to a 2-option ranked ballot), so it takes the MultiChoice label even
+    // with no named type — the backend empties the type label for shapes it cannot name.
+    const twoOpt = () => bp({ maxCount: 2, maxValue: 1, uniqueValues: true })
+
+    it('infers multichoice with or without the named type', () => {
+      expect(inferQuestionBallotType({ ballotProtocol: twoOpt() })).toBe(BallotType.MultiChoice)
+      expect(
+        inferQuestionBallotType({ ballotProtocol: twoOpt(), type: 'multichoice' })
+      ).toBe(BallotType.MultiChoice)
     })
   })
 

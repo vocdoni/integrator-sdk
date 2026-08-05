@@ -41,10 +41,14 @@
  *
  * ─── Format D: Legacy pick-slot multichoice (raw ballotProtocol only) ──────
  *   question.ballotProtocol.maxCount = maximum number of picks allowed
- *   question.ballotProtocol.maxValue = numOptions - 1 + abstain allowance
+ *   question.ballotProtocol.maxValue = numOptions - 1 (no abstain headroom), or
+ *     numOptions - 1 + abstain allowance when the election allows abstention
+ *   question.ballotProtocol.uniqueValues = true
  *   selections = the option indexes the voter picked, e.g. [1, 3]
- *   encodeQuestionBallot pads any unpicked slots with abstain sentinels for you
- *   when the question's ballotProtocol reserves room for them.
+ *   Ballots may be shorter than maxCount: encodeQuestionBallot pads unpicked slots
+ *   with abstain sentinels when maxValue reserves room for them, and returns the
+ *   short ballot as-is otherwise (the chain accepts it; the vochain enforces only
+ *   the upper bound). The minimum pick count is a UI concern (typeSetup.minChoices).
  *   Only produced by passing a raw ballotProtocol — the named `multichoice`
  *   type always derives Format B.
  *

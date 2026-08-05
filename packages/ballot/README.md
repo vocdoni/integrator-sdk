@@ -105,7 +105,7 @@ Only single-choice is ever multi-question, so a flat array is unambiguous:
 |---|---|---|
 | single-choice | one chosen value per question `[v0, v1, …]` | one value per question `[v0, v1, …]` |
 | approval | the approved choice values | dense `0/1` vector over every option |
-| multichoice | the picked choice values | exactly `maxCount` values; unfilled slots padded with abstain sentinels |
+| multichoice | the picked choice values | one value per pick-slot; unfilled slots padded with abstain sentinels when the protocol reserves them, otherwise a short ballot |
 | budget / quadratic | the per-option amounts, in choice order | the amount array unchanged |
 
 **Abstaining:**
@@ -116,11 +116,14 @@ Only single-choice is ever multi-question, so a flat array is unambiguous:
   both `encodeBallot` and `validateSelections`.
 - **multichoice** pads short selections up to `maxCount` with abstain sentinels — a single
   repeated value `choices.length` when `uniqueChoices` is `false`, or distinct ascending
-  values `choices.length, choices.length + 1, …` when `uniqueChoices` is `true`. This requires
-  the election to reserve enough room (`maxValue >= choices.length - 1 + (uniqueChoices ?
-  maxCount : 1)`); otherwise a partial selection throws and the voter must pick exactly
-  `maxCount` choices. On the way back, `decodeResults` **unifies** all sentinel columns into a
-  single trailing `{ choice: 'abstain', … }` bucket per multichoice question.
+  values `choices.length, choices.length + 1, …` when `uniqueChoices` is `true` — but only when
+  the election reserves enough room (`maxValue >= choices.length - 1 + (uniqueChoices ?
+  maxCount : 1)`). With no reserved room the ballot is sent **short**: the vochain enforces
+  only the upper bound, and the legacy SDK sends short ballots unpadded. A minimum pick count
+  is the UI's job (`typeSetup.minChoices`), not the encoder's. On the way back,
+  `decodeResults` **unifies** all sentinel columns into a single trailing
+  `{ choice: 'abstain', … }` bucket per multichoice question — and only when the protocol
+  reserves room for sentinels; a no-headroom question has no abstain bucket at all.
 
 ## Decoding semantics
 
@@ -134,6 +137,11 @@ depends on the protocol:
 | pick-slot multichoice | one row per pick-slot, columns are choice values | column sum across rows; sentinel columns (`>= choices.length`) unify into one `abstain` bucket |
 | budget / quadratic | one row per option, **one column** | `results[optionPos][0]` |
 
+The decoder tells dense and pick-slot multichoice apart from the protocol, not a flag: dense
+is `maxValue === 1 && !uniqueValues` (one 0/1 field per choice), pick-slot is every other
+`maxCount > 1` multichoice (`uniqueValues: true`, or `maxValue >= 2`). A protocol-less named
+`multichoice` question decodes dense.
+
 The budget/quadratic row is a single cell because `maxValue === 0` switches the
 scrutinizer to *discrete aggregation*: it accumulates `Σ amount × weight` into column
 0 instead of bucketing a histogram (vocdoni-node `vochain/results/results.go` —
@@ -145,8 +153,8 @@ Reading such a row as a histogram yields zero for every option.
 > protocol (`uniqueValues: true`, `maxValue >= maxCount - 1`) encodes correctly — pass
 > one score per option in choice order, **higher wins** — but there is no ranked branch
 > in the decoder: it is labelled `multichoice`, so `decodeResults` reports *how many
-> voters ranked each option* (plus an always-zero `abstain` bucket), not the resulting
-> order.
+> voters ranked each option* (a ranked protocol reserves no sentinel headroom, so there is
+> no `abstain` bucket), not the resulting order.
 >
 > The protocol cannot be told apart from a pick-slot multichoice that fills every slot —
 > the two are byte-identical, with field index meaning *option* in one and *slot* in the
@@ -168,10 +176,11 @@ Some configs can therefore never be tallied:
   survives: even a single pick (`[1, 0, 0, 0]`) repeats `0`, so the tally is all zero.
   This is what the backend derives for a `multichoice` question created with
   `typeSetup.uniqueChoices: true`. At **exactly two** choices the config is *not*
-  unsatisfiable — `[0, 1]` and `[1, 0]` pass, which is a two-option ranked ballot, so
-  `unsatisfiableProtocolReason` deliberately returns `null` there (matching the
-  backend). Individual ballots that repeat a value (picking both, or abstaining as
-  `[0, 0]`) are refused at **encode** time instead — see below.
+  unsatisfiable — `[0, 1]` and `[1, 0]` pass. That shape (`maxValue === 1`,
+  `uniqueValues: true`) is a 2-option index-list multichoice, wire-identical to a 2-option
+  ranked ballot, so `unsatisfiableProtocolReason` deliberately returns `null` there (matching
+  the backend) and the codec routes it as pick-slot. Individual ballots that repeat a value
+  (e.g. abstaining as `[0, 0]`) are refused at **encode** time — see below.
 - **Pigeonhole** (`uniqueValues`, `0 < maxValue + 1 < maxCount`) — fewer distinct legal
   values than fields to fill.
 

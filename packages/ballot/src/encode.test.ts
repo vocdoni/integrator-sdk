@@ -113,18 +113,22 @@ describe('encodeBallot', () => {
       expect(encodeBallot(election, [[]])).toEqual([5, 6, 7])
     })
 
-    it('throws when a partial selection cannot be padded (no abstain room)', () => {
+    it('returns a short ballot when there is no abstain room (no padding, no throw)', () => {
+      // maxValue 4 === choices-1: no sentinel headroom. A partial selection is returned
+      // as-is — the vochain accepts ballots shorter than maxCount (it enforces only the
+      // upper bound) and the legacy SDK sends them unpadded.
       const election = createElection({ maxCount: 3, maxValue: 4 }) // maxValue === choices-1
-      expect(() => encodeBallot(election, [[1, 3]])).toThrow(/does not reserve enough abstain/i)
-      expect(() => encodeBallot(election, [[]])).toThrow(/does not reserve enough abstain/i)
+      expect(encodeBallot(election, [[1, 3]])).toEqual([1, 3])
+      expect(encodeBallot(election, [[0]])).toEqual([0])
+      expect(encodeBallot(election, [[]])).toEqual([])
     })
 
-    it('throws for uniqueChoices when maxValue under-reserves the ascending sentinels', () => {
-      // uniqueChoices needs maxValue >= numChoices - 1 + maxCount = 5 - 1 + 3 = 7.
-      // maxValue 5 (>= numChoices) passed the old guard but would emit out-of-range
-      // sentinels [_, 6, 7]; the tightened guard now rejects it.
+    it('returns a short ballot when uniqueChoices under-reserves the ascending sentinels', () => {
+      // uniqueChoices would need maxValue >= numChoices-1+maxCount = 7 to pad with distinct
+      // ascending sentinels; maxValue 5 has none to spare, so the partial selection is
+      // returned as-is rather than padded or rejected.
       const election = createElection({ maxCount: 3, maxValue: 5, uniqueChoices: true })
-      expect(() => encodeBallot(election, [[1]])).toThrow(/does not reserve enough abstain/i)
+      expect(encodeBallot(election, [[1]])).toEqual([1])
     })
 
     it('throws when there are more selections than maxCount', () => {
@@ -355,6 +359,30 @@ describe('encodeQuestionBallot', () => {
     })
   })
 
+  describe('index-list multichoice (legacy pick-slot)', () => {
+    // Raw ballotProtocol only — the named multichoice type derives dense. Protocol from the
+    // live dev election 6a7316275fe6ad98c8c97a3c: 4 choices, maxCount 4, maxValue 3
+    // (=== numChoices-1, so no abstain headroom). Ballots may be shorter than maxCount.
+    const fourChoices = Array.from({ length: 4 }, (_, j) => ({ title: { default: `C${j}` }, value: j }))
+    const pickSlot = bp({ maxCount: 4, maxValue: 3, maxTotalCost: 0, uniqueValues: true })
+
+    it('returns a short ballot as-is when there is no abstain headroom', () => {
+      expect(encodeQuestionBallot({ ballotProtocol: pickSlot, choices: fourChoices }, [1, 2])).toEqual([1, 2])
+    })
+
+    it('passes a full maxCount selection through', () => {
+      expect(
+        encodeQuestionBallot({ ballotProtocol: pickSlot, choices: fourChoices }, [0, 1, 2, 3])
+      ).toEqual([0, 1, 2, 3])
+    })
+
+    it('throws when there are more selections than maxCount', () => {
+      expect(() =>
+        encodeQuestionBallot({ ballotProtocol: pickSlot, choices: fourChoices }, [0, 1, 2, 3, 0])
+      ).toThrow(/too many selections/i)
+    })
+  })
+
   describe('unsatisfiable configs are refused instead of silently discarded at tally', () => {
     // Regression for the live processes 6a69c4ea06ae8a7235e3183b /
     // 6a6912fef6bfe54e0369bc3a on saas-api-dev: 4 choices, maxChoices 4,
@@ -437,16 +465,17 @@ describe('encodeQuestionBallot', () => {
       ).toThrow(/above maxValue 3/)
     })
 
-    it('throws when both choices of the 2-field dense unique layout are picked', () => {
-      // The one dense+uniqueValues shape the pigeonhole allows — [1,0] and [0,1]
-      // are genuinely valid (a two-option ranked ballot) — but picking both
-      // encodes [1,1], which repeats. This used to slip out.
+    it('encodes the 2-option index-list as pick-slots, not a dense 0/1 vector', () => {
+      // The one dense+uniqueValues shape the pigeonhole allows is {maxCount:2, maxValue:1,
+      // uniqueValues:true} — a 2-option index-list (wire-identical to a 2-option ranked
+      // ballot). It now routes to pick-slots: [0] is a short single-slot ballot, and [0,1]
+      // fills both slots with distinct values (no repeat to reject).
       const twoChoices = fourChoices.slice(0, 2)
-      const dense2 = bp({ maxCount: 2, maxValue: 1, maxTotalCost: 2, uniqueValues: true })
-      expect(encodeQuestionBallot({ ballotProtocol: dense2, choices: twoChoices }, [0])).toEqual([1, 0])
-      expect(() =>
-        encodeQuestionBallot({ ballotProtocol: dense2, choices: twoChoices }, [0, 1])
-      ).toThrow(/repeats value 1/)
+      const indexList = bp({ maxCount: 2, maxValue: 1, maxTotalCost: 2, uniqueValues: true })
+      expect(encodeQuestionBallot({ ballotProtocol: indexList, choices: twoChoices }, [0])).toEqual([0])
+      expect(
+        encodeQuestionBallot({ ballotProtocol: indexList, choices: twoChoices }, [0, 1])
+      ).toEqual([0, 1])
     })
 
     it('throws on an out-of-range value for a named singlechoice without a protocol', () => {

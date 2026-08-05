@@ -106,24 +106,25 @@ function encodeApproval(question: Question, selections: number[]): number[] {
 }
 
 /**
- * Encode multichoice ballot: exactly `maxCount` picked option values.
+ * Encode multichoice ballot: the picked option values, one per pick-slot.
  *
- * The scrutinizer expects a fixed `maxCount`-length ballot (one value per pick-slot),
- * so any selection shorter than `maxCount` must be padded with abstain sentinels. The
- * sentinels are the values just past the valid choice indices (`0..choices.length-1`);
- * the ballot config reserves them by setting `maxValue >= choices.length` (legacy SDK:
- * `maxValue = choices.length - 1 + abstainAllowance`):
+ * The scrutinizer enforces only the *upper* bound — a ballot may hold fewer than `maxCount`
+ * picks (the legacy SDK sends short ballots unpadded), so a partial selection is returned
+ * as-is unless the protocol reserves abstain sentinels, in which case unfilled slots are
+ * padded. The sentinels are the values just past the valid choice indices
+ * (`0..choices.length-1`); the ballot config reserves them by setting
+ * `maxValue >= choices.length` (legacy SDK: `maxValue = choices.length - 1 + abstainAllowance`):
  *
  * - `uniqueChoices === false` (choices may repeat): a single abstain value `choices.length`,
  *   reused for every empty slot.
  * - `uniqueChoices === true` (choices are unique): distinct ascending values
  *   `choices.length, choices.length + 1, …`, one per empty slot, so no value repeats.
  *
- * Throws when there are more selections than `maxCount`, or fewer than `maxCount` in an
- * election that does not reserve enough abstain values — in that case the voter must
- * pick exactly `maxCount` choices. "Enough" follows the legacy reservation formula
- * `maxValue = choices.length - 1 + (uniqueChoices ? maxCount : 1)`, which guarantees the
- * ascending unique sentinels never exceed `maxValue`.
+ * Throws only when there are more selections than `maxCount`. Fewer than `maxCount` is
+ * always allowed: padded with abstain sentinels when the config reserves enough room (the
+ * reservation formula `maxValue >= choices.length - 1 + (uniqueChoices ? maxCount : 1)`),
+ * otherwise returned short — the vochain accepts it, and a minimum-pick count is the UI's
+ * concern (`typeSetup.minChoices`), not the encoder's (there is no on-chain minimum).
  */
 function encodeMultiChoice(voteType: VoteType, question: Question, selections: number[]): number[] {
   const numChoices = question.choices.length
@@ -137,24 +138,19 @@ function encodeMultiChoice(voteType: VoteType, question: Question, selections: n
   }
   if (ballot.length === maxCount) return ballot
 
-  // Fewer picks than slots: pad with abstain sentinels if the config reserves them.
-  // Repeatable ballots reuse a single sentinel (+1); unique ballots need one distinct
-  // ascending sentinel per slot (+maxCount) — matching the legacy maxValue reservation.
+  // Fewer picks than slots. Pad with abstain sentinels only when the config reserves enough
+  // room (repeatable ballots reuse a single sentinel +1; unique ballots need one distinct
+  // ascending sentinel per slot +maxCount — matching the legacy maxValue reservation).
+  // Otherwise return the short ballot as-is: the vochain accepts ballots shorter than
+  // maxCount (it enforces only the upper bound) and the legacy SDK sends them unpadded.
   const neededMaxValue = requiredAbstainMaxValue(numChoices, voteType)
-  const abstainAllowed = voteType.maxValue >= neededMaxValue
-  if (!abstainAllowed) {
-    throw new Error(
-      `multichoice: got ${ballot.length} selection(s) for a ${maxCount}-slot ballot, but this ` +
-        `election does not reserve enough abstain values (maxValue ${voteType.maxValue} < ` +
-        `${neededMaxValue}); select exactly ${maxCount} choices`
-    )
-  }
-
-  const unique = voteType.uniqueChoices
-  let abstainSlot = 0
-  while (ballot.length < maxCount) {
-    ballot.push(unique ? numChoices + abstainSlot : numChoices)
-    abstainSlot++
+  if (voteType.maxValue >= neededMaxValue) {
+    const unique = voteType.uniqueChoices
+    let abstainSlot = 0
+    while (ballot.length < maxCount) {
+      ballot.push(unique ? numChoices + abstainSlot : numChoices)
+      abstainSlot++
+    }
   }
   return ballot
 }

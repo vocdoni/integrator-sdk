@@ -124,10 +124,11 @@ choices: [1, 0, 1, 0]
 For approval questions that cap the number of approvals, `ballotProtocol.maxTotalCost = N` enforces the count on-chain.
 
 This is also the layout the backend derives for the named `multichoice`
-question type (`maxTotalCost = typeSetup.maxChoices`). `maxValue = 1` always
-means this binary format.
+question type (`maxTotalCost = typeSetup.maxChoices`). A `maxValue = 1` protocol
+is this binary format **when `uniqueValues` is false** — the one with
+`uniqueValues: true` is a 2-option index-list instead (see the next section).
 
-> ⚠️ **`uniqueValues` must be `false` on this layout.** It does not change the
+> ⚠️ **`uniqueValues` must be `false` on the dense layout.** It does not change the
 > wire format — the scrutinizer applies it to the *raw field values*, and a 0/1
 > vector over more than two options always repeats one of them (even a single
 > pick, `[1, 0, 0, 0]`, repeats `0`). Every ballot is then discarded during
@@ -150,6 +151,31 @@ means this binary format.
 > const reason = unsatisfiableQuestionReason(question)
 > if (reason) console.error('this question can never be tallied:', reason)
 > ```
+
+### Multichoice, pick up to N (index-list / pick-slot format)
+
+`ballotProtocol.maxCount = maxPicks`, `ballotProtocol.maxValue >= numOptions - 1`,
+`ballotProtocol.uniqueValues = true`, `ballotProtocol.maxTotalCost = 0`
+
+One field per *pick-slot*, each holding the chosen option's value. This is the legacy
+`@vocdoni/sdk` layout and what any raw `ballotProtocol` with `maxValue >= 2` (or the
+2-option `maxValue: 1 && uniqueValues` shape) produces — the named `multichoice` type derives
+the dense binary layout above instead.
+
+```ts
+// 4 options (values 0–3), maxPicks 4. Voter picks options 1 and 2 only.
+choices: [1, 2]
+```
+
+Ballots may be **shorter than `maxCount`** — the vochain enforces only the upper bound.
+`encodeQuestionBallot` pads unfilled slots with abstain sentinels when the protocol reserves
+room for them (`maxValue >= numOptions - 1 + (uniqueChoices ? maxCount : 1)`), and returns the
+short ballot as-is otherwise; a minimum pick count is enforced by the UI
+(`typeSetup.minChoices`), not the encoder. On decode, each option's tally is the **column
+sum** across the pick-slots, and an `abstain` bucket appears only when the protocol reserves
+sentinel headroom.
+
+> ℹ️ This layout is wire-identical to a full-slate ranked ballot — see the ranked section.
 
 ### Ranked / rated (unique values)
 
@@ -180,8 +206,8 @@ choices: [1, 0, 2]
 > `encodeQuestionBallot` passes the array through correctly and the chain
 > tallies it, but `decodeQuestionResults` has **no ranked branch**: it labels the
 > question `multichoice` and reports how many voters ranked each option (the same
-> number for every option), plus a meaningless `abstain` bucket. The ranking is
-> not recoverable through the SDK.
+> number for every option). A ranked protocol reserves no sentinel headroom, so
+> there is no `abstain` bucket. The ranking is not recoverable through the SDK.
 >
 > The protocol alone cannot distinguish ranked from a pick-slot multichoice that
 > fills every slot — they are byte-identical — which is why this needs an
@@ -195,7 +221,8 @@ choices: [1, 0, 2]
 > ```
 >
 > Note `react-components` will render such a question as a checkbox group
-> requiring exactly `numOptions` picks, not a rank widget.
+> allowing up to `numOptions` picks (the minimum follows `typeSetup.minChoices`),
+> not a rank widget.
 
 ### Budget / quadratic (per-option amounts)
 

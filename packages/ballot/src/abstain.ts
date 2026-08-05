@@ -66,7 +66,11 @@ export function questionSelectionRange(question: {
     const min = Math.min(max, Math.max(1, question.typeSetup?.minChoices ?? 1))
     return { min, max }
   }
+  // Pick-slot layout (legacy index-list): maxCount is the pick bound. A partial selection is
+  // always encodable now — encodeMultiChoice pads with sentinels when the protocol reserves
+  // room (questionReservesAbstain) and returns a short ballot otherwise — so min follows
+  // minChoices like the dense branch instead of forcing a full maxCount slate.
   const max = bp?.maxCount ?? 1
-  const min = questionReservesAbstain(question) ? 1 : max
+  const min = Math.min(max, Math.max(1, question.typeSetup?.minChoices ?? 1))
   return { min, max }
 }

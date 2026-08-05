@@ -211,13 +211,15 @@ describe('extended choice presentation (driven by choice.meta)', () => {
 })
 
 describe('questionSelectionRange', () => {
-  it('requires exactly maxCount when abstain is not reserved', () => {
-    // uniqueChoices needs maxValue >= (numChoices); maxValue 2 does not reserve for 3 choices.
+  it('allows 1..maxCount even when abstain is not reserved (short ballots encodable)', () => {
+    // uniqueChoices needs maxValue >= (numChoices); maxValue 2 does not reserve for 3 choices,
+    // but a partial selection is still encodable (returned short), so min follows minChoices —
+    // headroom now only governs encode padding, not the selection range.
     const question = makeProcess({
       questions: [threeChoices],
       voteType: { maxCount: 3, maxValue: 2, uniqueChoices: true },
     }).questions[0]
-    expect(questionSelectionRange(question)).toEqual({ min: 3, max: 3 })
+    expect(questionSelectionRange(question)).toEqual({ min: 1, max: 3 })
   })
 
   it('allows 1..maxCount when abstain is reserved (partial selection castable)', () => {
