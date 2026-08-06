@@ -128,11 +128,14 @@ The encoding pattern depends on the question's `ballotProtocol`:
 > name the tally reads off the wrong axis. Neither list has a `ranked` entry — see
 > the ranked section below.
 
-### Single choice, pick one option (index format)
+### Single choice, pick one option (value format)
 
-`ballotProtocol.maxCount = 1`, `ballotProtocol.maxValue = numOptions - 1`
+`ballotProtocol.maxCount = 1`, `ballotProtocol.maxValue = max(choice.value)`
 
-The array has one element: the **0-based index** of the chosen option.
+The array has one element: the **`choice.value`** of the chosen option — not its
+position in `choices`. The two coincide in the common case where choices are
+numbered `0..n-1`, which is why this is often described as an index, but the wire
+and the tally both speak values.
 
 ```ts
 // 3 options: "Yes" (0), "No" (1), "Abstain" (2)
@@ -140,6 +143,23 @@ choices: [0]   // voted "Yes"
 choices: [1]   // voted "No"
 choices: [2]   // voted "Abstain"
 ```
+
+Values need not be contiguous, and `maxValue` is derived from the **highest value**
+rather than from the option count (saas-backend `VoteTypeFromQuestion`). The results
+row is indexed the same way, so unused values simply leave empty columns:
+
+```ts
+// choices published at values 1, 2, 3 → maxValue 3, one vote for each
+// results row: [ "0", "1", "1", "1" ]
+//                ^ column 0 stays empty — no choice carries value 0
+```
+
+⚠️ **`maxValue` must cover every published `choice.value`.** A raw `ballotProtocol`
+is the only way to get this wrong (the named `singlechoice` type derives `maxValue`
+from the values), and it fails silently in the worst way: the option above the
+ceiling can never be recorded, yet the chain accepts such a ballot, counts it in
+`voteCount`, and discards it at tally. `client.elections.create/update` and
+`encodeQuestionBallot` both refuse such a question — see the box below.
 
 This is the most common format and the one used by the integration tests.
 
@@ -184,6 +204,36 @@ is this binary format **when `uniqueValues` is false** — the one with
 > const reason = unsatisfiableQuestionReason(question)
 > if (reason) console.error('this question can never be tallied:', reason)
 > ```
+
+> ⚠️ **A question can be satisfiable and still publish an option nobody can vote
+> for.** `unsatisfiableQuestionReason` asks "can *any* ballot count here?";
+> `uncastableChoicesReason` asks the narrower and more common "can every *published
+> choice* be recorded?". The second failure is nastier: the election runs, most votes
+> count, and the unreachable option quietly polls zero while `voteCount` keeps
+> rising. Two ways to get there, both only via a raw `ballotProtocol`:
+>
+> - **single-choice** — a `choice.value` above `maxValue`. Value-addressed, so that
+>   option addresses a column the protocol forbids.
+> - **pick-slot multichoice** — values that are not exactly `0..numChoices-1`.
+>   Unfilled pick-slots are padded with abstain sentinels starting at `numChoices`,
+>   and decoding treats every column `>= numChoices` as an abstention, so a value in
+>   that range is indistinguishable from an abstain and a gap below it pushes a real
+>   choice into sentinel space.
+>
+> Position-addressed layouts (approval, dense multichoice, budget, quadratic) are
+> unaffected — there `choice.value` is a display label the wire never sees.
+>
+> ```ts
+> import { uncastableChoicesReason } from '@vocdoni/ballot'
+>
+> const reason = uncastableChoicesReason(question)
+> if (reason) console.error('this question publishes an unreachable option:', reason)
+> ```
+>
+> `client.elections.create/update` rejects such a config, and `encodeQuestionBallot`
+> refuses for **every** voter, not only the one who picks the unreachable option —
+> the defect is in the election, and its tally cannot represent the electorate
+> regardless of who votes.
 
 ### Multichoice, pick up to N (index-list / pick-slot format)
 
