@@ -169,8 +169,18 @@ choices: [1, 2]
 
 Ballots may be **shorter than `maxCount`** — the vochain enforces only the upper bound.
 `encodeQuestionBallot` pads unfilled slots with abstain sentinels when the protocol reserves
-room for them (`maxValue >= numOptions - 1 + (uniqueChoices ? maxCount : 1)`), and returns the
-short ballot as-is otherwise; a minimum pick count is enforced by the UI
+room for them, and returns the short ballot as-is otherwise. The reservation threshold depends
+on whether values may repeat, because a unique ballot needs one *distinct* sentinel per empty
+slot while a repeatable one reuses a single value:
+
+```
+uniqueValues: true   →  maxValue >= numOptions - 1 + maxCount
+uniqueValues: false  →  maxValue >= numOptions - 1 + 1
+```
+
+(The field is `ballotProtocol.uniqueValues`; the election-level `voteType` spells the same flag
+`uniqueChoices`. Most legacy pick-slot elections set it `true`, but `false` is valid here and
+takes the lower threshold.) A minimum pick count is enforced by the UI
 (`typeSetup.minChoices`), not the encoder. On decode, each option's tally is the **column
 sum** across the pick-slots, plus a trailing `abstain` bucket — always present, but
 structurally always `0` when the protocol reserves no sentinel headroom (the matrix has no
