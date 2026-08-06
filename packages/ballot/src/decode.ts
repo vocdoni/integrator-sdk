@@ -1,7 +1,6 @@
 import type { BallotProtocol, Choice, Election, Question } from '@vocdoni/api-types'
 import { BallotType, type DecodedResults, type DecodedQuestionResults } from './types'
 import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
-import { multichoiceReservesAbstain, questionReservesAbstain } from './abstain'
 
 /**
  * Decode a raw Vocdoni results matrix into per-question / per-choice tallies.
@@ -23,20 +22,15 @@ export function decodeResults(input: Pick<Election, 'questions' | 'voteType' | '
   const { questions, results } = input
   const ballotType = inferBallotType(input)
   const raw = results ?? []
-  // Whether pick-slot multichoice questions can carry abstain sentinels — computed once
-  // (elections share one voteType) so the per-question decode can omit an impossible abstain
-  // bucket instead of surfacing a misleading always-empty "Abstention" field.
-  const reservesAbstain = multichoiceReservesAbstain(input)
 
-  return questions.map((question, q) => decodeQuestion(ballotType, question, q, raw, reservesAbstain))
+  return questions.map((question, q) => decodeQuestion(ballotType, question, q, raw))
 }
 
 function decodeQuestion(
   ballotType: BallotType,
   question: Question,
   q: number,
-  results: string[][],
-  reservesAbstain: boolean,
+  results: string[][]
 ): DecodedQuestionResults {
   switch (ballotType) {
     case BallotType.SingleChoice: {
@@ -64,14 +58,12 @@ function decodeQuestion(
       const counts = question.choices.map((c) =>
         results.reduce((sum, row) => sum + toInt(row[c.value]), 0)
       )
-      // Only emit an abstain bucket when abstention is actually possible (the protocol
-      // reserves sentinel columns). A no-headroom pick-slot election can never carry
-      // sentinels, so omitting the bucket avoids a misleading always-empty "Abstention"
-      // field. When reserved, the sentinels are the columns beyond the real choices
-      // (value >= numChoices); a unique-choices abstention spreads across several of them,
-      // so unify every sentinel column across every field into one bucket (mirrors the
-      // legacy SDK's calculateMultichoiceAbstains).
-      if (!reservesAbstain) return withPercentages(question, counts)
+      // Abstain sentinels are the columns beyond the real choices (value >= numChoices);
+      // a unique-choices abstention spreads across several of them, so unify every
+      // sentinel column across every field into one bucket (mirrors the legacy SDK's
+      // calculateMultichoiceAbstains). The bucket is always emitted — a protocol with no
+      // sentinel headroom simply reports 0. Use `questionReservesAbstain(question)` to
+      // decide whether to *render* it.
       const abstain = results.reduce(
         (sum, row) =>
           sum + row.reduce((s, cell, value) => (value >= numChoices ? s + toInt(cell) : s), 0),
@@ -124,7 +116,7 @@ export function decodeQuestionResults(
     ballotType = BallotType.Approval
   }
   const fakeQuestion: Question = { title: { default: '' }, choices: question.choices }
-  return decodeQuestion(ballotType, fakeQuestion, 0, results, questionReservesAbstain(question))
+  return decodeQuestion(ballotType, fakeQuestion, 0, results)
 }
 
 /** Parse a results cell to a non-negative integer, treating missing / NaN as 0. */

@@ -13,6 +13,8 @@ correctly off the protocol params (no new flag):
   legacy SDK sends them unpadded. (Genuinely-unsatisfiable protocols still throw upstream.)
 - `questionSelectionRange` pick-slot `min` now follows `typeSetup.minChoices` instead of
   forcing a full `maxCount` slate, matching the dense branch.
-- `decodeResults` / `decodeQuestionResults` omit the `{ choice: 'abstain' }` bucket when the
-  protocol reserves no sentinel headroom (abstention is structurally impossible), so a
-  no-headroom election no longer surfaces a misleading always-empty "Abstention" field.
+
+Decoding is unchanged: the `{ choice: 'abstain' }` bucket is still always emitted for
+multichoice (reporting 0 when the protocol reserves no sentinel headroom). Use the exported
+`questionReservesAbstain(question)` to decide whether an "Abstention" field is worth
+rendering — it is `false` exactly when abstention is structurally impossible.

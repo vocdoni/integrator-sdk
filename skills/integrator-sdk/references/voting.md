@@ -172,8 +172,10 @@ Ballots may be **shorter than `maxCount`** — the vochain enforces only the upp
 room for them (`maxValue >= numOptions - 1 + (uniqueChoices ? maxCount : 1)`), and returns the
 short ballot as-is otherwise; a minimum pick count is enforced by the UI
 (`typeSetup.minChoices`), not the encoder. On decode, each option's tally is the **column
-sum** across the pick-slots, and an `abstain` bucket appears only when the protocol reserves
-sentinel headroom.
+sum** across the pick-slots, plus a trailing `abstain` bucket — always present, but
+structurally always `0` when the protocol reserves no sentinel headroom (the matrix has no
+sentinel column to read). Use `questionReservesAbstain(question)` from `@vocdoni/ballot` to
+decide whether to render an "Abstention" field.
 
 > ℹ️ This layout is wire-identical to a full-slate ranked ballot — see the ranked section.
 
@@ -206,8 +208,8 @@ choices: [1, 0, 2]
 > `encodeQuestionBallot` passes the array through correctly and the chain
 > tallies it, but `decodeQuestionResults` has **no ranked branch**: it labels the
 > question `multichoice` and reports how many voters ranked each option (the same
-> number for every option). A ranked protocol reserves no sentinel headroom, so
-> there is no `abstain` bucket. The ranking is not recoverable through the SDK.
+> number for every option), plus an `abstain` bucket that is always `0` — a ranked
+> protocol reserves no sentinel headroom. The ranking is not recoverable through the SDK.
 >
 > The protocol alone cannot distinguish ranked from a pick-slot multichoice that
 > fills every slot — they are byte-identical — which is why this needs an

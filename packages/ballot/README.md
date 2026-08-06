@@ -122,8 +122,10 @@ Only single-choice is ever multi-question, so a flat array is unambiguous:
   only the upper bound, and the legacy SDK sends short ballots unpadded. A minimum pick count
   is the UI's job (`typeSetup.minChoices`), not the encoder's. On the way back,
   `decodeResults` **unifies** all sentinel columns into a single trailing
-  `{ choice: 'abstain', … }` bucket per multichoice question — and only when the protocol
-  reserves room for sentinels; a no-headroom question has no abstain bucket at all.
+  `{ choice: 'abstain', … }` bucket per multichoice question. That bucket is always present
+  for multichoice; when the protocol reserves no headroom the matrix has no sentinel column
+  at all, so it is structurally always `0` — call `questionReservesAbstain(question)` to
+  decide whether an "Abstention" field is worth rendering.
 
 ## Decoding semantics
 
@@ -153,8 +155,8 @@ Reading such a row as a histogram yields zero for every option.
 > protocol (`uniqueValues: true`, `maxValue >= maxCount - 1`) encodes correctly — pass
 > one score per option in choice order, **higher wins** — but there is no ranked branch
 > in the decoder: it is labelled `multichoice`, so `decodeResults` reports *how many
-> voters ranked each option* (a ranked protocol reserves no sentinel headroom, so there is
-> no `abstain` bucket), not the resulting order.
+> voters ranked each option* (a ranked protocol reserves no sentinel headroom, so the
+> `abstain` bucket is always `0`), not the resulting order.
 >
 > The protocol cannot be told apart from a pick-slot multichoice that fills every slot —
 > the two are byte-identical, with field index meaning *option* in one and *slot* in the
