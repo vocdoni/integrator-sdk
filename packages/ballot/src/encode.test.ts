@@ -393,7 +393,7 @@ describe('encodeQuestionBallot', () => {
           { ballotProtocol: bp({ maxCount: 3, maxValue: 6, uniqueValues: true }), choices: oneIndexed },
           [1, 2]
         )
-      ).toThrow(/exactly 0\.\.2/)
+      ).toThrow(/exactly the set 0\.\.2/)
     })
 
     it('leaves position-addressed layouts alone (choice.value never reaches the wire)', () => {

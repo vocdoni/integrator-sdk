@@ -260,6 +260,29 @@ describe('uncastableChoicesReason', () => {
     it('allows contiguous 0..n-1 values', () => {
       expect(uncastableChoicesReason({ ballotProtocol: pickSlot(), choices: choices(3) })).toBeNull()
     })
+
+    it('allows any permutation of 0..n-1 — the set matters, not the order', () => {
+      // Nothing in this layout is positional: encode passes the picked `choice.value`
+      // through, decode reads column `choice.value`, and the sentinels are placed off
+      // `choices.length`. So choices listed out of value order still map one-to-one
+      // onto their own columns, and requiring ascending order would reject a config
+      // that works perfectly.
+      expect(uncastableChoicesReason({ ballotProtocol: pickSlot(), choices: valued([2, 0, 1]) })).toBeNull()
+      expect(uncastableChoicesReason({ ballotProtocol: pickSlot(), choices: valued([1, 0]) })).toBeNull()
+    })
+
+    it('rejects a maxValue below the highest value even when the set is contiguous', () => {
+      // A pick-slot protocol is any maxValue >= 2, so the ceiling can sit below
+      // numChoices - 1 while the values themselves are perfectly well formed: 5
+      // choices (0..4) under maxValue 2 leaves C3 and C4 uncastable.
+      const reason = uncastableChoicesReason({
+        ballotProtocol: bp({ maxCount: 3, maxValue: 2, uniqueValues: true }),
+        choices: choices(5),
+      })
+      expect(reason).toMatch(/3, 4/)
+      expect(reason).toMatch(/maxValue 2/)
+      expect(reason).toMatch(/needs maxValue >= 4/)
+    })
   })
 
   describe('positional layouts carry no constraint', () => {

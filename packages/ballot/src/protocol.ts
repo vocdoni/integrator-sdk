@@ -261,9 +261,13 @@ export function uncastableChoicesReasonFor(
   if (values.length === 0) return null
   if (values.some((value) => !Number.isInteger(value) || value < 0)) return null
 
+  // Shared by both value-addressed layouts: a value above the protocol's ceiling
+  // addresses a column the chain refuses, so that option can never be recorded.
+  const beyondCeiling = (): number[] =>
+    Number.isInteger(maxValue) && maxValue >= 0 ? values.filter((value) => value > maxValue) : []
+
   if (ballotType === BallotType.SingleChoice) {
-    if (!Number.isInteger(maxValue) || maxValue < 0) return null
-    const beyond = values.filter((value) => value > maxValue)
+    const beyond = beyondCeiling()
     if (beyond.length === 0) return null
     return (
       `choice value(s) ${beyond.join(', ')} exceed maxValue ${maxValue}, so no voter can ` +
@@ -274,20 +278,36 @@ export function uncastableChoicesReasonFor(
   }
 
   if (ballotType === BallotType.MultiChoice && isPickSlot) {
-    // Pick-slot: picks and abstain sentinels share one value space.
+    // Pick-slot has two ways to publish an unreachable option, and needs both checks.
     const numChoices = values.length
-    if (values.every((value, i) => value === i)) return null
+
+    // 1. Picks and abstain sentinels share one value space. Only the *set* of values
+    //    matters, not the order they appear in: encode passes the picked value through
+    //    and decode reads column `choice.value`, so a permutation like [2, 0, 1] maps
+    //    every choice to its own column just fine. What breaks is a value landing at or
+    //    above `numChoices`, where the sentinels live.
     const sorted = [...values].sort((a, b) => a - b)
-    const onlyMisordered = sorted.every((value, i) => value === i)
+    if (!sorted.every((value, i) => value === i)) {
+      return (
+        `pick-slot multichoice requires the choice values to be exactly the set 0..${numChoices - 1} ` +
+        `(in any order), but they are ${values.join(', ')}. Unfilled pick-slots are padded with ` +
+        `abstain sentinels starting at ${numChoices}, and decoding treats every column >= ` +
+        `${numChoices} as an abstention — so a value in that range is indistinguishable from an ` +
+        'abstain, and a gap below it pushes a real choice up into sentinel space. Renumber the ' +
+        `choices 0..${numChoices - 1}`
+      )
+    }
+
+    // 2. The ceiling still has to clear the highest of those values — a pick-slot
+    //    protocol may carry any maxValue >= 2, including one below numChoices - 1.
+    const beyond = beyondCeiling()
+    if (beyond.length === 0) return null
     return (
-      `pick-slot multichoice requires choice values to be exactly 0..${numChoices - 1}, but they ` +
-      `are ${values.join(', ')}. Unfilled pick-slots are padded with abstain sentinels starting ` +
-      `at ${numChoices}, and decoding treats every column >= ${numChoices} as an abstention — so ` +
-      'a value in that range is indistinguishable from an abstain, and a gap below it pushes a ' +
-      'real choice up into sentinel space. ' +
-      (onlyMisordered
-        ? `Reorder the choices so their values ascend 0..${numChoices - 1}`
-        : `Renumber the choices 0..${numChoices - 1}`)
+      `choice value(s) ${beyond.join(', ')} exceed maxValue ${maxValue}, so no voter can ` +
+      'record them: the chain accepts such a ballot, counts it in voteCount and discards it at ' +
+      `tally. A pick-slot multichoice over ${numChoices} choices needs maxValue >= ` +
+      `${numChoices - 1}, plus headroom for abstain sentinels if partial selections should be ` +
+      'castable (see requiredAbstainMaxValue)'
     )
   }
 

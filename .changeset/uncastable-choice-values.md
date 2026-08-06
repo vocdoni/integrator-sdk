@@ -21,7 +21,9 @@ aggregation with no error on any surface.
     option count, and unused columns simply stay empty.
   - **pick-slot multichoice** shares one value space with the abstain sentinels
     (`choices.length`, `+1`, …, and decode claims every column `>= choices.length`), so
-    its values must be exactly `0..choices.length-1` — contiguity, not just a bound.
+    its values must be exactly the *set* `0..choices.length-1` — in any order, since
+    nothing in that layout is positional — and `maxValue` must still clear the highest
+    of them.
   - **approval / dense multichoice / budget / quadratic** are position-addressed, where
     `choice.value` is a display label the wire never sees, and carry no constraint.
 - `encodeQuestionBallot` and `encodeBallot` now refuse such a question for **every**
