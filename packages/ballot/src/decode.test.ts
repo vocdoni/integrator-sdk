@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Election } from '@vocdoni/api-types'
-import { decodeQuestionResults, decodeResults } from './decode.js'
+import { decodeQuestionResults, decodeResults } from './decode'
 
 const vt =(partial: Partial<Election['voteType']>): Election['voteType'] => ({
   maxCount: 1,

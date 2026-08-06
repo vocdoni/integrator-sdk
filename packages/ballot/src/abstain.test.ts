@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Election } from '@vocdoni/api-types'
-import { multichoiceReservesAbstain, questionSelectionRange } from './abstain.js'
+import { multichoiceReservesAbstain, questionSelectionRange } from './abstain'
 
 const vt = (partial: Partial<Election['voteType']>): Election['voteType'] => ({
   maxCount: 1,

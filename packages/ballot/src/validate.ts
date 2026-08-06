@@ -1,8 +1,8 @@
 import type { Election, Question, VoteType } from '@vocdoni/api-types'
-import { BallotType, type BallotSelections } from './types.js'
-import { inferBallotType } from './infer.js'
-import { normalizeSelections } from './selections.js'
-import { unsatisfiableProtocolReason, voteTypeBounds } from './protocol.js'
+import { BallotType, type BallotSelections } from './types'
+import { inferBallotType } from './infer'
+import { normalizeSelections } from './selections'
+import { unsatisfiableProtocolReason, voteTypeBounds } from './protocol'
 
 /**
  * Validate voter selections against election constraints.

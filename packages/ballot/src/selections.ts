@@ -1,6 +1,6 @@
 import type { Election } from '@vocdoni/api-types'
-import { BallotType, type BallotSelections } from './types.js'
-import { inferBallotType } from './infer.js'
+import { BallotType, type BallotSelections } from './types'
+import { inferBallotType } from './infer'
 
 /**
  * Normalize the public {@link BallotSelections} (a flat `number[]` or a nested

@@ -1,5 +1,5 @@
 import type { BallotProtocol, Election } from '@vocdoni/api-types'
-import { BallotType } from './types.js'
+import { BallotType } from './types'
 
 /**
  * Infer the ballot type from election configuration (questions + voteType).

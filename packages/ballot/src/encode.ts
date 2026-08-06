@@ -1,15 +1,15 @@
 import type { BallotProtocol, Choice, Election, Question, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
-import { BallotType, type BallotSelections } from './types.js'
-import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
-import { normalizeSelections } from './selections.js'
-import { requiredAbstainMaxValue } from './abstain.js'
+import { BallotType, type BallotSelections } from './types'
+import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
+import { normalizeSelections } from './selections'
+import { requiredAbstainMaxValue } from './abstain'
 import {
   assertEncodedBallot,
   unsatisfiableProtocolReason,
   unsatisfiableQuestionReason,
   voteTypeBounds,
   type ProtocolBounds,
-} from './protocol.js'
+} from './protocol'
 
 /**
  * Encode high-level voter selections into the on-chain ballot array format.
