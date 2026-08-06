@@ -271,6 +271,29 @@ describe('uncastableChoicesReason', () => {
       expect(uncastableChoicesReason({ ballotProtocol: pickSlot(), choices: valued([1, 0]) })).toBeNull()
     })
 
+    it('honours a legacy multiple-choice name over the dense shape test', () => {
+      // At two options a pick-slot protocol is byte-identical to a dense one
+      // ({maxCount: 2, maxValue: 1, uniqueValues: false}), so isDenseBallotProtocol
+      // says "dense" for both and the shape test alone would skip the pick-slot
+      // rules. encodeQuestionBallot / decodeQuestionResults resolve this with
+      // declaresLegacyPickSlot; this must resolve it the same way, or it waves
+      // through the very question they go on to encode as pick-slot.
+      const legacy = {
+        ballotProtocol: bp({ maxCount: 2, maxValue: 1, uniqueValues: false }),
+        metadata: { type: { name: 'multiple-choice' } },
+      }
+      expect(uncastableChoicesReason({ ...legacy, choices: valued([5, 9]) })).toMatch(/exactly the set 0\.\.1/)
+      expect(uncastableChoicesReason({ ...legacy, choices: choices(2) })).toBeNull()
+      // Without the legacy name the same protocol is genuinely dense, and dense is
+      // position-addressed — any values at all are fine there.
+      expect(
+        uncastableChoicesReason({
+          ballotProtocol: bp({ maxCount: 2, maxValue: 1, uniqueValues: false }),
+          choices: valued([5, 9]),
+        })
+      ).toBeNull()
+    })
+
     it('rejects a maxValue below the highest value even when the set is contiguous', () => {
       // A pick-slot protocol is any maxValue >= 2, so the ceiling can sit below
       // numChoices - 1 while the values themselves are perfectly well formed: 5

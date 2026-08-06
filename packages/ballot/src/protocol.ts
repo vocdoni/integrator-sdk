@@ -1,6 +1,6 @@
 import type { BallotProtocol, Choice, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
 import { BallotType } from './types'
-import { inferQuestionBallotType, isDenseBallotProtocol } from './infer'
+import { declaresLegacyPickSlot, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
 
 /** The part of a ballot protocol the satisfiability rule reads. */
 export type ProtocolBounds = Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uniqueValues'>
@@ -172,6 +172,8 @@ type QuestionLike = {
   ballotProtocol?: BallotProtocol
   type?: string
   typeSetup?: QuestionTypeSetup
+  /** Legacy metadata bag — `metadata.type.name` names the wire layout when present. */
+  metadata?: Record<string, unknown>
   choices: Choice[]
 }
 
@@ -232,8 +234,12 @@ export function uncastableChoicesReason(question: QuestionLike): string | null {
     question.choices,
     bp.maxValue,
     // Per-question, the MultiChoice label covers both wire layouts; only the
-    // pick-slot one shares its value space with the abstain sentinels.
-    !isDenseBallotProtocol(bp)
+    // pick-slot one shares its value space with the abstain sentinels. A legacy
+    // `multiple-choice` name wins over the shape test, because at two options a
+    // pick-slot protocol also satisfies isDenseBallotProtocol — the same override
+    // encodeQuestionBallot and decodeQuestionResults apply, and skipping it here
+    // would wave through the very question they then encode as pick-slot.
+    declaresLegacyPickSlot(question) || !isDenseBallotProtocol(bp)
   )
 }
 
