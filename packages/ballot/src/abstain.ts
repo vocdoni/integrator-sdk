@@ -70,7 +70,18 @@ export function questionSelectionRange(question: {
   // always encodable now — encodeMultiChoice pads with sentinels when the protocol reserves
   // room (questionReservesAbstain) and returns a short ballot otherwise — so min follows
   // minChoices like the dense branch instead of forcing a full maxCount slate.
+  //
+  // An *empty* selection is only offered when the chain can record it, which is why the floor
+  // depends on abstain headroom (both cases verified against a live vochain):
+  // - with headroom, `[]` encodes to sentinels (e.g. `[4,5,6,7]`) that land in the abstain
+  //   bucket, so the abstention is counted and visible;
+  // - without headroom, `[]` encodes to `[]`. The chain accepts the envelope and bumps
+  //   voteCount, but the ballot touches no column, so the tally cannot tell an abstention
+  //   from a voter who never showed up.
+  // Offering min 0 in that second case would let a voter cast something that silently does
+  // not count, so the floor stays at 1 there. Only an explicit `minChoices: 0` opts in.
   const max = bp?.maxCount ?? 1
-  const min = Math.min(max, Math.max(1, question.typeSetup?.minChoices ?? 1))
+  const floor = questionReservesAbstain(question) ? 0 : 1
+  const min = Math.min(max, Math.max(floor, question.typeSetup?.minChoices ?? 1))
   return { min, max }
 }

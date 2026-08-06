@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import type { Election } from '@vocdoni/api-types'
-import { multichoiceReservesAbstain, questionSelectionRange } from './abstain'
+import {
+  multichoiceReservesAbstain,
+  questionReservesAbstain,
+  questionSelectionRange,
+} from './abstain'
 
 const vt = (partial: Partial<Election['voteType']>): Election['voteType'] => ({
   maxCount: 1,
@@ -115,6 +119,33 @@ describe('questionSelectionRange', () => {
         choices,
       })
     ).toEqual({ min: 2, max: 3 })
+  })
+
+  it('pick-slot multichoice: minChoices 0 is honoured only with abstain headroom', () => {
+    // Verified against a live vochain: an empty selection relays fine either way, but only a
+    // headroom protocol can RECORD it. With headroom, `[]` encodes to abstain sentinels that
+    // land in the abstain bucket; without, `[]` encodes to `[]` — accepted, voteCount bumped,
+    // but touching no column, so the tally cannot distinguish it from not voting. Offering an
+    // empty submission there would let a voter cast something that silently does not count.
+    const zero = { maxChoices: 3, minChoices: 0, uniqueChoices: true }
+
+    const withHeadroom = bp({ maxCount: 3, maxValue: 5, uniqueValues: true })
+    expect(questionReservesAbstain({ ballotProtocol: withHeadroom, choices })).toBe(true)
+    expect(
+      questionSelectionRange({ ballotProtocol: withHeadroom, typeSetup: zero, choices })
+    ).toEqual({ min: 0, max: 3 })
+
+    const noHeadroom = bp({ maxCount: 3, maxValue: 2, uniqueValues: true })
+    expect(questionReservesAbstain({ ballotProtocol: noHeadroom, choices })).toBe(false)
+    expect(
+      questionSelectionRange({ ballotProtocol: noHeadroom, typeSetup: zero, choices })
+    ).toEqual({ min: 1, max: 3 })
+
+    // Headroom alone does not drop the floor — minChoices must actually say 0.
+    expect(questionSelectionRange({ ballotProtocol: withHeadroom, choices })).toEqual({
+      min: 1,
+      max: 3,
+    })
   })
 
   it('single-choice: exactly one', () => {
