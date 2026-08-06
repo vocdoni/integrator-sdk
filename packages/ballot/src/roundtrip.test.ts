@@ -69,6 +69,44 @@ describe('encode ↔ decode round-trip', () => {
     ])
   })
 
+  it('single-choice with sparse (1-indexed) choice values', () => {
+    // Values 1/2/3 under a maxValue that covers the highest of them — the shape
+    // saas-backend derives for a 1-indexed question. Both sides speak values, so
+    // column 0 is never touched and the vote still round-trips to the right choice.
+    // Confirmed against a live chain in integration/value-skew.itest.ts, which reads
+    // back exactly the row asserted here. See integrator-sdk#28.
+    const election: Pick<Election, 'questions' | 'voteType' | 'results'> = {
+      voteType: {
+        maxCount: 1,
+        maxValue: 3,
+        maxVoteOverwrites: 0,
+        costExponent: 0,
+        uniqueChoices: false,
+        costFromWeight: false,
+      },
+      questions: [
+        {
+          title: { default: 'Question 0' },
+          choices: [1, 2, 3].map((v) => ({ title: { default: `C${v}` }, value: v })),
+        },
+      ],
+    }
+    const ballot = encodeBallot(election, [[3]])
+    expect(ballot).toEqual([3]) // the value, not the position (which would be 2)
+    //                                      col: 0  1  2  3
+    expect(resultsFromBallot(election.voteType, ballot)).toEqual([['0', '0', '0', '1']])
+    // Decode reports votes against the choice VALUES, with C1/C2 at zero.
+    expect(
+      decodeResults({ ...election, results: resultsFromBallot(election.voteType, ballot) })[0].map(
+        (c) => [c.choice, c.votes]
+      )
+    ).toEqual([
+      [1, 0],
+      [2, 0],
+      [3, 1],
+    ])
+  })
+
   it('approval', () => {
     const election = createElection({ maxCount: 2, maxValue: 1, uniqueChoices: false })
     const ballot = encodeBallot(election, [[0, 2, 4]])

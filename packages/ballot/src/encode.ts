@@ -10,6 +10,8 @@ import { normalizeSelections } from './selections'
 import { requiredAbstainMaxValue } from './abstain'
 import {
   assertEncodedBallot,
+  uncastableChoicesReason,
+  uncastableChoicesReasonFor,
   unsatisfiableProtocolReason,
   unsatisfiableQuestionReason,
   voteTypeBounds,
@@ -51,6 +53,25 @@ export function encodeBallot(
     throw new Error(`cannot encode a ballot for this election: ${unsatisfiable}`)
   }
   const ballotType = inferBallotType(input)
+  // A satisfiable protocol can still publish an option no voter can reach — a value
+  // above maxValue, or a pick-slot value colliding with the abstain sentinels. The
+  // chain takes such a ballot, counts it in voteCount and drops it at tally, so the
+  // election would report a tally that cannot represent its own electorate. Refuse
+  // for every voter, not just the one who picks the unreachable option: the defect
+  // is in the election, and a voter is the wrong person to discover it.
+  questions.forEach((question, q) => {
+    const uncastable = uncastableChoicesReasonFor(
+      ballotType,
+      question.choices,
+      voteType.maxValue,
+      // Dense already resolved to Approval by inferBallotType, so MultiChoice here
+      // can only be the pick-slot layout.
+      true
+    )
+    if (uncastable) {
+      throw new Error(`cannot encode a ballot for question ${q}: ${uncastable}`)
+    }
+  })
   const perQuestion = normalizeSelections(input, selections)
 
   const ballot = ((): number[] => {
@@ -233,6 +254,13 @@ export function encodeQuestionBallot(
   const unsatisfiable = unsatisfiableQuestionReason(question)
   if (unsatisfiable) {
     throw new Error(`cannot encode a ballot for this question: ${unsatisfiable}`)
+  }
+  // Satisfiable is not the same as fully castable — see the note in encodeBallot.
+  // Checked before the selection is even looked at, because the defect belongs to
+  // the question, not to whichever option this particular voter happened to pick.
+  const uncastable = uncastableChoicesReason(question)
+  if (uncastable) {
+    throw new Error(`cannot encode a ballot for this question: ${uncastable}`)
   }
   const ballotType = inferQuestionBallotType(question)
   const fakeQuestion: Question = { title: { default: '' }, choices: question.choices }

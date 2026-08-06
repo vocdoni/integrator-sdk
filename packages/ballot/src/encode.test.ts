@@ -26,8 +26,12 @@ describe('encodeBallot', () => {
   })
 
   describe('Single-choice encoding', () => {
+    // createElection always builds 5 choices (values 0..4), so single-choice
+    // fixtures need maxValue 4: a lower ceiling leaves the choices above it
+    // uncastable, which encodeBallot refuses outright (see the
+    // "questions publishing a choice nobody can cast" block below).
     it('encodes single choice for single-question election', () => {
-      const election = createElection({ maxCount: 1, maxValue: 2 })
+      const election = createElection({ maxCount: 1, maxValue: 4 })
       const selections = [[2]] // Select choice at index 2
       const ballot = encodeBallot(election, selections)
       expect(ballot).toEqual([2])
@@ -44,13 +48,13 @@ describe('encodeBallot', () => {
     })
 
     it('throws when a single-choice question has no selection (no abstain concept)', () => {
-      const election = createElection({ maxCount: 1, maxValue: 2 }, 2)
+      const election = createElection({ maxCount: 1, maxValue: 4 }, 2)
       const selections = [[], [1]] // First question empty — invalid, not an abstention
       expect(() => encodeBallot(election, selections)).toThrow(/exactly one choice/i)
     })
 
     it('picks first selection when multiple are provided (should not happen in practice)', () => {
-      const election = createElection({ maxCount: 1, maxValue: 2 })
+      const election = createElection({ maxCount: 1, maxValue: 4 })
       const selections = [[1, 2]] // Invalid for single-choice, but encode should pick first
       const ballot = encodeBallot(election, selections)
       expect(ballot).toEqual([1])
@@ -240,7 +244,7 @@ describe('encodeBallot', () => {
 
   describe('Type inference consistency', () => {
     it('inferred type matches encoding behavior', () => {
-      const election = createElection({ maxCount: 1, maxValue: 2 })
+      const election = createElection({ maxCount: 1, maxValue: 4 })
       const ballotType = inferBallotType(election)
       expect(ballotType).toBe(BallotType.SingleChoice)
 
@@ -263,7 +267,7 @@ describe('encodeBallot', () => {
   describe('Flat vs nested selections', () => {
     // A flat number[] and its nested number[][] equivalent must encode identically.
     it('single-choice, single question: [2] === [[2]]', () => {
-      const election = createElection({ maxCount: 1, maxValue: 2 })
+      const election = createElection({ maxCount: 1, maxValue: 4 })
       expect(encodeBallot(election, [2])).toEqual([2])
       expect(encodeBallot(election, [2])).toEqual(encodeBallot(election, [[2]]))
     })
@@ -326,16 +330,96 @@ describe('encodeQuestionBallot', () => {
       expect(encodeQuestionBallot({ ballotProtocol: bp({ maxValue: 2 }), choices }, [2])).toEqual([2])
     })
 
+    // maxValue 2 covers the highest choice value; bp()'s default of 1 would leave
+    // choice C uncastable, and the encoder rejects the question before it ever
+    // looks at the selection — masking the arity error these two assert.
     it('throws on zero selections', () => {
-      expect(() => encodeQuestionBallot({ ballotProtocol: bp(), choices }, [])).toThrow(
+      expect(() => encodeQuestionBallot({ ballotProtocol: bp({ maxValue: 2 }), choices }, [])).toThrow(
         /exactly one choice \(got 0\)/
       )
     })
 
     it('throws on more than one selection instead of silently dropping extras', () => {
-      expect(() => encodeQuestionBallot({ ballotProtocol: bp(), choices }, [0, 2])).toThrow(
+      expect(() => encodeQuestionBallot({ ballotProtocol: bp({ maxValue: 2 }), choices }, [0, 2])).toThrow(
         /exactly one choice \(got 2\)/
       )
+    })
+  })
+
+  describe('questions publishing a choice nobody can cast', () => {
+    // integrator-sdk#28: values 1/2/3 under maxValue 2, so C3 addresses a field
+    // value above the protocol's ceiling. Confirmed live — the relay accepts such a
+    // ballot, voteCount counts it and the scrutinizer drops it at tally in silence
+    // (integration/value-skew.itest.ts).
+    const oneIndexed = [
+      { title: { default: 'C1' }, value: 1 },
+      { title: { default: 'C2' }, value: 2 },
+      { title: { default: 'C3' }, value: 3 },
+    ]
+
+    it('refuses even when the picked value itself is castable', () => {
+      // The point of refusing up front. Value 1 fits maxValue 2, so assertEncodedBallot
+      // would wave this ballot through — but the election cannot record a vote for C3
+      // at all, so its tally cannot represent the electorate no matter who votes. A
+      // voter is not the right person to discover that, one pick at a time.
+      expect(() =>
+        encodeQuestionBallot({ ballotProtocol: bp({ maxCount: 1, maxValue: 2 }), choices: oneIndexed }, [1])
+      ).toThrow(/exceed maxValue 2/)
+    })
+
+    it('names the offending value rather than the ballot field', () => {
+      // assertEncodedBallot would say "field 0 is 3, above maxValue 2" — true, but it
+      // blames the vote for a defect in the election.
+      expect(() =>
+        encodeQuestionBallot({ ballotProtocol: bp({ maxCount: 1, maxValue: 2 }), choices: oneIndexed }, [3])
+      ).toThrow(/choice value\(s\) 3/)
+    })
+
+    it('still encodes sparse values that fit maxValue', () => {
+      const sparse = [
+        { title: { default: 'A' }, value: 0 },
+        { title: { default: 'B' }, value: 2 },
+        { title: { default: 'C' }, value: 5 },
+      ]
+      expect(
+        encodeQuestionBallot({ ballotProtocol: bp({ maxCount: 1, maxValue: 5 }), choices: sparse }, [5])
+      ).toEqual([5])
+    })
+
+    it('refuses a pick-slot multichoice whose values collide with the abstain sentinels', () => {
+      // Sentinels start at choices.length (3 here), which IS C3's value.
+      expect(() =>
+        encodeQuestionBallot(
+          { ballotProtocol: bp({ maxCount: 3, maxValue: 6, uniqueValues: true }), choices: oneIndexed },
+          [1, 2]
+        )
+      ).toThrow(/exactly 0\.\.2/)
+    })
+
+    it('leaves position-addressed layouts alone (choice.value never reaches the wire)', () => {
+      const dense = bp({ maxCount: 3, maxValue: 1, maxTotalCost: 2, uniqueValues: false })
+      expect(
+        encodeQuestionBallot({ ballotProtocol: dense, type: 'multichoice', choices: oneIndexed }, [1, 3])
+      ).toEqual([1, 0, 1])
+    })
+
+    it('refuses at the election level too', () => {
+      expect(() =>
+        encodeBallot(
+          {
+            voteType: {
+              maxCount: 1,
+              maxValue: 2,
+              maxVoteOverwrites: 0,
+              costExponent: 1,
+              uniqueChoices: false,
+              costFromWeight: false,
+            },
+            questions: [{ title: { default: 'Q0' }, choices: oneIndexed }],
+          },
+          [[1]]
+        )
+      ).toThrow(/exceed maxValue 2/)
     })
   })
 

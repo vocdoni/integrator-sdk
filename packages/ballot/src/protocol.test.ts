@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   assertEncodedBallot,
+  hasUncastableChoices,
   isUnsatisfiableProtocol,
   isUnsatisfiableQuestion,
+  uncastableChoicesReason,
   unsatisfiableProtocolReason,
   unsatisfiableQuestionReason,
   voteTypeBounds,
@@ -195,5 +197,112 @@ describe('unsatisfiableQuestionReason', () => {
         choices: choices(1),
       })
     ).toBeNull()
+  })
+})
+
+/** Build choices carrying the given (possibly non-contiguous) values. */
+const valued = (values: number[]) =>
+  values.map((v) => ({ title: { default: `C${v}` }, value: v }))
+
+describe('uncastableChoicesReason', () => {
+  describe('single-choice (value-addressed wire)', () => {
+    it('rejects a choice whose value exceeds maxValue', () => {
+      // The shape reported in integrator-sdk#28: values 1/2/3 published under a
+      // maxValue of 2, so C3 addresses a field value the chain refuses. Verified
+      // live in integration/value-skew.itest.ts — the relay accepts such a ballot,
+      // voteCount counts it, and the scrutinizer drops it at tally with no error.
+      const reason = uncastableChoicesReason({
+        ballotProtocol: bp({ maxCount: 1, maxValue: 2 }),
+        choices: valued([1, 2, 3]),
+      })
+      expect(reason).toMatch(/3/)
+      expect(reason).toMatch(/maxValue 2/)
+      expect(
+        hasUncastableChoices({ ballotProtocol: bp({ maxCount: 1, maxValue: 2 }), choices: valued([1, 2, 3]) })
+      ).toBe(true)
+    })
+
+    it('allows sparse values that still fit maxValue', () => {
+      // Gaps are legal and deliberate: saas-backend derives maxValue from the
+      // highest value precisely so {0,2,5} works. Unused columns simply stay empty.
+      expect(
+        uncastableChoicesReason({
+          ballotProtocol: bp({ maxCount: 1, maxValue: 5 }),
+          choices: valued([0, 2, 5]),
+        })
+      ).toBeNull()
+    })
+
+    it('allows the named singlechoice type, whose maxValue is derived from the values', () => {
+      expect(uncastableChoicesReason({ type: 'singlechoice', choices: valued([1, 2, 3]) })).toBeNull()
+    })
+  })
+
+  describe('pick-slot multichoice (positional sentinels)', () => {
+    // Pick-slot picks share one value space with the abstain sentinels the encoder
+    // pads with (`numChoices`, `numChoices + 1`, …) and that decode sweeps up as
+    // "abstain" (every column >= numChoices). That only holds while the real values
+    // occupy exactly 0..numChoices-1, so this layout needs contiguity, not merely a
+    // bound: with values 1/2/3 the sentinel IS 3, and an abstention would be
+    // recorded as a vote for C3 before decode stole the column back.
+    const pickSlot = (overrides = {}) => bp({ maxCount: 3, maxValue: 6, uniqueValues: true, ...overrides })
+
+    it('rejects values that collide with the abstain sentinel space', () => {
+      const reason = uncastableChoicesReason({ ballotProtocol: pickSlot(), choices: valued([1, 2, 3]) })
+      expect(reason).toMatch(/abstain/i)
+      expect(reason).toMatch(/0\.\.2/)
+    })
+
+    it('rejects a gap below numChoices, which pushes a value into sentinel space', () => {
+      expect(uncastableChoicesReason({ ballotProtocol: pickSlot(), choices: valued([0, 1, 4]) })).toBeTruthy()
+    })
+
+    it('allows contiguous 0..n-1 values', () => {
+      expect(uncastableChoicesReason({ ballotProtocol: pickSlot(), choices: choices(3) })).toBeNull()
+    })
+  })
+
+  describe('positional layouts carry no constraint', () => {
+    // approval / dense multichoice / budget / quadratic lay their fields out in
+    // choice ORDER, so choice.value is a display label the wire never sees. Decode
+    // already reads these by position (see decode.test.ts) — values may be anything.
+    it.each([
+      ['approval', bp({ maxCount: 3, maxValue: 1, uniqueValues: false })],
+      ['budget', bp({ maxCount: 3, maxValue: 0, costExponent: 1 })],
+      ['quadratic', bp({ maxCount: 3, maxValue: 0, costExponent: 2 })],
+    ])('%s', (_label, protocol) => {
+      expect(uncastableChoicesReason({ ballotProtocol: protocol, choices: valued([0, 4, 9]) })).toBeNull()
+    })
+
+    it('dense (named) multichoice', () => {
+      expect(
+        uncastableChoicesReason({
+          type: 'multichoice',
+          typeSetup: { minChoices: 1, maxChoices: 2, uniqueChoices: false },
+          choices: valued([0, 4, 9]),
+        })
+      ).toBeNull()
+    })
+  })
+
+  describe('no verdict on shapes it cannot judge', () => {
+    // Mirrors unsatisfiableProtocolReason's stance: explain a well-formed config,
+    // never emit a NaN-laden verdict on a malformed or untyped one.
+    it('returns null when the ballot type cannot be inferred', () => {
+      expect(uncastableChoicesReason({ choices: valued([1, 2, 3]) })).toBeNull()
+    })
+
+    it('returns null for an empty choice list', () => {
+      expect(uncastableChoicesReason({ ballotProtocol: bp({ maxCount: 1, maxValue: 2 }), choices: [] })).toBeNull()
+    })
+
+    it('returns null for non-integer or negative values', () => {
+      expect(
+        uncastableChoicesReason({ ballotProtocol: bp({ maxCount: 1, maxValue: 2 }), choices: valued([0, -1]) })
+      ).toBeNull()
+      expect(
+        uncastableChoicesReason({ ballotProtocol: bp({ maxCount: 1, maxValue: 2 }), choices: valued([0, 1.5]) })
+      ).toBeNull()
+    })
   })
 })
