@@ -263,6 +263,61 @@ describe('admin / integrator client methods', () => {
         ).rejects.toThrow(/Question 0: unsatisfiable ballotProtocol/)
       })
 
+      it('rejects a ballotProtocol whose maxValue cannot reach every choice value', async () => {
+        // integrator-sdk#28: choices published 1-indexed (1/2/3) under maxValue 2, so
+        // C3 addresses a field value the chain refuses. The API accepts this shape —
+        // confirmed live in integration/value-skew.itest.ts, where the resulting
+        // election counted 2 envelopes and tallied 1. Stop it at creation, since after
+        // publish the only remedy is a new election.
+        await expect(
+          client.elections.create({
+            orgAddress: ORG,
+            title: 'One-indexed',
+            questions: [
+              {
+                title: 'Pick one',
+                choices: [1, 2, 3].map((v) => ({ title: `C${v}`, value: v })),
+                ballotProtocol: {
+                  maxCount: 1,
+                  maxValue: 2,
+                  maxVoteOverwrites: 0,
+                  costExponent: 1,
+                  maxTotalCost: 0,
+                  uniqueValues: false,
+                  costFromWeight: false,
+                },
+              },
+            ],
+          }),
+        ).rejects.toThrow(/Question 0: .*choice value\(s\) 3 exceed maxValue 2/)
+      })
+
+      it('accepts sparse choice values that still fit maxValue', async () => {
+        // Gaps are legal — saas-backend derives maxValue from the highest value
+        // precisely so {0,2,5} works, and the unused columns just stay empty.
+        const body = postDraft()
+        await client.elections.create({
+          orgAddress: ORG,
+          title: 'Sparse',
+          questions: [
+            {
+              title: 'Pick one',
+              choices: [0, 2, 5].map((v) => ({ title: `C${v}`, value: v })),
+              ballotProtocol: {
+                maxCount: 1,
+                maxValue: 5,
+                maxVoteOverwrites: 0,
+                costExponent: 1,
+                maxTotalCost: 0,
+                uniqueValues: false,
+                costFromWeight: false,
+              },
+            },
+          ],
+        })
+        expect(body().questions[0].ballotProtocol.maxValue).toBe(5)
+      })
+
       it('accepts a dense ballotProtocol with uniqueValues false', async () => {
         const body = postDraft()
         await client.elections.create({
