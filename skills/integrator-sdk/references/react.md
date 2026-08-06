@@ -282,7 +282,7 @@ Key election components (all from `@vocdoni/react-components`):
 | `<ElectionQuestions />` | Full question + choices form (calls `vote()` on submit) |
 | `<VoteButton />` | Submit button; auto-disabled when `!isAbleToVote` |
 | `<VoteWeight />` | Voter's census weight |
-| `<ElectionResults />` | Results histogram; respects `secretUntilTheEnd` |
+| `<ElectionResults />` | Results histogram; respects `secretUntilTheEnd`; renders the abstain row only when it is meaningful |
 | `<Voted />` | The voter's vote ids — one line per voted question |
 | `<ElectionEnvelope />` | Vote envelope / nullifier display |
 

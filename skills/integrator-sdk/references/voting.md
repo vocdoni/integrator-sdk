@@ -185,7 +185,10 @@ takes the lower threshold.) A minimum pick count is enforced by the UI
 sum** across the pick-slots, plus a trailing `abstain` bucket — always present, but
 structurally always `0` when the protocol reserves no sentinel headroom (the matrix has no
 sentinel column to read). Use `questionReservesAbstain(question)` from `@vocdoni/ballot` to
-decide whether to render an "Abstention" field.
+decide whether to render an "Abstention" field. `<ElectionResults />` already applies this —
+it drops the bucket only when the protocol reserves no headroom *and* the tally is 0, so a
+headroom election still shows "Abstention: 0" (a real measurement) and a bucket holding real
+votes is never hidden. The dense layout emits no bucket at all, so both layouts agree.
 
 > ℹ️ This layout is wire-identical to a full-slate ranked ballot — see the ranked section.
 
