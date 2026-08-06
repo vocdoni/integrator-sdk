@@ -65,6 +65,33 @@ describe('decodeResults', () => {
       // percentages are per-question (Q0 total = 3)
       expect(decoded[0][4].percentage).toBeCloseTo((2 / 3) * 100, 6)
     })
+
+    it('reads sparse choice values BY VALUE, leaving unused columns empty', () => {
+      // Single-choice is the one type whose row is addressed by choice.value rather
+      // than by option position — the opposite of approval/budget below. That is the
+      // backend contract, not an accident:
+      //   saas-backend account/ballot.go — `MaxValue = max(Choice.Value)`, derived
+      //     from the values precisely because they "need not be a contiguous 0..n-1
+      //     range" (pinned there by TestVoteTypeSingleChoiceNonContiguousValues)
+      //   saas-backend db/types.go       — the row is "indexed by choice value
+      //     (0..MaxValue, so sparse choice values leave empty buckets)"
+      // Verified live, not just read: an election published with values 1/2/3 (no 0)
+      // and one vote per choice comes back as [["0","1","1","1"]] — column 0 empty.
+      // Positional decoding would have produced [["1","1","1"]]. See
+      // integration/value-skew.itest.ts, and integrator-sdk#28 which argued the
+      // opposite; this test exists so the argument is not re-litigated silently.
+      const decoded = decodeResults({
+        voteType: vt({ maxCount: 1, maxValue: 5 }),
+        questions: questionWithValues([0, 2, 5]),
+        //          col: 0    1    2    3    4    5
+        results: [['3', '0', '1', '0', '0', '2']],
+      })
+      expect(decoded[0].map((c) => [c.choice, c.votes])).toEqual([
+        [0, 3],
+        [2, 1],
+        [5, 2],
+      ])
+    })
   })
 
   describe('approval', () => {

@@ -39,8 +39,23 @@ function decodeQuestion(
 ): DecodedQuestionResults {
   switch (ballotType) {
     case BallotType.SingleChoice: {
-      // One field per question; value = chosen choice index (discrete-counting).
-      // results[q][choiceValue] is the tally for that choice directly.
+      // One field per question; the field carries the chosen `choice.value`, so
+      // results[q][choice.value] is that choice's tally directly.
+      //
+      // ⚠️ BY VALUE, deliberately — the opposite of the approval / budget branches
+      // below, and it is NOT a bug to "fix" into positional indexing. The backend
+      // contract:
+      //   saas-backend account/ballot.go — `MaxValue = max(Choice.Value)`, derived
+      //     from the values *because* they "need not be a contiguous 0..n-1 range"
+      //     (pinned by TestVoteTypeSingleChoiceNonContiguousValues)
+      //   saas-backend db/types.go       — the row is "indexed by choice value
+      //     (0..MaxValue, so sparse choice values leave empty buckets)"
+      // Confirmed on a live chain, not merely read: an election published with
+      // values 1/2/3 and one vote per choice returns [["0","1","1","1"]] — column 0
+      // empty. See integration/value-skew.itest.ts and integrator-sdk#28, which
+      // argued for positional indexing on the strength of an election whose
+      // `ballotProtocol` contradicted its own choice values. That shape is now
+      // refused at both creation and encode time — see `uncastableChoicesReason`.
       const row = results[q] ?? []
       const counts = question.choices.map((c) => toInt(row[c.value]))
       return withPercentages(question, counts)
@@ -63,6 +78,12 @@ function decodeQuestion(
       const counts = question.choices.map((c) =>
         results.reduce((sum, row) => sum + toInt(row[c.value]), 0)
       )
+      // This branch (and the sentinel rule below) assumes the choice values occupy
+      // exactly 0..numChoices-1: picks and abstain sentinels share one value space,
+      // so a value >= numChoices would be indistinguishable from an abstention.
+      // `uncastableChoicesReason` refuses to encode such a question, which is where
+      // that assumption is enforced rather than merely hoped for.
+      //
       // Abstain sentinels are the columns beyond the real choices (value >= numChoices);
       // a unique-choices abstention spreads across several of them, so unify every
       // sentinel column across every field into one bucket (mirrors the legacy SDK's
