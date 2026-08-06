@@ -5,13 +5,13 @@ export type {
   DecodedQuestionResults,
   DecodedResults,
   BallotSelections,
-} from './types.js'
+} from './types'
 
-export { BallotType } from './types.js'
-export type { ProtocolBounds } from './protocol.js'
+export { BallotType } from './types'
+export type { ProtocolBounds } from './protocol'
 
 // Re-export functions
-export { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
+export { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
 export {
   assertEncodedBallot,
   isUnsatisfiableProtocol,
@@ -19,8 +19,8 @@ export {
   unsatisfiableProtocolReason,
   unsatisfiableQuestionReason,
   voteTypeBounds,
-} from './protocol.js'
-export { encodeBallot, encodeQuestionBallot } from './encode.js'
-export { decodeResults, decodeQuestionResults } from './decode.js'
-export { validateSelections } from './validate.js'
-export { multichoiceReservesAbstain, questionReservesAbstain, questionSelectionRange } from './abstain.js'
+} from './protocol'
+export { encodeBallot, encodeQuestionBallot } from './encode'
+export { decodeResults, decodeQuestionResults } from './decode'
+export { validateSelections } from './validate'
+export { multichoiceReservesAbstain, questionReservesAbstain, questionSelectionRange } from './abstain'

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Election } from '@vocdoni/api-types'
-import { validateSelections } from './validate.js'
+import { validateSelections } from './validate'
 
 const createElection = (
   voteType: Partial<Election['voteType']>,

@@ -1,6 +1,6 @@
 import type { BallotProtocol, Choice, Election, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
-import { BallotType } from './types.js'
-import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
+import { BallotType } from './types'
+import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
 
 /**
  * Lowest `maxValue` a multichoice election must reserve so that a partial selection

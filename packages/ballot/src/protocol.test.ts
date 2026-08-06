@@ -6,7 +6,7 @@ import {
   unsatisfiableProtocolReason,
   unsatisfiableQuestionReason,
   voteTypeBounds,
-} from './protocol.js'
+} from './protocol'
 
 const bp = (overrides: Record<string, number | boolean> = {}) => ({
   maxCount: 1,

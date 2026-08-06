@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { Election } from '@vocdoni/api-types'
-import { encodeBallot, encodeQuestionBallot } from './encode.js'
-import { decodeQuestionResults, decodeResults } from './decode.js'
+import { encodeBallot, encodeQuestionBallot } from './encode'
+import { decodeQuestionResults, decodeResults } from './decode'
 
 /**
  * Encode → decode round-trips. Encoding a single voter's selections yields one

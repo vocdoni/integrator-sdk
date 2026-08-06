@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { inferBallotType, inferQuestionBallotType } from './infer.js'
-import { BallotType } from './types.js'
+import { inferBallotType, inferQuestionBallotType } from './infer'
+import { BallotType } from './types'
 import type { Election } from '@vocdoni/api-types'
 
 describe('inferBallotType', () => {

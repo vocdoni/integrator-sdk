@@ -1,6 +1,6 @@
 import type { BallotProtocol, Choice, Election, Question } from '@vocdoni/api-types'
-import { BallotType, type DecodedResults, type DecodedQuestionResults } from './types.js'
-import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer.js'
+import { BallotType, type DecodedResults, type DecodedQuestionResults } from './types'
+import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
 
 /**
  * Decode a raw Vocdoni results matrix into per-question / per-choice tallies.
