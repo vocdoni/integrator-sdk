@@ -26,7 +26,7 @@ export function requiredAbstainMaxValue(
  * UIs use this to decide whether a partial multichoice selection is castable; the
  * encoder uses the same reservation formula internally.
  */
-export function multichoiceReservesAbstain(input: Pick<Election, 'questions' | 'voteType'>): boolean {
+export function multichoiceReservesAbstain(input: Pick<Election, 'questions' | 'voteType'> & { type?: string; meta?: Record<string, unknown> }): boolean {
   if (inferBallotType(input) !== BallotType.MultiChoice) return false
   const numChoices = input.questions[0]?.choices.length ?? 0
   return input.voteType.maxValue >= requiredAbstainMaxValue(numChoices, input.voteType)
@@ -36,6 +36,7 @@ export function multichoiceReservesAbstain(input: Pick<Election, 'questions' | '
 export function questionReservesAbstain(question: {
   ballotProtocol?: BallotProtocol
   type?: string
+  metadata?: Record<string, unknown>
   choices: Choice[]
 }): boolean {
   if (inferQuestionBallotType(question) !== BallotType.MultiChoice) return false
@@ -52,6 +53,7 @@ export function questionReservesAbstain(question: {
 export function questionSelectionRange(question: {
   ballotProtocol?: BallotProtocol
   type?: string
+  metadata?: Record<string, unknown>
   typeSetup?: QuestionTypeSetup
   choices: Choice[]
 }): { min: number; max: number } {

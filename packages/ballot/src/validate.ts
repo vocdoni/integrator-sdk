@@ -24,7 +24,7 @@ import { unsatisfiableProtocolReason, voteTypeBounds } from './protocol'
  * @throws Error if selections are invalid, or if the election's ballot config is unsatisfiable
  */
 export function validateSelections(
-  input: Pick<Election, 'questions' | 'voteType'>,
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string; meta?: Record<string, unknown> },
   selections: BallotSelections
 ): void {
   const { questions, voteType } = input

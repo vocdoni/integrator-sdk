@@ -1,6 +1,11 @@
 import type { BallotProtocol, Choice, Election, Question } from '@vocdoni/api-types'
 import { BallotType, type DecodedResults, type DecodedQuestionResults } from './types'
-import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
+import {
+  declaresLegacyPickSlot,
+  inferBallotType,
+  inferQuestionBallotType,
+  isDenseBallotProtocol,
+} from './infer'
 
 /**
  * Decode a raw Vocdoni results matrix into per-question / per-choice tallies.
@@ -18,7 +23,7 @@ import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from 
  * so consumers render all types uniformly. Missing / empty results decode to zeroes
  * rather than throwing, so the returned structure is always fully populated.
  */
-export function decodeResults(input: Pick<Election, 'questions' | 'voteType' | 'results'>): DecodedResults {
+export function decodeResults(input: Pick<Election, 'questions' | 'voteType' | 'results'> & { type?: string; meta?: Record<string, unknown> }): DecodedResults {
   const { questions, results } = input
   const ballotType = inferBallotType(input)
   const raw = results ?? []
@@ -100,7 +105,7 @@ function decodeQuestion(
  * Decode results for a single question using its own {@link BallotProtocol}.
  */
 export function decodeQuestionResults(
-  question: { ballotProtocol?: BallotProtocol; type?: string; choices: Choice[] },
+  question: { ballotProtocol?: BallotProtocol; type?: string; metadata?: Record<string, unknown>; choices: Choice[] },
   results: string[][]
 ): DecodedQuestionResults {
   let ballotType = inferQuestionBallotType(question)
@@ -109,8 +114,14 @@ export function decodeQuestionResults(
   // [notSelected, selected] histogram — decode it as approval, not pick-slot.
   // Public reads of named-type questions may omit the protocol entirely; the
   // named type always derives the dense layout, so decode dense then too.
+  //
+  // Unless the legacy metadata declares `multiple-choice`, which is the *pick-slot*
+  // index list. That layout also presents as {maxValue: 1, maxCount > 1, uniqueValues:
+  // false} at two options, so isDenseBallotProtocol says "dense" for it as well — and
+  // remapping there would read the tally off the wrong axis and invert it.
   if (
     ballotType === BallotType.MultiChoice &&
+    !declaresLegacyPickSlot(question) &&
     (!question.ballotProtocol || isDenseBallotProtocol(question.ballotProtocol))
   ) {
     ballotType = BallotType.Approval

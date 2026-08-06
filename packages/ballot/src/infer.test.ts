@@ -93,6 +93,95 @@ describe('inferBallotType', () => {
     })
   })
 
+  describe('Declared type name (legacy vochain metadata.type.name)', () => {
+    // The shapes the legacy @vocdoni/sdk generates for a 2-option election, read off
+    // 0.9.3's dist:
+    //   ApprovalElection.generateVoteOptions   → maxCount = numChoices, maxValue = 1
+    //   ApprovalElection.generateEnvelopeType  → uniqueValues = false
+    //   MultiChoiceElection.generateVoteOptions→ maxCount = maxNumberOfChoices,
+    //                                            maxValue = numChoices - 1 + abstain
+    //   MultiChoiceElection.generateEnvelopeType → uniqueValues = !canRepeatChoices
+    // With 2 choices, canRepeatChoices: true and no abstain allowance, multichoice lands
+    // on {maxCount: 2, maxValue: 1, uniqueChoices: false} — byte-identical to the
+    // 2-option approval shape. #24's uniqueChoices discriminator cannot reach this pair;
+    // only the declared name separates them.
+    const ambiguous = { maxCount: 2, maxValue: 1, uniqueChoices: false }
+
+    it('separates the 2-option approval / repeatable-multichoice collision', () => {
+      expect(inferBallotType({ ...createElection(ambiguous), type: 'multiple-choice' })).toBe(
+        BallotType.MultiChoice
+      )
+      expect(inferBallotType({ ...createElection(ambiguous), type: 'approval' })).toBe(
+        BallotType.Approval
+      )
+    })
+
+    it('falls back to shape when no name is present', () => {
+      // Unchanged behaviour: shape alone still reads this as approval.
+      expect(inferBallotType(createElection(ambiguous))).toBe(BallotType.Approval)
+    })
+
+    it('wins over a shape that would decide otherwise', () => {
+      // A recognized name short-circuits the whole tree. Real producers emit name and
+      // shape together, so these pairings are synthetic — they pin the precedence.
+      const cases: Array<[string, Record<string, number | boolean>, BallotType]> = [
+        ['approval', { maxCount: 2, maxValue: 3 }, BallotType.Approval],
+        ['multiple-choice', { maxCount: 1, maxValue: 1 }, BallotType.MultiChoice],
+        ['budget-based', { maxCount: 3, maxValue: 2 }, BallotType.Budget],
+        ['quadratic', { maxCount: 3, maxValue: 2 }, BallotType.Quadratic],
+        ['single-choice-multiquestion', { maxCount: 3, maxValue: 2 }, BallotType.SingleChoice],
+      ]
+      for (const [type, voteType, expected] of cases) {
+        expect(inferBallotType({ ...createElection(voteType), type })).toBe(expected)
+      }
+    })
+
+    it('reads the name out of the legacy metadata bag', () => {
+      expect(
+        inferBallotType({ ...createElection(ambiguous), meta: { type: { name: 'multiple-choice' } } })
+      ).toBe(BallotType.MultiChoice)
+      expect(
+        inferBallotType({ ...createElection(ambiguous), meta: { type: { name: 'approval' } } })
+      ).toBe(BallotType.Approval)
+    })
+
+    it('prefers the explicit type field over the legacy bag', () => {
+      // So a caller can override a stale metadata name without editing the bag.
+      expect(
+        inferBallotType({
+          ...createElection(ambiguous),
+          type: 'approval',
+          meta: { type: { name: 'multiple-choice' } },
+        })
+      ).toBe(BallotType.Approval)
+    })
+
+    it('survives a malformed metadata bag', () => {
+      // The bag is Record<string, unknown> and creator-controlled — every level must be
+      // probed defensively rather than trusted into a throw.
+      const shaped = createElection({ maxCount: 3, maxValue: 4 })
+      for (const meta of [
+        {},
+        { type: 'multiple-choice' },
+        { type: null },
+        { type: { name: 42 } },
+        { type: { name: 'nonsense' } },
+      ] as Array<Record<string, unknown>>) {
+        expect(inferBallotType({ ...shaped, meta })).toBe(BallotType.MultiChoice)
+      }
+    })
+
+    it('ignores an unrecognized, empty or absent name', () => {
+      // `ranked` is a real legacy concept with no ElectionResultsTypeNames entry and no
+      // BallotType member (see #22) — it must not hijack the tree. An empty string is the
+      // stored form for raw-protocol questions, so it must read as "no name".
+      const shaped = createElection({ maxCount: 3, maxValue: 4 })
+      expect(inferBallotType({ ...shaped, type: 'ranked' })).toBe(BallotType.MultiChoice)
+      expect(inferBallotType({ ...shaped, type: '' })).toBe(BallotType.MultiChoice)
+      expect(inferBallotType({ ...shaped, type: undefined })).toBe(BallotType.MultiChoice)
+    })
+  })
+
   describe('Edge cases', () => {
     it('handles empty questions array (should not happen in practice)', () => {
       const election = {
@@ -130,15 +219,64 @@ describe('inferQuestionBallotType', () => {
     ...overrides,
   })
 
-  it('infers from ballotProtocol when present (type is ignored)', () => {
+  it('infers from ballotProtocol when no recognized name is present', () => {
     expect(inferQuestionBallotType({ ballotProtocol: bp() })).toBe(BallotType.SingleChoice)
     expect(inferQuestionBallotType({ ballotProtocol: bp({ maxCount: 2, maxValue: 3 }) })).toBe(
       BallotType.MultiChoice
     )
-    // A protocol wins over a conflicting named type.
+  })
+
+  it('lets a recognized named type win over a conflicting protocol', () => {
+    // Declared intent first, shape as fallback. The backend derives the dense layout from
+    // the named type, so a `multichoice` question is dense whatever maxCount says — and
+    // decodeQuestionResults remaps MultiChoice+dense to the `results[i][1]` read. The old
+    // SingleChoice label read results[0][choiceValue] instead, off the wrong axis.
+    expect(inferQuestionBallotType({ ballotProtocol: bp(), type: 'multichoice' })).toBe(
+      BallotType.MultiChoice
+    )
     expect(
-      inferQuestionBallotType({ ballotProtocol: bp(), type: 'multichoice' })
+      inferQuestionBallotType({ ballotProtocol: bp({ maxCount: 3, maxValue: 4 }), type: 'singlechoice' })
     ).toBe(BallotType.SingleChoice)
+  })
+
+  it('reads the legacy vocabulary from the question metadata bag', () => {
+    // In the SaaS model each question is its own vochain process, so a question mapped
+    // from a legacy election carries that election's metadata.type. The bag takes the
+    // legacy vocabulary; the `type` field takes the SaaS one.
+    expect(
+      inferQuestionBallotType({
+        ballotProtocol: bp({ maxCount: 2, maxValue: 1, uniqueValues: false }),
+        metadata: { type: { name: 'multiple-choice' } },
+      })
+    ).toBe(BallotType.MultiChoice)
+    // The SaaS field still wins when both are present.
+    expect(
+      inferQuestionBallotType({
+        ballotProtocol: bp({ maxCount: 2, maxValue: 1 }),
+        type: 'singlechoice',
+        metadata: { type: { name: 'multiple-choice' } },
+      })
+    ).toBe(BallotType.SingleChoice)
+    // And the legacy spelling is not honoured on the SaaS field, nor vice versa.
+    expect(
+      inferQuestionBallotType({ ballotProtocol: bp(), metadata: { type: { name: 'multichoice' } } })
+    ).toBe(BallotType.SingleChoice)
+  })
+
+  it('falls back to the protocol for a name outside the SaaS vocabulary', () => {
+    // Only `singlechoice` / `multichoice` are stored here (VOTING_PROCESS_QUESTION_TYPES);
+    // the legacy vochain spellings mean a different wire layout and must not be honoured
+    // on this path. Unrecognized → shape, and the throw stays confined to "no protocol
+    // *and* no recognized name".
+    expect(inferQuestionBallotType({ ballotProtocol: bp(), type: 'approval' })).toBe(
+      BallotType.SingleChoice
+    )
+    expect(inferQuestionBallotType({ ballotProtocol: bp(), type: 'multiple-choice' })).toBe(
+      BallotType.SingleChoice
+    )
+    expect(inferQuestionBallotType({ ballotProtocol: bp(), type: '' })).toBe(
+      BallotType.SingleChoice
+    )
   })
 
   describe('dense protocols (maxValue === 1, maxCount > 1, uniqueValues false)', () => {

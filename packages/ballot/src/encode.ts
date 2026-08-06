@@ -1,6 +1,11 @@
 import type { BallotProtocol, Choice, Election, Question, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
 import { BallotType, type BallotSelections } from './types'
-import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
+import {
+  declaresLegacyPickSlot,
+  inferBallotType,
+  inferQuestionBallotType,
+  isDenseBallotProtocol,
+} from './infer'
 import { normalizeSelections } from './selections'
 import { requiredAbstainMaxValue } from './abstain'
 import {
@@ -36,7 +41,7 @@ import {
  *   that silently never counts.
  */
 export function encodeBallot(
-  input: Pick<Election, 'questions' | 'voteType'>,
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string; meta?: Record<string, unknown> },
   selections: BallotSelections
 ): number[] {
   const { questions, voteType } = input
@@ -186,6 +191,7 @@ function ballotProtocolToVoteType(bp: BallotProtocol): VoteType {
 function questionProtocolBounds(question: {
   ballotProtocol?: BallotProtocol
   type?: string
+  metadata?: Record<string, unknown>
   typeSetup?: QuestionTypeSetup
   choices: Choice[]
 }): ProtocolBounds | null {
@@ -221,7 +227,7 @@ function questionProtocolBounds(question: {
  *   so refuse instead of letting the voter cast a vote that never counts.
  */
 export function encodeQuestionBallot(
-  question: { ballotProtocol?: BallotProtocol; type?: string; typeSetup?: QuestionTypeSetup; choices: Choice[] },
+  question: { ballotProtocol?: BallotProtocol; type?: string; metadata?: Record<string, unknown>; typeSetup?: QuestionTypeSetup; choices: Choice[] },
   selections: number[]
 ): number[] {
   const unsatisfiable = unsatisfiableQuestionReason(question)
@@ -251,7 +257,12 @@ export function encodeQuestionBallot(
         // silently discards them at tally. Public reads of named-type questions
         // may omit the protocol entirely; the layout is still fully determined
         // by the type, with the pick bound read from typeSetup.
-        if (!bp || isDenseBallotProtocol(bp)) {
+        //
+        // The legacy `multiple-choice` metadata name means the opposite — pick-slot —
+        // and at two options its protocol also satisfies isDenseBallotProtocol, so it
+        // has to opt out of the dense branch explicitly or the ballot goes out on the
+        // wrong axis.
+        if (!declaresLegacyPickSlot(question) && (!bp || isDenseBallotProtocol(bp))) {
           const cap = bp?.maxTotalCost || question.typeSetup?.maxChoices || 0
           if (cap > 0 && selections.length > cap) {
             throw new Error(
@@ -259,6 +270,16 @@ export function encodeQuestionBallot(
             )
           }
           return encodeApproval(fakeQuestion, selections)
+        }
+        if (!bp) {
+          // Only reachable via a legacy pick-slot name on a protocol-less read. Pick-slot
+          // needs `maxCount` to size the slate and `maxValue` to know whether abstain
+          // sentinels are reserved; guessing either produces a ballot the chain accepts
+          // and drops at tally, so refuse and let the caller fetch the protocol.
+          throw new Error(
+            'cannot encode a legacy multiple-choice ballot without a ballotProtocol: ' +
+              'the pick-slot layout needs maxCount/maxValue to pad abstain slots'
+          )
         }
         return encodeMultiChoice(ballotProtocolToVoteType(bp), fakeQuestion, selections)
       }

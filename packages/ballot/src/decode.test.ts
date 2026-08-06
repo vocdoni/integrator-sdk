@@ -155,6 +155,43 @@ describe('decodeResults', () => {
         ['abstain', 3],
       ])
     })
+
+    it('reads a 2-option repeatable multichoice by its declared name (issue #27)', () => {
+      // A legacy MultiChoiceElection with 2 choices, canRepeatChoices: true and no
+      // abstain allowance generates {maxCount: 2, maxValue: 1, uniqueChoices: false} —
+      // wire-identical to a 2-option ApprovalElection (both verified against @vocdoni/sdk
+      // 0.9.3's generateVoteOptions/generateEnvelopeType). #24's uniqueChoices split
+      // cannot reach this pair; the declared metadata.type.name is the only signal.
+      //
+      // The reported matrix: two ballots, both picking value 0. Truth is 0=2, 1=0.
+      const results = [
+        ['2', '0'], // slot 0: value 0 twice
+        ['0', '0'], // slot 1: unused (short ballots)
+      ]
+      const decoded = decodeResults({
+        voteType: vt({ maxCount: 2, maxValue: 1, uniqueChoices: false }),
+        questions: questions(1, 2),
+        results,
+        type: 'multiple-choice',
+      })
+      expect(decoded[0].map((c) => [c.choice, c.votes])).toEqual([
+        [0, 2],
+        [1, 0],
+        ['abstain', 0],
+      ])
+
+      // Regression guard: the dense read of this same matrix (results[optionPos][1])
+      // reports nothing at all — the symptom in the issue. Assert the two reads genuinely
+      // disagree so a revert fails loudly instead of quietly returning zeros.
+      expect([0, 1].map((i) => parseInt(results[i][1], 10))).toEqual([0, 0])
+      // Without the name, shape alone still reads it as approval — unchanged.
+      const unnamed = decodeResults({
+        voteType: vt({ maxCount: 2, maxValue: 1, uniqueChoices: false }),
+        questions: questions(1, 2),
+        results,
+      })
+      expect(unnamed[0].map((c) => c.votes)).toEqual([0, 0])
+    })
   })
 
   describe('budget / quadratic', () => {
@@ -378,6 +415,48 @@ describe('decodeQuestionResults', () => {
     const denseRead = ab.map((_c, i) => parseInt(results[i][1], 10))
     expect(denseRead).toEqual([1, 0])
     expect(isDenseBallotProtocol(twoOption)).toBe(false)
+  })
+
+  it('does not dense-remap a legacy multiple-choice question (issue #27)', () => {
+    // The repeatable variant of the same election: uniqueValues FALSE, which makes
+    // isDenseBallotProtocol answer TRUE — so the MultiChoice label earned from the legacy
+    // metadata name would be remapped straight back to approval, reading the tally off the
+    // wrong axis. The declared pick-slot name has to suppress that remap.
+    const ambiguous = bp({
+      maxCount: 2,
+      maxValue: 1,
+      maxTotalCost: 0,
+      costExponent: 1,
+      uniqueValues: false,
+      maxVoteOverwrites: 0,
+      costFromWeight: false,
+    })
+    const ab = [
+      { title: { default: 'A' }, value: 0 },
+      { title: { default: 'B' }, value: 1 },
+    ]
+    // One voter picked B only, sent pick-slot as [1] — slot 0 holds value 1, slot 1 unused.
+    const results = [
+      ['0', '1'],
+      ['0', '0'],
+    ]
+    const question = {
+      ballotProtocol: ambiguous,
+      metadata: { type: { name: 'multiple-choice' } },
+      choices: ab,
+    }
+    expect(decodeQuestionResults(question, results).map((c) => [c.choice, c.votes])).toEqual([
+      [0, 0],
+      [1, 1],
+      ['abstain', 0],
+    ])
+
+    // The remap trap: this protocol *is* dense-shaped, so without the name suppressing it
+    // the label flips to approval and the tally inverts to A=1, B=0. Assert both that the
+    // shape looks dense and that the two reads disagree, so a regression is loud.
+    expect(isDenseBallotProtocol(ambiguous)).toBe(true)
+    const { metadata: _m, ...unnamed } = question
+    expect(decodeQuestionResults(unnamed, results).map((c) => c.votes)).toEqual([1, 0])
   })
 
   it('decodes a dense 4-choice matrix by the selected column', () => {

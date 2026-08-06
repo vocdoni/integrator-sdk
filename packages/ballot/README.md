@@ -19,32 +19,33 @@ export const BallotType: {
 }
 export type BallotType = (typeof BallotType)[keyof typeof BallotType]
 
-// Infer the ballot type from election config
+// Infer the ballot type from the declared type name, falling back to election config.
+// `type` is the vochain `metadata.type.name` — see "Declared type names" below.
 export function inferBallotType(
-  input: Pick<Election, 'questions' | 'voteType'>
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string }
 ): BallotType
 
 // Encode high-level selections into the on-chain ballot array
 export function encodeBallot(
-  input: Pick<Election, 'questions' | 'voteType'>,
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string },
   selections: BallotSelections
 ): number[]
 
 // Decode raw results into per-question/per-choice tallies
 export function decodeResults(
-  input: Pick<Election, 'questions' | 'voteType' | 'results'>
+  input: Pick<Election, 'questions' | 'voteType' | 'results'> & { type?: string }
 ): DecodedResults
 
 // Validate selections against election constraints (optional)
 export function validateSelections(
-  input: Pick<Election, 'questions' | 'voteType'>,
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string },
   selections: BallotSelections
 ): void
 
 // Whether a multichoice election reserves enough maxValue room to abstain-pad a
 // partial selection (false for every other ballot type). Handy for UI validation.
 export function multichoiceReservesAbstain(
-  input: Pick<Election, 'questions' | 'voteType'>
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string }
 ): boolean
 
 // Why a ballot config admits no usable ballot, or null when it is fine.
@@ -93,6 +94,46 @@ const approval = encodeBallot({ questions, voteType }, [0, 2])  // approval → 
 // Decode results from the API response
 const decoded = decodeResults({ questions, voteType, results })
 ```
+
+## Declared type names
+
+Protocol shape is a *reconstruction* of the election's intent, and at `maxValue === 1` the
+reconstruction is lossy. A legacy `MultiChoiceElection` over two choices with repeatable
+picks and no abstain allowance generates `{ maxCount: 2, maxValue: 1, uniqueChoices: false }`
+— byte-identical to a two-option `ApprovalElection`. Nothing in the protocol separates them,
+so reading the results by shape alone silently reports the wrong tally.
+
+If the type is known, it is used. Two sources are consulted, in order, before shape:
+
+```typescript
+// 1. the explicit field — SaaS `question.type`, or an election-level override
+const decoded = decodeQuestionResults({ ballotProtocol, type: 'multichoice', choices }, results)
+
+// 2. the legacy metadata bag, for elections mapped over from @vocdoni/sdk
+const decoded = decodeResults({
+  questions, voteType, results,
+  meta: { type: { name: 'multiple-choice' } },   // election-level bag
+})
+```
+
+**The vocabulary follows the field it came from, not the function.** This matters because
+the two name opposite wire layouts:
+
+| source | recognized names | layout |
+| --- | --- | --- |
+| `type` (SaaS field) | `singlechoice`, `multichoice` | `multichoice` = **dense** 0/1 |
+| `meta.type.name` / `metadata.type.name` (legacy bag) | `single-choice-multiquestion`, `multiple-choice`, `approval`, `budget-based`, `quadratic` | `multiple-choice` = **pick-slot** index list |
+
+Reading a SaaS spelling as a legacy one would column-sum a dense matrix; the reverse
+inverts a two-option tally. So a name is only ever resolved against its own table.
+
+The legacy bag is read per question as well as per election, because in the SaaS model each
+question *is* its own vochain process — a question mapped from a legacy election carries
+that election's `metadata.type`.
+
+An absent, empty or unrecognized name falls through to the shape rules unchanged. There is
+no `ranked` entry in either table, so a ranked election still infers as multichoice (see
+[#22](https://github.com/vocdoni/integrator-sdk/issues/22)).
 
 ## Encoding semantics
 

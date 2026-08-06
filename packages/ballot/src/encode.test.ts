@@ -164,6 +164,39 @@ describe('encodeBallot', () => {
       // Encoded as approval (dense 0/1 vector) with 5 choices total
       expect(ballot).toEqual([1, 0, 0, 0, 0])
     })
+
+    it('encodes the 2-option edge case as pick-slots when the type name says so (issue #27)', () => {
+      // Same ambiguous shape as above, but the election declares itself multichoice.
+      // A legacy MultiChoiceElection sends the picked *values* one per slot, short and
+      // unpadded when no abstain headroom is reserved (maxValue 1 === numChoices - 1) —
+      // confirmed by decoding a signed protobuf from @vocdoni/sdk 0.9.3.
+      const election = {
+        voteType: {
+          maxCount: 2,
+          maxValue: 1,
+          maxVoteOverwrites: 0,
+          costExponent: 0,
+          uniqueChoices: false,
+          costFromWeight: false,
+        },
+        questions: [
+          {
+            title: { default: 'Q0' },
+            choices: [
+              { title: { default: 'A' }, value: 0 },
+              { title: { default: 'B' }, value: 1 },
+            ],
+          },
+        ],
+        type: 'multiple-choice',
+      }
+      // Picking B alone is the pick-slot [1], NOT the dense [0, 1].
+      expect(encodeBallot(election, [[1]])).toEqual([1])
+      expect(encodeBallot(election, [[0, 1]])).toEqual([0, 1])
+      // The name is what flips it: the same shape unnamed still encodes dense.
+      const { type: _type, ...unnamed } = election
+      expect(encodeBallot(unnamed, [[1]])).toEqual([0, 1])
+    })
   })
 
   describe('Budget encoding', () => {
@@ -380,6 +413,38 @@ describe('encodeQuestionBallot', () => {
       expect(() =>
         encodeQuestionBallot({ ballotProtocol: pickSlot, choices: fourChoices }, [0, 1, 2, 3, 0])
       ).toThrow(/too many selections/i)
+    })
+
+    it('honours a legacy multiple-choice name over the dense-shaped protocol (issue #27)', () => {
+      // The two-option repeatable protocol satisfies isDenseBallotProtocol, so the dense
+      // branch would claim it and put the ballot out on the wrong axis. The legacy name
+      // says pick-slot, and the encoder has to follow it.
+      const ab = [
+        { title: { default: 'A' }, value: 0 },
+        { title: { default: 'B' }, value: 1 },
+      ]
+      const ambiguous = bp({ maxCount: 2, maxValue: 1, maxTotalCost: 0, uniqueValues: false })
+      const question = {
+        ballotProtocol: ambiguous,
+        metadata: { type: { name: 'multiple-choice' } },
+        choices: ab,
+      }
+      // Picking B is the pick-slot [1], short and unpadded (no abstain headroom).
+      expect(encodeQuestionBallot(question, [1])).toEqual([1])
+      // Same protocol without the name is genuinely a dense approval ballot.
+      const { metadata: _m, ...unnamed } = question
+      expect(encodeQuestionBallot(unnamed, [1])).toEqual([0, 1])
+    })
+
+    it('refuses a legacy multiple-choice ballot when the protocol is missing', () => {
+      // Pick-slot needs maxCount/maxValue to size the slate and decide abstain padding.
+      // Falling back to dense here would send the ballot out on the wrong axis silently.
+      expect(() =>
+        encodeQuestionBallot(
+          { metadata: { type: { name: 'multiple-choice' } }, choices: fourChoices },
+          [1, 2]
+        )
+      ).toThrow(/without a ballotProtocol/i)
     })
   })
 

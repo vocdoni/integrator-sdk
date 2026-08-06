@@ -95,6 +95,39 @@ multiple questions.
 
 The encoding pattern depends on the question's `ballotProtocol`:
 
+> ⚠️ **Shape is a lossy reconstruction of intent — pass the declared type name when you
+> have one.** At `maxValue = 1` two different wire layouts collapse onto identical
+> numbers: a legacy two-option multichoice with repeatable picks and no abstain
+> allowance generates `{maxCount: 2, maxValue: 1, uniqueValues: false}`, which is
+> byte-identical to a two-option approval ballot. Nothing in the protocol separates
+> them, so inferring by shape alone silently reports the wrong tally.
+>
+> Every `@vocdoni/ballot` entry point prefers a recognized declared type name over
+> shape, and falls through to shape when the name is absent, empty or unrecognized.
+> Two sources are consulted, and **the vocabulary follows the field, not the
+> function** — the two name opposite wire layouts:
+>
+> | source | recognized names | layout meant |
+> |---|---|---|
+> | `type` — the SaaS `question.type` field | `singlechoice`, `multichoice` | `multichoice` = **dense** 0/1 |
+> | `metadata.type.name` / `meta.type.name` — the legacy bag | `single-choice-multiquestion`, `multiple-choice`, `approval`, `budget-based`, `quadratic` | `multiple-choice` = **pick-slot** index list |
+>
+> ```ts
+> // A question mapped over from a legacy @vocdoni/sdk election. In the SaaS model
+> // each question is its own vochain process, so it carries that election's metadata.
+> const decoded = decodeQuestionResults(
+>   { ballotProtocol, metadata: { type: { name: 'multiple-choice' } }, choices },
+>   results,
+> )
+> ```
+>
+> Reading a SaaS spelling as a legacy one would column-sum a dense matrix; the
+> reverse inverts a two-option tally. Note that a legacy `multiple-choice` name also
+> suppresses the dense remap in `decodeQuestionResults` / `encodeQuestionBallot` —
+> at two options its protocol satisfies `isDenseBallotProtocol` too, so without the
+> name the tally reads off the wrong axis. Neither list has a `ranked` entry — see
+> the ranked section below.
+
 ### Single choice, pick one option (index format)
 
 `ballotProtocol.maxCount = 1`, `ballotProtocol.maxValue = numOptions - 1`
@@ -226,7 +259,11 @@ choices: [1, 0, 2]
 >
 > The protocol alone cannot distinguish ranked from a pick-slot multichoice that
 > fills every slot — they are byte-identical — which is why this needs an
-> explicit signal rather than better inference.
+> explicit signal rather than better inference. The declared-type-name override
+> described under "Choices format" is that mechanism, but there is no `ranked`
+> name in either vocabulary yet (`BallotType` has no member for it, and neither
+> does the legacy `ElectionResultsTypeNames` enum), so a ranked question still
+> falls through to the multichoice label.
 >
 > Until then, aggregate the raw matrix yourself. Borda, matching
 > `saas-integrator-demo`:

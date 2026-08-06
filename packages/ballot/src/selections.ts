@@ -13,7 +13,7 @@ import { inferBallotType } from './infer'
  * so the whole flat array is that one question's selection (`[0, 2]` → `[[0, 2]]`).
  */
 export function normalizeSelections(
-  input: Pick<Election, 'questions' | 'voteType'>,
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string; meta?: Record<string, unknown> },
   selections: BallotSelections
 ): number[][] {
   // Nested already — the first element is an array. (An empty array is treated as

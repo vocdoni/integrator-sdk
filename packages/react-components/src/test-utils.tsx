@@ -62,8 +62,15 @@ type MakeProcessQuestionInput = {
   choices?: Array<{ title: string; value: number; meta?: ChoiceMeta }>
   ballotProtocol?: Partial<BallotProtocol>
   /**
-   * Named question type. Only matters where inference reads it: a `maxValue === 1`
-   * protocol decodes as approval unless the question is a named `multichoice`.
+   * Named question type as stored. Inference reads it ahead of the protocol, so it
+   * decides the layout wherever the two could disagree — a `maxValue === 1` protocol
+   * decodes as approval unless the question is a named `multichoice`.
+   *
+   * Defaults to `'singlechoice'` for the untouched default protocol and to `''` as
+   * soon as a protocol override is supplied — the backend only names
+   * `singlechoice`/`multichoice` and empties the label for every other shape, and a
+   * named `singlechoice` always derives `maxCount: 1`. Set it explicitly to exercise
+   * a genuinely named question.
    */
   type?: string
   status?: QuestionStatus
@@ -122,7 +129,10 @@ export function makeProcess(opts: MakeProcessOptions = {}): VotingProcessRespons
       ...(c.meta && { meta: c.meta }),
     })),
     ballotProtocol: { ...DEFAULT_BALLOT_PROTOCOL, ...bpOverrides, ...(q.ballotProtocol ?? {}) },
-    type: q.type ?? 'singlechoice',
+    // A protocol override means a raw-`ballotProtocol` question, which the backend stores
+    // with an empty type label — `inferQuestionBallotType` prefers a recognized name over
+    // shape, so claiming `singlechoice` here would mask whatever the protocol expresses.
+    type: q.type ?? (voteType || q.ballotProtocol ? '' : 'singlechoice'),
     secretUntilTheEnd: q.secretUntilTheEnd ?? electionType?.secretUntilTheEnd ?? false,
     status: q.status ?? status,
   }))

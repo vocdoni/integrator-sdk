@@ -293,6 +293,23 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
               choices: [2, 0, 3, 1],
               tally: [VOTERS.length, VOTERS.length, VOTERS.length, VOTERS.length, 0],
             },
+            // legacy 2-option multichoice declared via metadata.type.name
+            // (integrator-sdk#27). Its protocol {maxCount: 2, maxValue: 1,
+            // uniqueValues: false} is byte-identical to a 2-option approval
+            // ballot — the shape carries no signal at all, so the declared name
+            // is the only thing routing it to the pick-slot layout. Voter picks
+            // C1 only, which encodes short and unpadded as [1] (maxValue 1 ===
+            // numChoices - 1, so no abstain headroom to pad into).
+            //
+            // The tally is the payload of this case: read as pick-slot it is
+            // C0=0 / C1=N, read as dense it is the exact inverse. If the chain
+            // ever stopped producing the pick-slot matrix for this shape, or the
+            // name stopped routing, this flips to [N, 0] and fails loudly.
+            {
+              title: 'Multichoice 2-option (legacy name)',
+              choices: [1],
+              tally: [0, VOTERS.length, 0],
+            },
             // budget: per-option amounts, maxValue 0 → the chain aggregates
             // Σ amount × weight into one cell per option.
             { title: 'Budget', choices: [4, 0, 6, 0], tally: [4 * VOTERS.length, 0, 6 * VOTERS.length, 0] },
@@ -314,12 +331,22 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
                 ['Approval (max 2)', { maxCount: 4, maxValue: 1, maxTotalCost: 2 }],
                 ['Multichoice pick-slot', { maxCount: 3, maxValue: 6, uniqueValues: true }],
                 ['Ranked', { maxCount: 4, maxValue: 3, uniqueValues: true }],
+                // 2 choices, and the legacy type name in the creator metadata bag —
+                // the only thing distinguishing this from a 2-option approval ballot.
+                [
+                  'Multichoice 2-option (legacy name)',
+                  { maxCount: 2, maxValue: 1 },
+                  { numChoices: 2, metadata: { type: { name: 'multiple-choice' } } },
+                ],
                 ['Budget', { maxCount: 4, maxValue: 0, costExponent: 1, maxTotalCost: 10 }],
                 ['Quadratic', { maxCount: 4, maxValue: 0, costExponent: 2, maxTotalCost: 16 }],
               ] as const
-            ).map(([title, bp]) => ({
+            ).map(([title, bp, extra]) => ({
               title,
-              choices: Array.from({ length: 4 }, (_, v) => ({ title: `C${v}`, value: v })),
+              choices: Array.from({ length: extra?.numChoices ?? 4 }, (_, v) => ({
+                title: `C${v}`,
+                value: v,
+              })),
               ballotProtocol: {
                 maxVoteOverwrites: 0,
                 maxTotalCost: 0,
@@ -328,6 +355,7 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
                 costFromWeight: false,
                 ...bp,
               },
+              ...(extra?.metadata ? { metadata: extra.metadata } : {}),
             })),
           },
         },
@@ -601,6 +629,30 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
               `${p.label} / "${question!.title?.default}" decoded tally mismatch ` +
                 `(raw ${JSON.stringify(q.results)})`,
             ).toEqual(specFor(p, q.questionId).tally)
+
+            // integrator-sdk#27: for the ambiguous 2-option shape, pin the RAW matrix
+            // too, not just the decoding. The decoded assertion above only proves the
+            // decoder agrees with itself; this proves the chain actually laid the
+            // ballot out as pick-slots — every vote landing in slot 0 under value 1,
+            // slot 1 left empty by the short ballot. That is the wire model the whole
+            // declared-name routing rests on, and it is the layer a unit fixture
+            // cannot establish.
+            if (question!.title?.default === 'Multichoice 2-option (legacy name)') {
+              expect(
+                q.results,
+                'legacy 2-option multichoice: chain did not produce the pick-slot matrix',
+              ).toEqual([
+                ['0', String(VOTES_PER_QUESTION)],
+                ['0', '0'],
+              ])
+              // The two readings genuinely disagree on this matrix: dense would report
+              // C0=N / C1=0, the exact inverse of the truth. Without this the test could
+              // pass on a matrix where both readings coincide, proving nothing.
+              expect(
+                question!.choices.map((_c, i) => parseInt((q.results ?? [])[i]?.[1] ?? '0', 10)),
+                'legacy 2-option multichoice: dense read must disagree, or the case is not ambiguous',
+              ).toEqual([VOTES_PER_QUESTION, 0])
+            }
           }
         }
         // Three public surfaces serve the same tally: GET /processes/{id}/results
