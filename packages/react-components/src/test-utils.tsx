@@ -61,6 +61,11 @@ type MakeProcessQuestionInput = {
    */
   choices?: Array<{ title: string; value: number; meta?: ChoiceMeta }>
   ballotProtocol?: Partial<BallotProtocol>
+  /**
+   * Named question type. Only matters where inference reads it: a `maxValue === 1`
+   * protocol decodes as approval unless the question is a named `multichoice`.
+   */
+  type?: string
   status?: QuestionStatus
   secretUntilTheEnd?: boolean
   upstreamId?: string
@@ -117,7 +122,7 @@ export function makeProcess(opts: MakeProcessOptions = {}): VotingProcessRespons
       ...(c.meta && { meta: c.meta }),
     })),
     ballotProtocol: { ...DEFAULT_BALLOT_PROTOCOL, ...bpOverrides, ...(q.ballotProtocol ?? {}) },
-    type: 'singlechoice',
+    type: q.type ?? 'singlechoice',
     secretUntilTheEnd: q.secretUntilTheEnd ?? electionType?.secretUntilTheEnd ?? false,
     status: q.status ?? status,
   }))

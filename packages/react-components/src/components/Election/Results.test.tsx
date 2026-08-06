@@ -73,6 +73,125 @@ describe('ElectionResults', () => {
     expect(choices[3].percent).toBe('66.7%')
   })
 
+  // Abstain is only recordable when the protocol reserves sentinel headroom
+  // (maxValue >= numChoices - 1 + (uniqueValues ? maxCount : 1)). The decoder emits
+  // the bucket regardless, so the render layer is what decides to show it — and both
+  // multichoice wire layouts (dense and pick-slot) must reach the same verdict.
+  const fourChoices = [
+    { title: 'A', value: 0 },
+    { title: 'B', value: 1 },
+    { title: 'C', value: 2 },
+    { title: 'D', value: 3 },
+  ]
+  const threeChoices = [
+    { title: 'A', value: 0 },
+    { title: 'B', value: 1 },
+    { title: 'C', value: 2 },
+  ]
+
+  it('hides the abstain row when the protocol reserves no headroom for it', () => {
+    // Dev election 6be21a5a…7a020800000000: pick-slot, 4 choices, uniqueValues.
+    // Abstain needs maxValue >= 4-1+4 = 7 but the protocol has 3, so the rows are
+    // 4 wide (values 0..3) and no column index >= 4 exists — the chain has nowhere
+    // to record an abstention, and its metadata says so ("canAbstain": false).
+    state.election = makeProcess({
+      questions: [{ title: 'Q1', choices: fourChoices }],
+      voteType: { maxCount: 4, maxValue: 3, uniqueChoices: true },
+    })
+    state.status = 'RESULTS'
+    state.results = makeResults([{
+      results: [
+        ['1', '1', '0', '0'],
+        ['0', '1', '1', '0'],
+        ['0', '0', '1', '0'],
+        ['0', '0', '0', '1'],
+      ],
+    }])
+    renderWithComponents(<ElectionResults />, slots)
+
+    const choices = captured.questions[0].choices
+    expect(choices.map((c: any) => c.title)).toEqual(['A', 'B', 'C', 'D'])
+    expect(choices.map((c: any) => c.votes)).toEqual(['1', '2', '2', '1'])
+    // Nothing is hidden from the denominator: the shown shares still total 100%.
+    expect(choices.map((c: any) => c.percent)).toEqual(['16.7%', '33.3%', '33.3%', '16.7%'])
+  })
+
+  it('hides the abstain row on the dense layout too, matching the pick-slot verdict', () => {
+    // Dev election 6be21a5a…303000000000a: the same question as a named multichoice
+    // on the dense wire layout — one [notSelected, selected] row per choice. The
+    // decoder reads it as approval and emits no abstain bucket at all, so this pins
+    // the two layouts to the same outcome.
+    state.election = makeProcess({
+      questions: [{ title: 'Q1', choices: fourChoices, type: 'multichoice' }],
+      voteType: { maxCount: 4, maxValue: 1, maxTotalCost: 4, uniqueChoices: false },
+    })
+    state.status = 'RESULTS'
+    state.results = makeResults([{
+      results: [
+        ['1', '3'],
+        ['0', '4'],
+        ['0', '4'],
+        ['1', '3'],
+      ],
+    }])
+    renderWithComponents(<ElectionResults />, slots)
+
+    const choices = captured.questions[0].choices
+    expect(choices.map((c: any) => c.title)).toEqual(['A', 'B', 'C', 'D'])
+    expect(choices.map((c: any) => c.votes)).toEqual(['3', '4', '4', '3'])
+  })
+
+  it('shows a zero abstain row when the protocol reserves headroom', () => {
+    // 3 choices, uniqueValues, maxCount 3 → abstain needs maxValue >= 3-1+3 = 5, and
+    // the protocol has exactly that. Nobody abstained, but that zero is a real
+    // measurement, so the row stays: the gate is possibility, not votes > 0.
+    state.election = makeProcess({
+      questions: [{ title: 'Q1', choices: threeChoices }],
+      voteType: { maxCount: 3, maxValue: 5, uniqueChoices: true },
+    })
+    state.status = 'RESULTS'
+    state.results = makeResults([{
+      results: [
+        ['2', '0', '0', '0', '0', '0'],
+        ['0', '2', '0', '0', '0', '0'],
+        ['0', '0', '2', '0', '0', '0'],
+      ],
+    }])
+    renderWithComponents(<ElectionResults />, slots)
+
+    const choices = captured.questions[0].choices
+    expect(choices).toHaveLength(4)
+    expect(choices[3].title).toBe('Abstain')
+    expect(choices[3].votes).toBe('0')
+  })
+
+  it('keeps a non-zero abstain row even when the protocol reserves no headroom', () => {
+    // Partial headroom: 3 choices, uniqueValues, maxCount 3 needs maxValue >= 5, so
+    // this protocol (4) does not reserve abstain — yet columns 3 and 4 exist and hold
+    // real selections. Hiding them would drop a measurement and leave the visible
+    // percentages summing to under 100%, since the decoder keeps abstain in the
+    // denominator. Reachable via a raw ballotProtocol rather than the legacy SDK.
+    state.election = makeProcess({
+      questions: [{ title: 'Q1', choices: threeChoices }],
+      voteType: { maxCount: 3, maxValue: 4, uniqueChoices: true },
+    })
+    state.status = 'RESULTS'
+    state.results = makeResults([{
+      results: [
+        ['1', '0', '0', '1', '0'],
+        ['0', '1', '0', '0', '1'],
+        ['0', '0', '1', '1', '0'],
+      ],
+    }])
+    renderWithComponents(<ElectionResults />, slots)
+
+    const choices = captured.questions[0].choices
+    expect(choices).toHaveLength(4)
+    expect(choices[3].title).toBe('Abstain')
+    expect(choices[3].votes).toBe('3')
+    expect(choices[3].percent).toBe('50.0%')
+  })
+
   it('matches results to questions by questionId, not array position', () => {
     const q2 = {
       title: 'Q2',
