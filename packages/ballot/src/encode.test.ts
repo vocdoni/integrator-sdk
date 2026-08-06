@@ -478,6 +478,28 @@ describe('encodeQuestionBallot', () => {
       ).toEqual([0, 1])
     })
 
+    it('matches the legacy SDK wire ballot for a 2-option multichoice', () => {
+      // Verbatim from a legacy @vocdoni/sdk 0.9.3 run on vocone (election
+      // 1adff8077b187c6ffd52f4a2d64d4c08762b7c7e89b6f6efee0b020800000000). Picking only
+      // choice B, the SDK's own checkVote passed and the signed protobuf carried
+      // {"votes":[1]} — a SHORT ballot, not padded to maxCount. Before this change the
+      // encoder threw here, so partial voting was impossible on an election the chain
+      // accepts and tallies.
+      const twoChoices = fourChoices.slice(0, 2)
+      const legacy = bp({
+        maxCount: 2,
+        maxValue: 1,
+        maxTotalCost: 0,
+        costExponent: 1,
+        uniqueValues: true,
+        maxVoteOverwrites: 0,
+        costFromWeight: false,
+      })
+      const question = { ballotProtocol: legacy, choices: twoChoices }
+      expect(encodeQuestionBallot(question, [1])).toEqual([1])
+      expect(encodeQuestionBallot(question, [0, 1])).toEqual([0, 1])
+    })
+
     it('throws on an out-of-range value for a named singlechoice without a protocol', () => {
       // The named type derives maxValue = highest Choice.value on chain
       // (saas-backend BallotProtocolFromType) — a stray selection value encodes a

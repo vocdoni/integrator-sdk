@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { Election } from '@vocdoni/api-types'
 import { decodeQuestionResults, decodeResults } from './decode'
 import { questionReservesAbstain } from './abstain'
+import { isDenseBallotProtocol } from './infer'
 
 const vt =(partial: Partial<Election['voteType']>): Election['voteType'] => ({
   maxCount: 1,
@@ -333,6 +334,50 @@ describe('decodeQuestionResults', () => {
     // always-emitted bucket is 0. `questionReservesAbstain` is what tells a UI to hide it.
     expect(decoded.at(-1)).toMatchObject({ choice: 'abstain', votes: 0 })
     expect(questionReservesAbstain({ ballotProtocol: indexList, choices: four })).toBe(false)
+  })
+
+  it('decodes a legacy-SDK 2-option multichoice without inverting the tally', () => {
+    // Provenance: created with the legacy @vocdoni/sdk 0.9.3 on vocone (election
+    // 1adff8077b187c6ffd52f4a2d64d4c08762b7c7e89b6f6efee0b020800000000), 2 choices,
+    // "pick up to 2". Everything below is verbatim from that run.
+    //
+    // The SDK sets uniqueChoices/uniqueValues TRUE by default for multichoice, so a plain
+    // 2-option election lands on {maxCount:2, maxValue:1, uniqueValues:true} — the exact
+    // shape the old `maxValue === 1 && maxCount > 1` dense test misclassified. This is the
+    // default for this election kind, not an exotic corner.
+    const twoOption = bp({
+      maxCount: 2,
+      maxValue: 1,
+      maxTotalCost: 0,
+      costExponent: 1,
+      uniqueValues: true,
+      maxVoteOverwrites: 0,
+      costFromWeight: false,
+    })
+    const ab = [
+      { title: { default: 'A' }, value: 0 },
+      { title: { default: 'B' }, value: 1 },
+    ]
+    // One voter picked B ONLY. The SDK put votes:[1] on the wire unpadded (confirmed by
+    // decoding the signed protobuf), and the chain tallied it into this matrix.
+    const results = [
+      ['0', '1'], // slot 0 held value 1 → B
+      ['0', '0'], // slot 1 unused (short ballot)
+    ]
+
+    const decoded = decodeQuestionResults({ ballotProtocol: twoOption, choices: ab }, results)
+    expect(decoded.map((c) => [c.choice, c.votes])).toEqual([
+      [0, 0], // A: nobody
+      [1, 1], // B: the one voter
+      ['abstain', 0],
+    ])
+
+    // Regression guard: reading this matrix as dense (results[optionPos][1]) yields A=1, B=0
+    // — the inverse of the truth. Assert the two reads genuinely disagree, so a revert to the
+    // old discriminator fails here loudly instead of quietly reporting the wrong winner.
+    const denseRead = ab.map((_c, i) => parseInt(results[i][1], 10))
+    expect(denseRead).toEqual([1, 0])
+    expect(isDenseBallotProtocol(twoOption)).toBe(false)
   })
 
   it('decodes a dense 4-choice matrix by the selected column', () => {
