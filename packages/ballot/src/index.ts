@@ -11,7 +11,12 @@ export { BallotType } from './types'
 export type { ProtocolBounds } from './protocol'
 
 // Re-export functions
-export { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
+export {
+  declaresLegacyPickSlot,
+  inferBallotType,
+  inferQuestionBallotType,
+  isDenseBallotProtocol,
+} from './infer'
 export {
   assertEncodedBallot,
   isUnsatisfiableProtocol,

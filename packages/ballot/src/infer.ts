@@ -7,7 +7,7 @@ import { BallotType } from './types'
  * open-ended metadata bag.
  *
  * Deliberately separate from {@link SAAS_TYPE_NAMES}: the vocabulary is keyed by the
- * *field the name came from*, because the two name different wire layouts. Legacy
+ * *field the name came from*, because each vocabulary names a different wire layout. Legacy
  * `"multiple-choice"` is the pick-slot index list; the SaaS `"multichoice"` is the dense
  * 0/1 layout the backend derives. Reading a SaaS spelling as a legacy one at the election
  * level would column-sum a dense matrix ({@link decodeResults} has no dense remap), and
@@ -37,16 +37,6 @@ const SAAS_TYPE_NAMES: Record<string, BallotType> = {
 }
 
 /**
- * Read a legacy `type.name` out of an open-ended metadata bag and resolve it against
- * {@link LEGACY_TYPE_NAMES}.
- *
- * The bag is `Record<string, unknown>` by declaration and creator-controlled in practice,
- * so every level is probed defensively — a bag whose `type` is a string, or whose `name`
- * is a number, yields `undefined` rather than throwing. In the SaaS model each question is
- * itself a vochain process, so this shape is reachable per question
- * (`VotingProcessQuestion.metadata`) as well as per election (`Election.meta`).
- */
-/**
  * True when a question's legacy metadata bag declares `multiple-choice` — the *pick-slot*
  * index list, not the dense layout the SaaS `multichoice` type names.
  *
@@ -60,6 +50,16 @@ export function declaresLegacyPickSlot(question: { metadata?: Record<string, unk
   return legacyTypeFromMeta(question.metadata) === BallotType.MultiChoice
 }
 
+/**
+ * Read a legacy `type.name` out of an open-ended metadata bag and resolve it against
+ * {@link LEGACY_TYPE_NAMES}.
+ *
+ * The bag is `Record<string, unknown>` by declaration and creator-controlled in practice,
+ * so every level is probed defensively — a bag whose `type` is a string, or whose `name`
+ * is a number, yields `undefined` rather than throwing. In the SaaS model each question is
+ * itself a vochain process, so this shape is reachable per question
+ * (`VotingProcessQuestion.metadata`) as well as per election (`Election.meta`).
+ */
 function legacyTypeFromMeta(meta: Record<string, unknown> | undefined): BallotType | undefined {
   if (!meta || typeof meta !== 'object') return undefined
   const type = (meta as { type?: unknown }).type

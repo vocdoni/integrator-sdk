@@ -105,7 +105,7 @@ The encoding pattern depends on the question's `ballotProtocol`:
 > Every `@vocdoni/ballot` entry point prefers a recognized declared type name over
 > shape, and falls through to shape when the name is absent, empty or unrecognized.
 > Two sources are consulted, and **the vocabulary follows the field, not the
-> function** — the two name opposite wire layouts:
+> function** — each vocabulary names the opposite wire layout:
 >
 > | source | recognized names | layout meant |
 > |---|---|---|

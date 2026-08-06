@@ -19,33 +19,36 @@ export const BallotType: {
 }
 export type BallotType = (typeof BallotType)[keyof typeof BallotType]
 
-// Infer the ballot type from the declared type name, falling back to election config.
-// `type` is the vochain `metadata.type.name` — see "Declared type names" below.
+// Every election-level entry point takes the same two optional declared-type inputs
+// on top of the election config: `type` (the explicit name) and `meta` (the legacy
+// metadata bag, read as `meta.type.name`). See "Declared type names" below.
+
+// Infer the ballot type from the declared type name, falling back to election config
 export function inferBallotType(
-  input: Pick<Election, 'questions' | 'voteType'> & { type?: string }
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string; meta?: Record<string, unknown> }
 ): BallotType
 
 // Encode high-level selections into the on-chain ballot array
 export function encodeBallot(
-  input: Pick<Election, 'questions' | 'voteType'> & { type?: string },
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string; meta?: Record<string, unknown> },
   selections: BallotSelections
 ): number[]
 
 // Decode raw results into per-question/per-choice tallies
 export function decodeResults(
-  input: Pick<Election, 'questions' | 'voteType' | 'results'> & { type?: string }
+  input: Pick<Election, 'questions' | 'voteType' | 'results'> & { type?: string; meta?: Record<string, unknown> }
 ): DecodedResults
 
 // Validate selections against election constraints (optional)
 export function validateSelections(
-  input: Pick<Election, 'questions' | 'voteType'> & { type?: string },
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string; meta?: Record<string, unknown> },
   selections: BallotSelections
 ): void
 
 // Whether a multichoice election reserves enough maxValue room to abstain-pad a
 // partial selection (false for every other ballot type). Handy for UI validation.
 export function multichoiceReservesAbstain(
-  input: Pick<Election, 'questions' | 'voteType'> & { type?: string }
+  input: Pick<Election, 'questions' | 'voteType'> & { type?: string; meta?: Record<string, unknown> }
 ): boolean
 
 // Why a ballot config admits no usable ballot, or null when it is fine.
@@ -70,7 +73,21 @@ export function voteTypeBounds(
 
 // True for the dense 0/1 wire layout (one field per choice) — what the backend
 // derives for the named multichoice type.
-export function isDenseBallotProtocol(bp: Pick<BallotProtocol, 'maxCount' | 'maxValue'>): boolean
+//
+// ⚠️ Not sufficient on its own to route a decode. A legacy two-option pick-slot
+// multichoice has the same params, so this answers `true` for it too; pair it with
+// `declaresLegacyPickSlot` (below), which is what the built-in codecs do.
+export function isDenseBallotProtocol(
+  bp: Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uniqueValues'>
+): boolean
+
+// True when a question's legacy metadata bag declares `multiple-choice` — the
+// pick-slot index list, NOT the dense layout the SaaS `multichoice` type names.
+// Use it to suppress a dense read that `isDenseBallotProtocol` would otherwise
+// green-light; without it a two-option tally comes out inverted.
+export function declaresLegacyPickSlot(question: {
+  metadata?: Record<string, unknown>
+}): boolean
 
 // Assert an encoded wire ballot would survive the scrutinizer's per-field checks
 // (range + uniqueness). The encoders run it on everything they produce; call it
@@ -117,7 +134,7 @@ const decoded = decodeResults({
 ```
 
 **The vocabulary follows the field it came from, not the function.** This matters because
-the two name opposite wire layouts:
+each vocabulary names the opposite wire layout:
 
 | source | recognized names | layout |
 | --- | --- | --- |
