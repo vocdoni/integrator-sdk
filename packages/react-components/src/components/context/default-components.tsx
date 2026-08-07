@@ -68,6 +68,9 @@ export const defaultComponents: ComponentsDefinition = {
     description,
     image,
     compact,
+    // Destructured but unused: it is a slot prop for overrides to lay out with, and
+    // anything left in `...props` is spread onto a DOM element.
+    hasImage: _hasImage,
     canOpenImageModal,
     dataAttrs,
     presentation,
@@ -110,6 +113,69 @@ export const defaultComponents: ComponentsDefinition = {
           {label}
         </span>
         <TrustedHtml html={description} />
+      </label>
+    )
+  },
+  // A `<select>` per option: the plainest control that expresses an ordering without
+  // dragging in a drag-and-drop dependency, and it keeps the whole widget keyboard- and
+  // screen-reader-navigable by default. Positions already held by another choice stay
+  // selectable (and are marked) so a voter can swap two options in one move instead of
+  // having to clear one first.
+  QuestionRankChoice: ({
+    choice,
+    value,
+    label,
+    description,
+    image,
+    compact,
+    // See the note on QuestionChoice above: unused here, but it must not reach the DOM.
+    hasImage: _hasImage,
+    canOpenImageModal,
+    dataAttrs,
+    presentation,
+    position,
+    options,
+    disabled,
+    onRank,
+    ...props
+  }) => {
+    const imageSrc = image?.thumbnail ?? image?.default
+
+    return (
+      <label
+        {...props}
+        data-presentation={presentation}
+        data-selection-mode='ranked'
+        data-choice-value={value}
+        data-choice-card={dataAttrs?.['data-choice-card']}
+        data-layout={dataAttrs?.['data-layout']}
+      >
+        {imageSrc ? (
+          <img
+            src={linkifyIpfs(imageSrc)}
+            alt={label}
+            data-choice-media={dataAttrs?.['data-choice-media']}
+            data-can-open-modal={canOpenImageModal ? 'true' : undefined}
+          />
+        ) : null}
+        <span data-choice-body={dataAttrs?.['data-choice-body']} data-compact={compact ? '' : undefined}>
+          {label}
+        </span>
+        <TrustedHtml html={description} />
+        <select
+          id={`rank-${choice.value}`}
+          value={position ?? ''}
+          disabled={disabled}
+          data-choice-control={dataAttrs?.['data-choice-control']}
+          onChange={(event) => onRank(event.target.value === '' ? null : Number(event.target.value))}
+        >
+          <option value=''>—</option>
+          {options.map((option) => (
+            <option key={option.position} value={option.position} data-taken={option.taken ? '' : undefined}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       </label>
     )
   },

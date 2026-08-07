@@ -311,6 +311,29 @@ plain `basic`/`list` rendering, as does a question with no `metadata.choices` at
 all. When you hand `<ElectionProvider>` a prefetched `election`, it runs the
 same normalization, so extended choices show on the first paint too.
 
+**Ranked questions** — a question declaring `metadata.type.name = 'ranked'` (see
+[voting.md](voting.md)) renders a **rank widget** instead of the checkbox group its
+protocol would otherwise get: one position control per option, through the
+`QuestionRankChoice` slot rather than `QuestionChoice`. The question's
+`selectionMode` is `'ranked'` (a third value alongside `'single'` / `'multiple'`).
+
+The slot receives `position` (1-based, `null` while unranked), the full list of
+`options` (`{ position, label, taken }` — `taken` marks a place another option
+already holds, and picking it **swaps** the two), and `onRank(position | null)`. The
+default implementation is a `<select>` per option; override the slot for
+drag-and-drop or numbered buttons.
+
+The form value is the voter's **ordering** — a `string[]` of choice values, best
+first, padded with `''` for unfilled places — and `QuestionsFormProvider` transposes
+it into wire ranks on submit (`encodeQuestionSelections`, which owns the
+ortherwise-per-call-site transposition). Submitting is blocked until
+every option is placed (`questionSelectionRange` reports `{min: n, max: n}`): a
+ranked protocol leaves exactly one rank per option, so a partial ranking repeats a
+value and the chain discards the whole ballot while still counting the envelope.
+
+Note that `<ElectionResults />` shows the **Borda score** for such a question, not a
+voter count — same as it already does for budget/quadratic amounts.
+
 **Slot customization** — every component accepts a slot override for rendering:
 
 ```tsx

@@ -152,7 +152,13 @@ export type PaginationSummarySlotProps = BaseProps<HTMLParagraphElement> & {
 }
 
 export type ElectionQuestionsSlotProps = BaseProps<HTMLDivElement> & { form?: ReactNode }
-export type QuestionSelectionMode = 'single' | 'multiple'
+/**
+ * How a question asks for its answer. `single` is one-of-N (radios), `multiple` is
+ * any-of-N (checkboxes), and `ranked` is an ordering of every option — a different
+ * control entirely, rendered through the {@link QuestionRankChoiceSlotProps} slot
+ * rather than {@link QuestionChoiceSlotProps}.
+ */
+export type QuestionSelectionMode = 'single' | 'multiple' | 'ranked'
 export type QuestionChoicePresentation = 'basic' | 'extended'
 export type QuestionLayout = 'list' | 'grid'
 
@@ -190,6 +196,52 @@ export type QuestionChoiceSlotProps = BaseProps<HTMLLabelElement> & {
   onSelect: (checked: boolean) => void
 }
 
+/** One selectable rank position offered for a choice by {@link QuestionRankChoiceSlotProps}. */
+export type QuestionRankOption = {
+  /** 1-based position: 1 is the voter's top pick. */
+  position: number
+  /** Ready-to-render label for the position ("1st", "2nd", …, localized). */
+  label: string
+  /** True when another choice already holds this position. */
+  taken: boolean
+}
+
+/**
+ * One option of a **ranked** question: the voter assigns it a position rather than
+ * ticking it.
+ *
+ * A separate slot from {@link QuestionChoiceSlotProps} because the control is not a
+ * checkbox or a radio — the answer is an ordering, so each option needs to express
+ * *which* place it holds. The default implementation renders a `<select>`; override
+ * this slot for drag-and-drop or numbered buttons.
+ *
+ * The wire orientation (highest rank value = best) is NOT this slot's concern:
+ * `position` is 1-based and human, and `@vocdoni/ballot`'s `rankedOrderToScores`
+ * converts the resulting ordering into ballot ranks.
+ */
+export type QuestionRankChoiceSlotProps = BaseProps<HTMLLabelElement> & {
+  choice: Choice
+  value: string
+  label: string
+  description?: string
+  image?: {
+    default?: string
+    thumbnail?: string
+  }
+  compact: boolean
+  hasImage: boolean
+  canOpenImageModal: boolean
+  dataAttrs?: { [key: string]: string | undefined }
+  presentation: QuestionChoicePresentation
+  /** The position this choice currently holds, or `null` while it is unranked. */
+  position: number | null
+  /** Every position the voter may assign, in order. */
+  options: QuestionRankOption[]
+  disabled?: boolean
+  /** Assign this choice a position, or `null` to unrank it. */
+  onRank: (position: number | null) => void
+}
+
 export type QuestionsConfirmationAnswerItem = {
   question: string
   answers: string[]
@@ -217,6 +269,7 @@ export type ComponentsDefinition<ExternalProps extends object = {}> = {
   ElectionQuestions: ComponentType<ElectionQuestionsSlotProps & ExternalProps>
   ElectionQuestion: ComponentType<ElectionQuestionSlotProps & ExternalProps>
   QuestionChoice: ComponentType<QuestionChoiceSlotProps & ExternalProps>
+  QuestionRankChoice: ComponentType<QuestionRankChoiceSlotProps & ExternalProps>
   QuestionsTypeBadge: ComponentType<QuestionsTypeBadgeSlotProps & ExternalProps>
   QuestionTip: ComponentType<QuestionTipSlotProps & ExternalProps>
   QuestionsEmpty: ComponentType<QuestionsEmptySlotProps & ExternalProps>
@@ -258,6 +311,7 @@ export type ElectionComponentsDefinition = Pick<
   | 'ElectionQuestions'
   | 'ElectionQuestion'
   | 'QuestionChoice'
+  | 'QuestionRankChoice'
   | 'QuestionsTypeBadge'
   | 'QuestionTip'
   | 'QuestionsEmpty'

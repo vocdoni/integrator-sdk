@@ -93,6 +93,37 @@ function decodeQuestion(
       return withPercentages(question, counts, abstain)
     }
 
+    case BallotType.Ranked: {
+      // One field per option, position-addressed like approval/budget — the field
+      // index is the option's place in `choices` (that is how encode lays a ranking
+      // out), NOT its `choice.value`. The field's value is the rank the voter gave
+      // that option, **highest = best**, so the row is a histogram over ranks:
+      // results[optionIndex][rank] = how many voters awarded that option that rank.
+      //
+      // Borda is the aggregation: Σ count × rank, the index-weighted sum of the row.
+      // It is not one choice among several — the tally is a per-field histogram with
+      // the individual ballots already discarded, and positional/Condorcet methods
+      // need the ballots. Borda is what this data can express, and it is what
+      // saas-integrator-demo (the only shipped ranked implementation) computes.
+      //
+      // ⚠️ Orientation is load-bearing and unverifiable from the matrix: an
+      // index-weighted sum over a 0-is-best ranking elects the LOSER, and nothing
+      // here can tell the two apart. `encodeQuestionBallot`'s contract (and
+      // `rankedOrderToScores`) fix highest = best on the encode side; this branch is
+      // the other half of that one agreement.
+      //
+      // No abstain bucket, deliberately: the sentinel columns the multichoice branch
+      // unifies are a pick-slot device for unfilled slots. Ranked has no unfilled
+      // slots — every option is a field, a partial ranking repeats a value and the
+      // chain drops the whole ballot — so a column past the choices would be a
+      // corrupt rank, not an abstention, and an always-zero "Abstention" row on a
+      // ballot nobody can abstain on is worse than no row.
+      const counts = question.choices.map((_c, i) =>
+        (results[i] ?? []).reduce((sum, cell, rank) => sum + toInt(cell) * rank, 0)
+      )
+      return withPercentages(question, counts)
+    }
+
     case BallotType.Budget:
     case BallotType.Quadratic: {
       // One field per option; value = amount allocated. `maxValue === 0` is not just

@@ -1,6 +1,6 @@
 import type { BallotProtocol, Choice, Election, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
 import { BallotType } from './types'
-import { inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
+import { declaresRanked, inferBallotType, inferQuestionBallotType, isDenseBallotProtocol } from './infer'
 
 /**
  * Lowest `maxValue` a multichoice election must reserve so that a partial selection
@@ -57,6 +57,15 @@ export function questionSelectionRange(question: {
   typeSetup?: QuestionTypeSetup
   choices: Choice[]
 }): { min: number; max: number } {
+  // Ranked is a full slate, not a selection: every option is a field and the protocol
+  // is pigeonhole-tight (`maxValue = numChoices - 1` with `uniqueValues`), so the only
+  // castable ballot ranks all of them — anything shorter repeats a rank and the chain
+  // drops the whole vote at tally. `minChoices`/`maxChoices` do not apply; a UI that
+  // offered a partial ranking would be offering a vote that never counts.
+  if (declaresRanked(question)) {
+    const n = question.choices.length
+    return { min: n, max: n }
+  }
   const bp = question.ballotProtocol
   // Dense layout (named multichoice, protocol optionally omitted on public
   // reads): maxCount is the number of choices, not the pick bound — picks are
