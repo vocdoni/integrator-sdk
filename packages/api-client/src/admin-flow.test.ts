@@ -263,6 +263,127 @@ describe('admin / integrator client methods', () => {
         ).rejects.toThrow(/Question 0: unsatisfiable ballotProtocol/)
       })
 
+      it('rejects a ballotProtocol whose maxValue cannot reach every choice value', async () => {
+        // integrator-sdk#28: choices published 1-indexed (1/2/3) under maxValue 2, so
+        // C3 addresses a field value the chain refuses. The API accepts this shape —
+        // confirmed live in integration/value-skew.itest.ts, where the resulting
+        // election counted 2 envelopes and tallied 1. Stop it at creation, since after
+        // publish the only remedy is a new election.
+        await expect(
+          client.elections.create({
+            orgAddress: ORG,
+            title: 'One-indexed',
+            questions: [
+              {
+                title: 'Pick one',
+                choices: [1, 2, 3].map((v) => ({ title: `C${v}`, value: v })),
+                ballotProtocol: {
+                  maxCount: 1,
+                  maxValue: 2,
+                  maxVoteOverwrites: 0,
+                  costExponent: 1,
+                  maxTotalCost: 0,
+                  uniqueValues: false,
+                  costFromWeight: false,
+                },
+              },
+            ],
+          }),
+        ).rejects.toThrow(/Question 0: .*choice value\(s\) 3 exceed maxValue 2/)
+      })
+
+      it('accepts sparse choice values that still fit maxValue', async () => {
+        // Gaps are legal — saas-backend derives maxValue from the highest value
+        // precisely so {0,2,5} works, and the unused columns just stay empty.
+        const body = postDraft()
+        await client.elections.create({
+          orgAddress: ORG,
+          title: 'Sparse',
+          questions: [
+            {
+              title: 'Pick one',
+              choices: [0, 2, 5].map((v) => ({ title: `C${v}`, value: v })),
+              ballotProtocol: {
+                maxCount: 1,
+                maxValue: 5,
+                maxVoteOverwrites: 0,
+                costExponent: 1,
+                maxTotalCost: 0,
+                uniqueValues: false,
+                costFromWeight: false,
+              },
+            },
+          ],
+        })
+        expect(body().questions[0].ballotProtocol.maxValue).toBe(5)
+      })
+
+      // The two below pin that creation resolves the ballot type from the *same* inputs
+      // `encodeQuestionBallot` does. `metadata.type.name` is the second type source in
+      // `inferQuestionBallotType`, ahead of every shape rule, and it is the only source
+      // on this branch: `type` is stored empty for raw-`ballotProtocol` questions. Judge
+      // by shape here and by name at encode time and the two disagree in both
+      // directions — which is what makes this worth a test per direction rather than one.
+      it('rejects by the legacy metadata name, not the shape it happens to resemble', async () => {
+        // {maxCount: 2, maxValue: 1, uniqueValues: false} is the dense shape, and dense is
+        // position-addressed, so by shape alone these values carry no constraint at all.
+        // The legacy `multiple-choice` name says pick-slot, where value 5 collides with
+        // the abstain sentinels at >= 2. `encodeQuestionBallot` reads the name and refuses;
+        // creation must refuse too, or it publishes an election its own codec cannot vote.
+        await expect(
+          client.elections.create({
+            orgAddress: ORG,
+            title: 'Legacy pick-slot',
+            questions: [
+              {
+                title: 'Pick some',
+                choices: [0, 5].map((v) => ({ title: `C${v}`, value: v })),
+                metadata: { type: { name: 'multiple-choice' } },
+                ballotProtocol: {
+                  maxCount: 2,
+                  maxValue: 1,
+                  maxVoteOverwrites: 0,
+                  costExponent: 1,
+                  maxTotalCost: 0,
+                  uniqueValues: false,
+                  costFromWeight: false,
+                },
+              },
+            ],
+          }),
+        ).rejects.toThrow(/Question 0: .*exactly the set 0\.\.1 \(in any order\), but they are 0, 5/)
+      })
+
+      it('accepts by the legacy metadata name what the shape alone would reject', async () => {
+        // By shape this is MultiChoice and non-dense, i.e. pick-slot, whose values must be
+        // exactly 0..3 — so the gap at 3 would be refused. The legacy
+        // `single-choice-multiquestion` name says single-choice, which is value-addressed
+        // with a ceiling only: gaps are legal and every value clears maxValue 5. Refusing
+        // it would block a draft the codec encodes and decodes correctly.
+        const body = postDraft()
+        await client.elections.create({
+          orgAddress: ORG,
+          title: 'Legacy multiquestion',
+          questions: [
+            {
+              title: 'Pick one per question',
+              choices: [0, 1, 2, 4].map((v) => ({ title: `C${v}`, value: v })),
+              metadata: { type: { name: 'single-choice-multiquestion' } },
+              ballotProtocol: {
+                maxCount: 3,
+                maxValue: 5,
+                maxVoteOverwrites: 0,
+                costExponent: 1,
+                maxTotalCost: 0,
+                uniqueValues: false,
+                costFromWeight: false,
+              },
+            },
+          ],
+        })
+        expect(body().questions[0].metadata).toEqual({ type: { name: 'single-choice-multiquestion' } })
+      })
+
       it('accepts a dense ballotProtocol with uniqueValues false', async () => {
         const body = postDraft()
         await client.elections.create({

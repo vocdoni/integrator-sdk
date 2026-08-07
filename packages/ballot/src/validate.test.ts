@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { Election } from '@vocdoni/api-types'
 import { validateSelections } from './validate'
+import { encodeBallot } from './encode'
 
 const createElection = (
   voteType: Partial<Election['voteType']>,
@@ -33,8 +34,26 @@ describe('validateSelections', () => {
 
   describe('single-choice', () => {
     it('accepts one valid choice per question', () => {
-      const election = createElection({ maxCount: 1, maxValue: 2 }, 3)
+      // maxValue must clear the highest choice value (4 here, five choices): single-choice
+      // is value-addressed, so a ceiling below it publishes options nobody can record.
+      const election = createElection({ maxCount: 1, maxValue: 4 }, 3)
       expect(() => validateSelections(election, [[0], [2], [4]])).not.toThrow()
+    })
+
+    it('rejects a published choice that sits above maxValue, as encodeBallot does', () => {
+      // Five choices (values 0..4) under a ceiling of 2: choices 3 and 4 address columns
+      // the chain refuses. Confirmed live in value-skew.itest.ts — the relay accepts such
+      // a ballot, voteCount counts it, and the tally silently drops it.
+      //
+      // This validator and encodeBallot are the two pre-flight entry points, and a UI
+      // that gates its submit button on this one must not enable a vote encode then
+      // refuses. Assert both ends together so they cannot drift apart again.
+      const election = createElection({ maxCount: 1, maxValue: 2 }, 1)
+      expect(() => validateSelections(election, [[4]])).toThrow(/above maxValue 2/)
+      expect(() => encodeBallot(election, [[4]])).toThrow(/maxValue 2/)
+      // ...and the castable pick is still accepted by both.
+      expect(() => validateSelections(election, [[1]])).not.toThrow()
+      expect(encodeBallot(election, [[1]])).toEqual([1])
     })
 
     it('rejects an empty selection (single-choice has no abstain concept)', () => {

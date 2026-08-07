@@ -1,4 +1,6 @@
 import type { BallotProtocol, Choice, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
+import { BallotType } from './types'
+import { inferQuestionBallotType, isPickSlotLayout } from './infer'
 
 /** The part of a ballot protocol the satisfiability rule reads. */
 export type ProtocolBounds = Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uniqueValues'>
@@ -163,4 +165,218 @@ export function isUnsatisfiableQuestion(question: {
   choices: Choice[]
 }): boolean {
   return unsatisfiableQuestionReason(question) !== null
+}
+
+/**
+ * The question shape {@link uncastableChoicesReason} reads.
+ *
+ * No `typeSetup`, deliberately: reachability is decided by the layout and the choice
+ * values alone, and `minChoices`/`maxChoices` bound how many options a voter picks,
+ * never which ones can be recorded. Declaring it here would advertise a check that
+ * does not exist. {@link unsatisfiableQuestionReason} does read it — that rule asks
+ * whether any ballot counts at all, which `maxChoices` genuinely affects.
+ */
+type QuestionLike = {
+  ballotProtocol?: BallotProtocol
+  type?: string
+  /** Legacy metadata bag — `metadata.type.name` names the wire layout when present. */
+  metadata?: Record<string, unknown>
+  choices: Choice[]
+}
+
+/**
+ * Explain why a question publishes a choice no voter can actually cast, or `null`
+ * when every choice is reachable.
+ *
+ * {@link unsatisfiableProtocolReason} asks "can *any* ballot count here?"; this asks
+ * the narrower and far more common question "can every *published choice* be
+ * recorded?". A question can be perfectly satisfiable and still carry an option that
+ * is dead on arrival, which is more insidious than an all-zero tally: the election
+ * runs, most votes count, and the unreachable option quietly polls zero. Verified
+ * live in `integration/value-skew.itest.ts` — the relay accepts an out-of-range
+ * ballot, the chain counts it in `voteCount`, and the scrutinizer discards it at
+ * aggregation without surfacing an error anywhere.
+ *
+ * What "reachable" means depends on how the layout addresses its fields:
+ *
+ * - **single-choice** — value-addressed. The one field carries the chosen
+ *   `choice.value` and the results row is indexed by it (saas-backend `db/types.go`:
+ *   "indexed by choice value (0..MaxValue, so sparse choice values leave empty
+ *   buckets)"). Gaps are legal and deliberate — `VoteTypeFromQuestion` derives
+ *   `maxValue` from the highest value for exactly this reason — so the rule is only
+ *   that every value fits `0..maxValue`.
+ * - **pick-slot multichoice** — value-addressed picks sharing one value space with
+ *   the abstain sentinels. {@link requiredAbstainMaxValue} places those at
+ *   `choices.length`, `choices.length + 1`, …, and decode claims every column
+ *   `>= choices.length` as abstention, so the real values must occupy exactly
+ *   `0..choices.length-1`. Contiguity, not merely a bound: with values 1/2/3 the
+ *   first sentinel *is* 3, so an abstention would be recorded as a vote for C3 and
+ *   decode would then reassign that column to the abstain bucket.
+ * - **approval / dense multichoice / budget / quadratic** — position-addressed. One
+ *   field per choice in choice order, so `choice.value` is a display label the wire
+ *   never sees and any values at all are fine.
+ *
+ * Returns `null` rather than a verdict for shapes it cannot judge (no derivable
+ * ballot type, no choices, non-integer or negative values), matching
+ * {@link unsatisfiableProtocolReason}: this explains a well-formed config, it does
+ * not police malformed input.
+ */
+export function uncastableChoicesReason(question: QuestionLike): string | null {
+  let ballotType: BallotType
+  try {
+    ballotType = inferQuestionBallotType(question)
+  } catch {
+    // Neither a ballotProtocol nor a recognized type — nothing to judge against.
+    return null
+  }
+
+  const bp = question.ballotProtocol
+  // Without a raw protocol the named singlechoice type derives maxValue from these
+  // very values (questionProtocolBounds, mirroring VoteTypeFromQuestion), so every
+  // value fits by construction and there is nothing to report.
+  if (!bp) return null
+
+  return uncastableChoicesReasonFor(
+    ballotType,
+    question.choices,
+    bp.maxValue,
+    // Per-question, the MultiChoice label covers both wire layouts; only the
+    // pick-slot one shares its value space with the abstain sentinels.
+    isPickSlotLayout(question)
+  )
+}
+
+/**
+ * The part of {@link uncastableChoicesReason} that no per-ballot check can reach:
+ * pick-slot choice values colliding with the abstain sentinel space.
+ *
+ * Split out because encode treats the two halves of the rule differently.
+ * {@link assertEncodedBallot} already catches a value above `maxValue` on the one
+ * ballot that carries it, so the ceiling half needs no separate up-front refusal — it
+ * surfaces for the voter who picks the unreachable option and nobody else. This half
+ * has no such backstop: the colliding values sit *within* `maxValue`, so every
+ * individual ballot passes the bounds check while meaning something other than what
+ * the voter picked. With values 1/2/3 the first sentinel *is* 3, so an abstention is
+ * recorded as a vote for C3 and decode then reassigns that column to the abstain
+ * bucket — a corruption no ballot inspection can detect, because no ballot is wrong.
+ *
+ * Returns `null` for shapes it cannot judge, like its caller.
+ */
+export function pickSlotCollisionReason(choices: Choice[]): string | null {
+  const values = choices?.map((choice) => choice.value) ?? []
+  if (values.length === 0) return null
+  if (values.some((value) => !Number.isInteger(value) || value < 0)) return null
+
+  // Only the *set* of values matters, not the order they appear in: encode passes the
+  // picked value through and decode reads column `choice.value`, so a permutation like
+  // [2, 0, 1] maps every choice to its own column just fine. What breaks is a value
+  // landing at or above `numChoices`, where the sentinels live.
+  const numChoices = values.length
+  const sorted = [...values].sort((a, b) => a - b)
+  if (sorted.every((value, i) => value === i)) return null
+
+  return (
+    `pick-slot multichoice requires the choice values to be exactly the set 0..${numChoices - 1} ` +
+    `(in any order), but they are ${values.join(', ')}. Unfilled pick-slots are padded with ` +
+    `abstain sentinels starting at ${numChoices}, and decoding treats every column >= ` +
+    `${numChoices} as an abstention — so a value in that range is indistinguishable from an ` +
+    'abstain, and a gap below it pushes a real choice up into sentinel space. Renumber the ' +
+    `choices 0..${numChoices - 1}`
+  )
+}
+
+/**
+ * The rule behind {@link uncastableChoicesReason}, with the ballot type already
+ * resolved.
+ *
+ * Election-level callers ({@link encodeBallot}) must not re-infer per question:
+ * `inferBallotType` reads the whole election — most importantly "more than one
+ * question ⇒ single-choice" — which no per-question view can reconstruct. They pass
+ * the election's own verdict in instead. Not re-exported from the package index;
+ * `uncastableChoicesReason` is the public entry point.
+ *
+ * @param isPickSlot - only consulted for {@link BallotType.MultiChoice}, which names
+ *   two different wire layouts per question. At election level the discrimination has
+ *   already happened (dense lands on {@link BallotType.Approval}), so pass `true`.
+ */
+export function uncastableChoicesReasonFor(
+  ballotType: BallotType,
+  choices: Choice[],
+  maxValue: number,
+  isPickSlot: boolean
+): string | null {
+  const values = choices?.map((choice) => choice.value) ?? []
+  if (values.length === 0) return null
+  if (values.some((value) => !Number.isInteger(value) || value < 0)) return null
+
+  // Shared by both value-addressed layouts: a value above the protocol's ceiling
+  // addresses a column the chain refuses, so that option can never be recorded.
+  //
+  // `maxValue === 0` is NOT a ceiling of zero — module-wide it means "no upper
+  // bound" (`unsatisfiableProtocolReason` below, `assertEncodedBallot`'s
+  // `bounds.maxValue > 0 &&` guard, `decode.ts`). Treating it as a real ceiling
+  // would refuse every non-zero value on a protocol the chain does not bound, and
+  // diagnose it as a ceiling problem. Reachable whenever a declared type outranks
+  // the shape rules, e.g. `{type: 'singlechoice', ballotProtocol: {maxValue: 0}}`,
+  // which `inferQuestionBallotType` resolves by name before it can read the 0 as
+  // budget/quadratic.
+  const beyondCeiling = (): number[] =>
+    Number.isInteger(maxValue) && maxValue > 0 ? values.filter((value) => value > maxValue) : []
+
+  if (ballotType === BallotType.SingleChoice) {
+    // Two choices sharing one value are one column on the wire. Decode reads
+    // `results[q][choice.value]` for each, so a single vote for either reports as a
+    // vote for BOTH and the question's percentages sum past 100 — the second option
+    // can never be recorded *as itself*, which is the same defect as an out-of-range
+    // value wearing a different face. Named before the ceiling check because it is
+    // the more specific diagnosis when a config manages both.
+    const duplicated = [...new Set(values.filter((value, i) => values.indexOf(value) !== i))]
+    if (duplicated.length > 0) {
+      return (
+        `choice value(s) ${duplicated.join(', ')} are used by more than one choice, but ` +
+        'single-choice is value-addressed: the results row is indexed by choice value, so ' +
+        'those choices share one column and a vote for either is counted for all of them, ' +
+        'pushing the percentages past 100. Give every choice a distinct value'
+      )
+    }
+
+    const beyond = beyondCeiling()
+    if (beyond.length === 0) return null
+    return (
+      `choice value(s) ${beyond.join(', ')} exceed maxValue ${maxValue}, so no voter can ` +
+      'record them: the chain accepts such a ballot, counts it in voteCount and discards it at ' +
+      'tally, leaving the option polling zero while the vote looks cast. Raise maxValue to at ' +
+      `least ${Math.max(...values)}, or renumber the choices into 0..${maxValue}`
+    )
+  }
+
+  if (ballotType === BallotType.MultiChoice && isPickSlot) {
+    // Pick-slot has two ways to publish an unreachable option, and needs both checks.
+    // The first also covers duplicates, as a side effect of requiring the exact set
+    // 0..n-1: a repeat forces some other value out of range.
+    const numChoices = values.length
+
+    const collision = pickSlotCollisionReason(choices)
+    if (collision) return collision
+
+    // The ceiling still has to clear the highest of those values — a pick-slot
+    // protocol may carry any maxValue >= 2, including one below numChoices - 1.
+    const beyond = beyondCeiling()
+    if (beyond.length === 0) return null
+    return (
+      `choice value(s) ${beyond.join(', ')} exceed maxValue ${maxValue}, so no voter can ` +
+      'record them: the chain accepts such a ballot, counts it in voteCount and discards it at ' +
+      `tally. A pick-slot multichoice over ${numChoices} choices needs maxValue >= ` +
+      `${numChoices - 1}, plus headroom for abstain sentinels if partial selections should be ` +
+      'castable (see requiredAbstainMaxValue)'
+    )
+  }
+
+  // Position-addressed layouts: choice.value never reaches the wire.
+  return null
+}
+
+/** True when {@link uncastableChoicesReason} has something to say about `question`. */
+export function hasUncastableChoices(question: QuestionLike): boolean {
+  return uncastableChoicesReason(question) !== null
 }

@@ -1,8 +1,9 @@
-import { encodeQuestionBallot } from '@vocdoni/ballot'
+import { encodeQuestionBallot, hasUncastableChoices } from '@vocdoni/ballot'
 import { createContext, PropsWithChildren, useContext, useEffect } from 'react'
 import { FieldValues, FormProvider, useForm, UseFormReturn } from 'react-hook-form'
 import { EnsureConfirmProvider } from '../../../confirm/ConfirmProvider'
 import { useConfirm } from '../../../confirm/useConfirm'
+import { useReactComponentsLocalize } from '../../../i18n/localize'
 import { useElection } from '@vocdoni/react-providers'
 import { QuestionsConfirmation } from './Confirmation'
 
@@ -35,6 +36,7 @@ const QuestionsFormProviderInner = ({ children }: PropsWithChildren<QuestionsFor
   const fmethods = useForm()
   const { confirm } = useConfirm()
   const { election, vote: baseVote } = useElection()
+  const t = useReactComponentsLocalize()
 
   const vote = async (values: FieldValues) => {
     if (!election) {
@@ -64,9 +66,21 @@ const QuestionsFormProviderInner = ({ children }: PropsWithChildren<QuestionsFor
       try {
         encodedBallots.push(encodeQuestionBallot(question, selections[index] ?? []))
       } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        // Two very different failures land here and only one of them is the voter's to
+        // act on. "Too many selections" they can fix. A question that published an
+        // option nobody can record is a defect in the election, fixable only before
+        // publish, and the encoder explains it in the creator's terms — maxValue,
+        // voteCount, the scrutinizer. Rendering that verbatim in a ballot field asks
+        // someone to act on something they have no power over, on a form that offered
+        // them the option in the first place. Keep the detail for whoever is debugging.
+        const unvotable = hasUncastableChoices(question)
+        if (unvotable) {
+          console.error(`question ${index} publishes a choice no voter can cast: ${detail}`)
+        }
         fmethods.setError(index.toString(), {
           type: 'encode',
-          message: error instanceof Error ? error.message : String(error),
+          message: unvotable ? t('errors.question_not_votable') : detail,
         })
         return false
       }

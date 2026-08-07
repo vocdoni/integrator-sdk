@@ -16,11 +16,14 @@ export {
   inferBallotType,
   inferQuestionBallotType,
   isDenseBallotProtocol,
+  isPickSlotLayout,
 } from './infer'
 export {
   assertEncodedBallot,
+  hasUncastableChoices,
   isUnsatisfiableProtocol,
   isUnsatisfiableQuestion,
+  uncastableChoicesReason,
   unsatisfiableProtocolReason,
   unsatisfiableQuestionReason,
   voteTypeBounds,

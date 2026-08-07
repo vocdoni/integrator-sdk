@@ -26,7 +26,7 @@ import type {
   VotingProcessResultsResponse,
   VotingProcessValidateResponse,
 } from '@vocdoni/api-types'
-import { unsatisfiableProtocolReason } from '@vocdoni/ballot'
+import { uncastableChoicesReason, unsatisfiableProtocolReason } from '@vocdoni/ballot'
 import type { UpFetch } from 'up-fetch'
 import { normalizeQuestionChoiceMeta } from './choice-meta'
 import { normalizeQuestionStatus, normalizeVotingProcess } from './election-status'
@@ -66,13 +66,41 @@ function toMultiLang(value: LocalizedInput | undefined): MultiLangString | undef
  *   a raw `ballotProtocol` instead.
  * - **Raw `ballotProtocol`**: rejected when unsatisfiable, matching the backend's
  *   `ValidateBallotProtocol` exactly — unsatisfiability only, never plausibility, so
- *   every shape a voter could actually satisfy stays expressible.
+ *   every shape a voter could actually satisfy stays expressible. Also rejected when
+ *   it publishes a choice no voter can cast (see {@link uncastableChoicesReason}) —
+ *   a narrower failure the backend does not check at all: `VoteTypeFromQuestion`
+ *   passes a raw protocol straight through without ever comparing it to the
+ *   question's own choice values. Only reachable via a raw protocol; the named types
+ *   derive bounds *from* the values (`singlechoice`) or ignore them entirely
+ *   (`multichoice`, whose dense layout is position-addressed).
  */
 function validateQuestionBallotConfig(question: VotingProcessQuestionRequest, index: number): void {
   if (question.ballotProtocol) {
     const unsatisfiable = unsatisfiableProtocolReason(question.ballotProtocol)
     if (unsatisfiable) {
       throw new Error(`Question ${index}: unsatisfiable ballotProtocol — ${unsatisfiable}`)
+    }
+    // An option nobody can vote for is worse than an all-zero tally: the election
+    // runs, most votes count, and that option quietly polls zero while voteCount
+    // keeps rising. Confirmed live in integration/value-skew.itest.ts. After publish
+    // there is no fix but a new election, so refuse here.
+    // `metadata` is load-bearing, not decoration: `inferQuestionBallotType` reads
+    // `metadata.type.name` as its second type source, ahead of every shape rule, and
+    // `declaresLegacyPickSlot` reads it to tell the pick-slot layout from the dense one
+    // (both present as {maxValue: 1, maxCount > 1, uniqueValues: false}). Omitting it
+    // here would judge the question by shape while `encodeQuestionBallot` — which does
+    // read it — judges it by name, so creation would accept a question the codec then
+    // refuses: the created-but-unvotable election this guard exists to prevent. It
+    // matters most on exactly this branch, since `type` is stored empty for raw
+    // `ballotProtocol` questions, leaving the metadata bag as the only name.
+    const uncastable = uncastableChoicesReason({
+      ballotProtocol: question.ballotProtocol,
+      type: question.type,
+      metadata: question.metadata,
+      choices: question.choices ?? [],
+    })
+    if (uncastable) {
+      throw new Error(`Question ${index}: unreachable choice — ${uncastable}`)
     }
     return
   }
