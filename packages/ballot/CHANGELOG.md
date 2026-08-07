@@ -1,5 +1,147 @@
 # @vocdoni/ballot
 
+## 1.1.0
+
+### Minor Changes
+
+- a5f94b1: Infer the ballot type from the declared type name first, and fall back to protocol shape —
+  shape is a lossy reconstruction of intent, and at `maxValue === 1` it cannot recover it.
+
+  A legacy `MultiChoiceElection` over two choices with repeatable picks and no abstain
+  allowance generates `{maxCount: 2, maxValue: 1, uniqueChoices: false}` — byte-identical to a
+  two-option `ApprovalElection` (both verified against `@vocdoni/sdk` 0.9.3's
+  `generateVoteOptions`/`generateEnvelopeType`). The `uniqueChoices` discriminator splits the
+  _other_ `maxValue === 1` pair but not this one, so such an election encoded as a dense 0/1
+  vector and decoded off the wrong axis, reporting zeros. The legacy SDK never had this
+  problem because it dispatches on `resultsType.name`, never on shape.
+
+  - `inferQuestionBallotType` now consults `question.type` before the protocol rather than
+    only inside the `maxValue === 1` branch. **Behaviour change:** a question with a
+    recognized name and a conflicting protocol now follows the name. In practice this only
+    moves `{type: 'multichoice', maxCount: 1}` from the single-choice label to multichoice,
+    which is the correct read — the backend derives the dense layout _from_ the named type, so
+    the name is the input and the protocol the output.
+  - Backwards compatibility with the legacy `@vocdoni/sdk` metadata format: when no `type`
+    field resolves, `type.name` is read out of the open-ended metadata bag —
+    `Election.meta` at the election level and `VotingProcessQuestion.metadata` per question
+    (reachable per question because in the SaaS model each question is its own vochain
+    process). Recognized names are the legacy `ElectionResultsTypeNames`:
+    `single-choice-multiquestion`, `multiple-choice`, `approval`, `budget-based`,
+    `quadratic`. The bag is probed defensively, so a malformed one falls through instead of
+    throwing.
+  - `inferBallotType` — and with it `encodeBallot`, `decodeResults`, `validateSelections`,
+    `normalizeSelections` and `multichoiceReservesAbstain` — accepts `type` and `meta` on its
+    input object. Integrators no longer have to synthesize a fake `voteType` to express a
+    type they already know.
+  - `decodeQuestionResults` and `encodeQuestionBallot` no longer apply their dense remap when
+    the legacy bag declares `multiple-choice`. That name means pick-slot, but at two options
+    its protocol satisfies `isDenseBallotProtocol` as well, so the remap would have read the
+    tally off the wrong axis and inverted it. `encodeQuestionBallot` throws for a legacy
+    pick-slot question with no `ballotProtocol` rather than guessing the slate size.
+
+  The vocabulary follows the field a name came from, not the function: legacy
+  `multiple-choice` is the pick-slot index list while the SaaS `multichoice` is the dense 0/1
+  layout, so reading one as the other column-sums a dense matrix or inverts a two-option
+  tally. An absent, empty or unrecognized name falls through to the existing shape rules
+  unchanged, so callers with nothing to declare are unaffected. There is no `ranked` name in
+  either vocabulary yet — see issue #22.
+
+  Covered end to end by `integration/full-flow.itest.ts`, which casts real votes on a
+  two-option `{maxCount: 2, maxValue: 1, uniqueValues: false}` question declared via the
+  legacy metadata name and asserts both the raw on-chain matrix and the decoded tally — the
+  dense reading of that same matrix is the exact inverse.
+
+### Patch Changes
+
+- 4491324: Harden the dense vs index-list multichoice discriminator so both wire layouts route
+  correctly off the protocol params (no new flag):
+
+  - `isDenseBallotProtocol` now requires `!uniqueValues`, so the 2-option index-list corner
+    (`maxValue === 1 && uniqueValues`) stops misrouting as dense/approval — its results decode
+    as the pick-slot column sum, not the dense per-choice read.
+  - `encodeMultiChoice` returns a short ballot as-is when the protocol reserves no abstain
+    headroom, instead of throwing — the vochain accepts ballots shorter than `maxCount` and the
+    legacy SDK sends them unpadded. (Genuinely-unsatisfiable protocols still throw upstream.)
+  - `questionSelectionRange` pick-slot `min` now follows `typeSetup.minChoices` instead of
+    forcing a full `maxCount` slate, matching the dense branch. `minChoices: 0` (an empty
+    submission) is honoured only when the protocol reserves abstain headroom — without it an
+    empty ballot is accepted by the chain but recorded in no column, so it could not be told
+    apart from not voting; the floor stays at 1 there.
+
+  Decoding is unchanged: the `{ choice: 'abstain' }` bucket is still always emitted for
+  multichoice (reporting 0 when the protocol reserves no sentinel headroom). Use the exported
+  `questionReservesAbstain(question)` to decide whether an "Abstention" field is worth
+  rendering — it is `false` exactly when abstention is structurally impossible.
+
+- fbe32bf: Refuse questions that publish an option no voter can cast.
+
+  A ballot config can be perfectly satisfiable and still carry a choice that is dead on
+  arrival. That failure is nastier than an all-zero tally: the election runs, most votes
+  count, and the unreachable option quietly polls zero while `voteCount` keeps rising.
+  Confirmed against a live chain (`integration/value-skew.itest.ts`) — the API accepts the
+  config, the relay accepts the ballot, the chain counts the envelope, and the scrutinizer
+  discards it at aggregation with no error on any surface:
+
+  ```
+  API ACCEPTED the malformed election (values 1/2/3 under maxValue 2)
+  member 1 → wire [1] relay=completed
+  member 2 → wire [3] relay=completed
+  voteCount  = 2
+  raw matrix = [["0","1","0"]]     ← C1 counted, C3 lost
+  ```
+
+  - New `uncastableChoicesReason(question)` / `hasUncastableChoices(question)` explain
+    the defect, or return `null`/`false` when every choice is reachable. The rule follows
+    how each layout addresses its fields:
+    - **single-choice** is _value_-addressed (the field carries `choice.value` and the
+      results row is indexed by it), so every value must fit `0..maxValue` and no two
+      choices may share a value — duplicates read the same column, so one vote is counted
+      for both and the percentages sum past 100. Sparse values are legal and deliberate;
+      `maxValue` is derived from the highest value, not the option count, and unused
+      columns simply stay empty. `maxValue: 0` means unbounded, not a ceiling of zero.
+    - **pick-slot multichoice** shares one value space with the abstain sentinels
+      (`choices.length`, `+1`, …, and decode claims every column `>= choices.length`), so
+      its values must be exactly the _set_ `0..choices.length-1` — in any order, since
+      nothing in that layout is positional — and `maxValue` must still clear the highest
+      of them.
+    - **approval / dense multichoice / budget / quadratic** are position-addressed, where
+      `choice.value` is a display label the wire never sees, and carry no constraint.
+  - `client.elections.create/update` rejects the config at creation, where it is still
+    fixable; after publish the only remedy is a new election. This is a gap the backend
+    does not cover — `VoteTypeFromQuestion` passes a raw `ballotProtocol` straight through
+    without ever comparing it to the question's own choice values.
+  - At **encode** time the two halves of the rule are treated differently, because they
+    fail differently:
+    - A value above `maxValue` is already caught per ballot by `assertEncodedBallot`, so
+      only the voter picking the unreachable option is refused. The live run above shows
+      why the line is drawn there: on such an election the in-range votes are still
+      tallied correctly, and refusing everybody would discard ballots the chain records
+      fine. `encodeBallot` / `encodeQuestionBallot` now explain _why_ when this happens,
+      replacing the wire-level "field 0 is 3, above maxValue 2" with the election-level
+      diagnosis. Failure path only — a healthy vote pays nothing for it.
+    - A pick-slot value colliding with the abstain sentinels has no per-ballot backstop:
+      the colliding values are _within_ `maxValue`, so no individual ballot is wrong while
+      abstentions and real picks are being conflated. That one is refused up front, for
+      every voter.
+  - `validateSelections` mirrors the same split, so a UI gating its submit button on it no
+    longer enables a vote that `encodeBallot` then refuses.
+  - `isPickSlotLayout(question)` is now the single home for the pick-slot/dense
+    discrimination, replacing three hand-written copies (one of them a de Morgan'd
+    negation) in encode, decode and the reachability check.
+  - `@vocdoni/react-components` no longer renders the encoder's creator-facing explanation
+    as a voter's field error. A question that cannot accept votes shows a voter-appropriate
+    message (`errors.question_not_votable`); the technical detail goes to the console.
+
+  Only reachable through a raw `ballotProtocol`: the named types either derive their bounds
+  _from_ the values (`singlechoice`) or ignore them entirely (`multichoice`). Decoding is
+  unchanged — single-choice results are read by `choice.value`, which is the backend
+  contract (saas-backend `account/ballot.go` and `db/types.go`) and is now pinned by unit
+  tests and a live round-trip (`raw matrix = [["0","1","1","1"]]` for values 1/2/3, column 0
+  empty) so it is not "fixed" into positional indexing. See integrator-sdk#28.
+
+- Updated dependencies [d9212f0]
+  - @vocdoni/api-types@1.2.0
+
 ## 1.0.0
 
 ### Major Changes

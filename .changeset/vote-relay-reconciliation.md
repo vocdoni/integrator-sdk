@@ -1,5 +1,0 @@
----
-'@vocdoni/react-providers': minor
----
-
-`vote()` no longer reports failure for votes that actually landed on chain. The relay pipeline previously trusted every negative signal as definitive: a lost `POST /votes` response (network error, proxy 502/504) marked the whole batch failed even when the backend had accepted and enqueued it, a job-reported per-envelope failure ("nullifier already exists") surfaced as a `PartialVoteError` even when the vote was recorded, and a relay job outliving the wait window silently closed the flow with statuses stuck at `confirming`. All three paths now reconcile against the authoritative voter state (`check()` + `sign-info`) before declaring anything failed, recovering the vote ids of whatever landed. Overlapping `vote()` calls are refused while a relay is in flight — a resubmit during the confirmation window would race the pending batch with a fresh ephemeral signer. New `voteOptions` prop on `ElectionProvider` tunes the reconciliation window and the job wait timeout.
