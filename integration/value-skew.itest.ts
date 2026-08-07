@@ -27,7 +27,7 @@
 import { describe, expect, it } from 'vitest'
 import { EphemeralSigner, VotingClient } from '@vocdoni/api-voting'
 import { decodeQuestionResults, encodeQuestionBallot } from '@vocdoni/ballot'
-import { apiKey, makeAdminClient, makeClient } from './helpers'
+import { API_URL, apiKey, makeAdminClient, makeClient } from './helpers'
 
 const suite = apiKey ? describe : describe.skip
 
@@ -180,16 +180,29 @@ suite('issue #28: sparse single-choice values (live)', () => {
    * The election in #28 pairs choice values 1/2/3 with an explicit
    * `ballotProtocol` whose `maxValue` is 2 — self-contradictory, since C3 then
    * exceeds the highest legal field value. `encodeQuestionBallot` already refuses
-   * such a ballot (`assertEncodedBallot`), and the plan extends that to refusing
+   * such a ballot (`assertEncodedBallot`), and the guard extends that to refusing
    * the whole question up front. That is only the right call if the chain really
-   * does swallow the vote silently, so prove it rather than assume it: bypass the
-   * codec, post the out-of-range value straight to the relay, and watch what the
-   * tally does.
+   * does swallow the vote silently, so prove it rather than assume it.
+   *
+   * Both of our own guards have to be stepped around for the proof to mean
+   * anything, and each is bypassed at a different layer:
+   *
+   * - **create** goes out as a raw `POST /processes`, not through
+   *   `client.elections.create`. The guard lives in `normalizeVotingProcessRequest`,
+   *   so the client would refuse this body before any HTTP call and the test would
+   *   pass having asked the API nothing. The claim under test is "the *API* accepts
+   *   this", so the API is what must be asked.
+   * - **the vote** is hand-rolled onto the wire, not built by `encodeQuestionBallot`,
+   *   which `assertEncodedBallot` would already stop.
    *
    * Expected: the envelope is accepted and `voteCount` counts it, but the
    * scrutinizer drops the ballot at aggregation — so the tally is short while
-   * nothing anywhere reports an error. That gap is the whole reason to refuse at
-   * encode time instead of letting the voter cast.
+   * nothing anywhere reports an error. That gap is the whole reason to refuse
+   * before the voter ever casts.
+   *
+   * If the API starts rejecting the body, this test FAILS rather than skipping.
+   * That result would be good news — the backend closing the gap — but it changes
+   * what the guard is for, so it has to be noticed, not swallowed.
    */
   it(
     'silently drops a ballot whose value exceeds maxValue (voteCount still counts it)',
@@ -223,21 +236,26 @@ suite('issue #28: sparse single-choice values (live)', () => {
         weighted: false,
       })
 
-      // The malformed shape from #28: values 1/2/3 under maxValue 2. If the API
-      // rejects it, the misconfiguration is already unreachable through this path
-      // and the client-side guard is belt-and-braces — say so and stop, rather
-      // than failing a test over the backend being stricter than expected.
-      let draftId: string
-      try {
-        draftId = await admin.elections.create({
+      // The malformed shape from #28: values 1/2/3 under maxValue 2. Posted raw,
+      // for the reason in the docblock — `client.elections.create` refuses this
+      // body locally, so going through it would prove nothing about the API. The
+      // body is what `normalizeVotingProcessRequest` would have produced: plain
+      // strings widened to `{ default: … }`, everything else passed through.
+      const res = await fetch(`${API_URL}/processes`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           orgAddress,
           census: { authFields: ['memberNumber'], groupId },
-          title: 'malformed: values beyond maxValue',
+          title: { default: 'malformed: values beyond maxValue' },
           endDate: new Date(Date.now() + 2 * 60 * 60_000).toISOString(),
           questions: [
             {
-              title: 'values 1/2/3 under maxValue 2',
-              choices: VALUES.map((v) => ({ title: `C${v}`, value: v })),
+              title: { default: 'values 1/2/3 under maxValue 2' },
+              choices: VALUES.map((v) => ({ title: { default: `C${v}` }, value: v })),
               ballotProtocol: {
                 maxCount: 1,
                 maxValue: 2,
@@ -249,12 +267,22 @@ suite('issue #28: sparse single-choice values (live)', () => {
               },
             },
           ],
-        })
-      } catch (e) {
-        step(`API REJECTED the malformed election: ${(e as Error).message}`)
-        step('the shape is unreachable through create — client guard is defence in depth')
-        return
-      }
+        }),
+      })
+      const payload = await res.text()
+      // A rejection here is a real result, not a reason to stop: it would mean the
+      // backend has closed the gap and `uncastableChoicesReason` is no longer the
+      // only thing standing between a creator and an unvotable election. Fail so
+      // somebody re-reads the guard, instead of returning green on a claim the
+      // test never got to make.
+      expect(
+        res.ok,
+        `API REJECTED the malformed election (${res.status}): ${payload}\n` +
+          'The premise of the uncastable-choices guard is that it does NOT. Re-check ' +
+          'saas-backend VoteTypeFromQuestion before trusting either.',
+      ).toBe(true)
+      const draftId = (JSON.parse(payload) as { processId: string }).processId
+      step(`API ACCEPTED the malformed election → ${draftId}`)
       await admin.elections.publishAndWait(draftId, { timeoutMs: 180000, intervalMs: 2000 })
 
       const info = await admin.elections.get(draftId)
