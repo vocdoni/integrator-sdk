@@ -669,13 +669,20 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
 
             // integrator-sdk#22: the ranked question is the one this suite could not
             // assert anything meaningful about before — #19 had to enshrine a tally
-            // that carried no ranking. Three checks, each covering a different way
+            // that carried no ranking. Two checks, each covering a different way
             // this can be wrong:
             if (question!.title?.default === 'Ranked') {
               // 1. The wire model. Every voter cast [2, 0, 3, 1], so the chain must
               // have histogrammed it per OPTION (field i = choice i, value = its
               // rank), one populated column per row. A unit fixture can assume this
               // layout; only a live chain can establish it.
+              //
+              // Pinning the matrix cell-for-cell also settles that the two readings
+              // genuinely disagree here — column-summing these rows as pick-slots
+              // gives [4, 4, 4, 4], the useless tally #22 reported — so the Borda
+              // assertion below cannot be passing on a matrix where both readings
+              // happen to coincide. That is arithmetic, not a second observation, so
+              // it is stated rather than asserted.
               expect(q.results, 'ranked: chain did not histogram the ballot per option').toEqual([
                 ['0', '0', String(VOTES_PER_QUESTION), '0'], // C0 ranked 2
                 [String(VOTES_PER_QUESTION), '0', '0', '0'], // C1 ranked 0
@@ -693,18 +700,6 @@ suite('full election lifecycle (live — creates an org, processes and votes)', 
               expect(decoded, 'ranked: decode emitted an abstain bucket').toHaveLength(
                 question!.choices.length,
               )
-
-              // 3. The other reading genuinely disagrees. Read as pick-slot, this
-              // matrix column-sums to VOTES_PER_QUESTION for every option — the
-              // useless tally #22 reported. Without this the Borda assertion could be
-              // passing on a matrix where both readings happen to coincide, proving
-              // only that the decoder agrees with itself.
-              expect(
-                question!.choices.map((c) =>
-                  (q.results ?? []).reduce((sum, row) => sum + parseInt(row[c.value] ?? '0', 10), 0),
-                ),
-                'ranked: the pick-slot read must disagree, or the case is not ambiguous',
-              ).toEqual(question!.choices.map(() => VOTES_PER_QUESTION))
             }
           }
         }
