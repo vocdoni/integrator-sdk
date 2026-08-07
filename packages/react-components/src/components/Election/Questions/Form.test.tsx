@@ -16,15 +16,23 @@ vi.mock('../../../confirm/useConfirm', () => ({
   useConfirm: () => ({ confirm: () => Promise.resolve(state.confirmResult) }),
 }))
 
+import { I18nextProvider } from 'react-i18next'
 import { QuestionsFormProvider, useQuestionsForm } from './Form'
 import { ComponentsProvider } from '../../context/ComponentsProvider'
+import { createTestI18n } from '../../../i18n/test-i18n'
 
 // ComponentsProvider is needed because QuestionsFormProvider auto-mounts a
 // ConfirmProvider, whose modal renders through the ConfirmShell slot.
+// Real i18n resources, so an assertion on a rendered message reads the English string
+// a voter would actually see rather than the bare key.
+const testI18n = createTestI18n()
+
 const wrapper = ({ children }: { children: ReactNode }) => (
-  <ComponentsProvider>
-    <QuestionsFormProvider>{children}</QuestionsFormProvider>
-  </ComponentsProvider>
+  <I18nextProvider i18n={testI18n}>
+    <ComponentsProvider>
+      <QuestionsFormProvider>{children}</QuestionsFormProvider>
+    </ComponentsProvider>
+  </I18nextProvider>
 )
 
 function setup(election: ReturnType<typeof makeProcess> | null, confirmResult = true) {
@@ -110,5 +118,45 @@ describe('QuestionsFormProvider vote payload', () => {
     await waitFor(() => expect(result.current).toBeDefined())
     expect(await result.current.vote({ '0': '0' })).toBe(false)
     expect(state.vote).not.toHaveBeenCalled()
+  })
+
+  describe('a question that publishes an option nobody can cast', () => {
+    // integrator-sdk#28: values 1/2/3 under maxValue 2, so C3 addresses a column the
+    // chain refuses. Confirmed live — the relay takes such a ballot, voteCount counts
+    // it, and the tally drops it, so encode refuses rather than let it be cast.
+    const oneIndexed = [
+      {
+        title: 'Q1',
+        choices: [
+          { title: 'C1', value: 1 },
+          { title: 'C2', value: 2 },
+          { title: 'C3', value: 3 },
+        ],
+        ballotProtocol: { maxCount: 1, maxValue: 2 },
+      },
+    ]
+
+    it('shows the voter a message they can act on, not the encoder’s wire-level prose', async () => {
+      const { result } = setup(makeProcess({ questions: oneIndexed }))
+      expect(await result.current.vote({ '0': '3' })).toBe(false)
+      expect(state.vote).not.toHaveBeenCalled()
+
+      await waitFor(() => expect(result.current.fmethods.formState.errors['0']).toBeDefined())
+      const message = result.current.fmethods.formState.errors['0']?.message
+      // The defect belongs to whoever created the election and cannot be fixed after
+      // publish, so the voter gets told what happened to their vote — not an
+      // instruction to raise maxValue, which is not theirs to raise.
+      expect(message).toBe(
+        "This question can't accept votes: one of its options was set up in a way the ledger can't record. " +
+          'Your vote has not been cast. Please contact the organizer.',
+      )
+      expect(message).not.toMatch(/maxValue|voteCount|scrutinizer/)
+    })
+
+    it('still lets the other voters cast, because their ballots are recorded correctly', async () => {
+      const { result } = setup(makeProcess({ questions: oneIndexed }))
+      await result.current.vote({ '0': '1' })
+      expect(state.vote).toHaveBeenCalledWith([[1]])
+    })
   })
 })
