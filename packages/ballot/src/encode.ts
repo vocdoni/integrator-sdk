@@ -26,6 +26,8 @@ import {
  * - approval: dense 0/1 vector over options: choices.map(c => selected.has(c) ? 1 : 0)
  * - multichoice: exactly `maxCount` picked option values, unfilled slots padded with abstain
  *   sentinels (values ≥ choices.length; see encodeMultiChoice)
+ * - ranked: per-option rank array in choice order, highest = best — pass-through; build it
+ *   with {@link rankedOrderToScores} (see encodeRanked)
  * - budget / quadratic: per-option amount array [a0, a1, …]
  *
  * @param input - Election config with questions and voteType
@@ -89,6 +91,9 @@ export function encodeBallot(
 
       case BallotType.MultiChoice:
         return encodeMultiChoice(voteType, questions[0], perQuestion[0] ?? [])
+
+      case BallotType.Ranked:
+        return encodeRanked(perQuestion[0] ?? [])
 
       case BallotType.Budget:
       case BallotType.Quadratic:
@@ -203,6 +208,90 @@ function encodeMultiChoice(voteType: VoteType, question: Question, selections: n
     }
   }
   return ballot
+}
+
+/**
+ * Encode a ranked ballot: **pass-through** of one rank per option, in choice order.
+ *
+ * The wire layout *is* the caller's array — the field index is the option's position
+ * in `choices` and its value is that option's rank — so there is nothing to
+ * rearrange, exactly like budget/quadratic. What this function contributes is the
+ * name: the ballot is the voter's ranking, not a list of picks, and the two are
+ * indistinguishable on the wire.
+ *
+ * **Canonical orientation: highest value = best.** Top choice gets `numChoices - 1`,
+ * last gets `0`. This is a choice, not a fact — the protocol has no opinion — and it
+ * is the one `saas-integrator-demo` ships and `decodeQuestionResults` assumes. Its
+ * Borda decode is an index-weighted sum, so a ballot built the other way round
+ * elects the loser and nothing on either side can detect it. Build the array with
+ * {@link rankedOrderToScores} rather than by hand and the orientation is applied for
+ * you.
+ *
+ * Not validated here: `assertEncodedBallot` (run by both encoders on what they
+ * produce) already refuses a duplicated rank under `uniqueValues` and a rank above
+ * `maxValue`, which is every way a ranking can be malformed on the wire.
+ */
+function encodeRanked(selections: number[]): number[] {
+  return [...selections]
+}
+
+/**
+ * Turn a voter's ranking — the choice **values** they ordered, best first — into the
+ * wire ballot {@link encodeQuestionBallot} expects for a ranked question: one rank
+ * per option, in **choice order**, highest = best.
+ *
+ * The two are transposes of each other, and the conversion is where the orientation
+ * decision physically lives. Written by hand it is `n - 1 - position`, the line
+ * `saas-integrator-demo` open-codes in its vote page; getting it backwards produces
+ * a perfectly valid ballot that the Borda decode reads upside-down.
+ *
+ * ```ts
+ * // choices C0..C3, voter ranks C2 > C0 > C3 > C1
+ * rankedOrderToScores(question, [2, 0, 3, 1])  // → [2, 0, 3, 1]
+ * // choices C0..C2, voter ranks C2 > C0 > C1
+ * rankedOrderToScores(question, [2, 0, 1])     // → [1, 0, 2]
+ * ```
+ *
+ * (The first example round-trips to itself only because that particular ordering is
+ * its own transpose — do not read it as a pass-through.)
+ *
+ * @param question - the ranked question, read for its `choices`
+ * @param order - the choice values, best first; must be a complete permutation
+ * @throws When the ranking names an unpublished choice, repeats one, or leaves any
+ *   option unranked. A ranked protocol is pigeonhole-tight (`maxValue = numChoices -
+ *   1` with `uniqueValues`), so a partial ranking cannot be padded into anything the
+ *   chain will count — it would repeat a rank and be discarded at tally with the
+ *   vote still counted in `voteCount`.
+ */
+export function rankedOrderToScores(question: { choices: Choice[] }, order: number[]): number[] {
+  const choices = question.choices ?? []
+  const rankByValue = new Map<number, number>()
+
+  order.forEach((value, position) => {
+    if (!choices.some((choice) => choice.value === value)) {
+      throw new Error(
+        `ranked: ${value} is not a choice value of this question ` +
+          `(published: ${choices.map((choice) => choice.value).join(', ')})`
+      )
+    }
+    if (rankByValue.has(value)) {
+      throw new Error(`ranked: choice ${value} appears more than once in the ranking`)
+    }
+    // Highest = best: the first-placed option takes the top rank.
+    rankByValue.set(value, choices.length - 1 - position)
+  })
+
+  if (order.length !== choices.length) {
+    const missing = choices.map((choice) => choice.value).filter((value) => !rankByValue.has(value))
+    throw new Error(
+      `ranked: every option must be ranked (${order.length} of ${choices.length} ranked` +
+        `${missing.length > 0 ? `, missing ${missing.join(', ')}` : ''}). A ranked protocol ` +
+        'leaves exactly one rank per option, so a partial ranking repeats a value and the ' +
+        'chain discards the whole ballot at tally'
+    )
+  }
+
+  return choices.map((choice) => rankByValue.get(choice.value)!)
 }
 
 /**
@@ -340,6 +429,9 @@ export function encodeQuestionBallot(
         }
         return encodeMultiChoice(ballotProtocolToVoteType(bp), fakeQuestion, selections)
       }
+
+      case BallotType.Ranked:
+        return encodeRanked(selections)
 
       case BallotType.Budget:
       case BallotType.Quadratic:

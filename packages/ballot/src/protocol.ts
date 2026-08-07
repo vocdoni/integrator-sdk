@@ -38,10 +38,10 @@ export type ProtocolBounds = Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uni
  * over more than two choices only 0 and 1 are available, so every ballot repeats a
  * value — even a single pick, `[1, 0, 0, 0]`, repeats `0`. Note that at *exactly* two
  * fields `[0, 1]` and `[1, 0]` do satisfy it — a satisfiable 2-option index-list
- * multichoice (wire-identical to a 2-option ranked ballot; real ranked decoding is
- * tracked separately in issue #22); that is allowed here, matching the backend. The
- * named `multichoice` type cannot reach it either way, because the API rejects
- * `typeSetup.uniqueChoices` outright.
+ * multichoice, wire-identical to a 2-option ranked ballot, which is why only a
+ * declared name tells the two apart ({@link BallotType.Ranked}); that is allowed
+ * here, matching the backend. The named `multichoice` type cannot reach it either
+ * way, because the API rejects `typeSetup.uniqueChoices` outright.
  *
  * `maxValue === 0` means "no upper bound" (budget / quadratic), so uniqueness is
  * always satisfiable there and is never reported.
@@ -212,9 +212,11 @@ type QuestionLike = {
  *   `0..choices.length-1`. Contiguity, not merely a bound: with values 1/2/3 the
  *   first sentinel *is* 3, so an abstention would be recorded as a vote for C3 and
  *   decode would then reassign that column to the abstain bucket.
- * - **approval / dense multichoice / budget / quadratic** — position-addressed. One
- *   field per choice in choice order, so `choice.value` is a display label the wire
- *   never sees and any values at all are fine.
+ * - **approval / dense multichoice / ranked / budget / quadratic** —
+ *   position-addressed. One field per choice in choice order, so `choice.value` is a
+ *   display label the wire never sees and any values at all are fine. (Ranked shares
+ *   the pick-slot *protocol* but not its addressing: its fields are options, not
+ *   slots, so there are no abstain sentinels for a value to collide with.)
  *
  * Returns `null` rather than a verdict for shapes it cannot judge (no derivable
  * ballot type, no choices, non-integer or negative values), matching
