@@ -54,7 +54,6 @@ export interface Organization {
   country?: string
   timezone?: string
   subdomain?: string
-  active?: boolean
   communications?: boolean
   /** Whether this org is subscribed to the (free) integrator plan. */
   integrator?: boolean
@@ -92,7 +91,6 @@ export interface CreateOrganizationRequest {
   country?: string
   timezone?: string
   subdomain?: string
-  active?: boolean
   communications?: boolean
   /** Opt-in to the free integrator plan at creation. */
   integrator?: boolean
