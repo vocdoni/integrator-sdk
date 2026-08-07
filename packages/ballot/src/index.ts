@@ -25,6 +25,7 @@ export {
   isUnsatisfiableProtocol,
   isUnsatisfiableQuestion,
   uncastableChoicesReason,
+  unrankableProtocolReason,
   unsatisfiableProtocolReason,
   unsatisfiableQuestionReason,
   voteTypeBounds,

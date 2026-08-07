@@ -50,6 +50,14 @@ the legacy `multiple-choice` name already uses — so no backend change is invol
   refuse a duplicated rank or one above `maxValue`. `validateSelections` gained the matching
   ranked rules, `questionSelectionRange` reports `{min: n, max: n}` (a partial ranking cannot
   be counted), and `declaresRanked(question)` exposes the check.
+- `unrankableProtocolReason(numChoices, maxValue)` catches the one protocol a ranking can
+  never survive: `maxValue: 0`. That means "no upper bound" for every other type, but on
+  chain it switches the scrutinizer to discrete aggregation — one column per option instead
+  of a histogram — so the Borda index-weighted sum scores every option zero however anyone
+  votes, and the result is indistinguishable from an election nobody voted in. Folded into
+  `unsatisfiableQuestionReason` (whose parameter type gained `metadata`, needed to see the
+  declaration) and refused up front by both encoders and `validateSelections`, so the three
+  cannot drift apart.
 
 **`@vocdoni/react-components`**
 

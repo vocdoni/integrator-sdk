@@ -8,6 +8,7 @@ import {
   pickSlotCollisionReason,
   uncastableChoicesReason,
   uncastableChoicesReasonFor,
+  unrankableProtocolReason,
   unsatisfiableProtocolReason,
   unsatisfiableQuestionReason,
   voteTypeBounds,
@@ -75,6 +76,15 @@ export function encodeBallot(
     const collision = pickSlotCollisionReason(questions[0]?.choices ?? [])
     if (collision) {
       throw new Error(`cannot encode a ballot for question 0: ${collision}`)
+    }
+  }
+  // Same shape of defect for ranked, and refused the same way — for every voter, up
+  // front. `assertEncodedBallot` cannot stand in for it: at maxValue 0 it treats the
+  // bound as absent, so every ballot passes while the tally is structurally zero.
+  if (ballotType === BallotType.Ranked) {
+    const unrankable = unrankableProtocolReason(questions[0]?.choices.length ?? 0, voteType.maxValue)
+    if (unrankable) {
+      throw new Error(`cannot encode a ballot for question 0: ${unrankable}`)
     }
   }
   const perQuestion = normalizeSelections(input, selections)
@@ -265,13 +275,30 @@ function encodeRanked(selections: number[]): number[] {
  */
 export function rankedOrderToScores(question: { choices: Choice[] }, order: number[]): number[] {
   const choices = question.choices ?? []
+  const values = choices.map((choice) => choice.value)
+  const published = new Set(values)
+
+  // Ranks are keyed by choice value, so two choices sharing one value have no ranking
+  // between them. This cannot corrupt a ballot — a complete ranking needs one distinct
+  // published value per choice and duplicates leave fewer, so every possible `order`
+  // already fails one of the checks below — but it fails describing the *ranking* when
+  // the defect is in the *question*, and the decoded results would carry two rows under
+  // the same `choice` id besides. Say so directly.
+  if (published.size !== values.length) {
+    const duplicated = [...new Set(values.filter((value, i) => values.indexOf(value) !== i))]
+    throw new Error(
+      `ranked: choice value(s) ${duplicated.join(', ')} are used by more than one choice, so a ` +
+        'ranking cannot tell them apart and the decoded results would report both under one ' +
+        'choice id. Give every choice a distinct value'
+    )
+  }
+
   const rankByValue = new Map<number, number>()
 
   order.forEach((value, position) => {
-    if (!choices.some((choice) => choice.value === value)) {
+    if (!published.has(value)) {
       throw new Error(
-        `ranked: ${value} is not a choice value of this question ` +
-          `(published: ${choices.map((choice) => choice.value).join(', ')})`
+        `ranked: ${value} is not a choice value of this question (published: ${values.join(', ')})`
       )
     }
     if (rankByValue.has(value)) {
@@ -282,7 +309,7 @@ export function rankedOrderToScores(question: { choices: Choice[] }, order: numb
   })
 
   if (order.length !== choices.length) {
-    const missing = choices.map((choice) => choice.value).filter((value) => !rankByValue.has(value))
+    const missing = values.filter((value) => !rankByValue.has(value))
     throw new Error(
       `ranked: every option must be ranked (${order.length} of ${choices.length} ranked` +
         `${missing.length > 0 ? `, missing ${missing.join(', ')}` : ''}). A ranked protocol ` +

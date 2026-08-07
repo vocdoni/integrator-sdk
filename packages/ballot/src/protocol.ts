@@ -1,6 +1,6 @@
 import type { BallotProtocol, Choice, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
 import { BallotType } from './types'
-import { inferQuestionBallotType, isPickSlotLayout } from './infer'
+import { declaresRanked, inferQuestionBallotType, isPickSlotLayout } from './infer'
 
 /** The part of a ballot protocol the satisfiability rule reads. */
 export type ProtocolBounds = Pick<BallotProtocol, 'maxCount' | 'maxValue' | 'uniqueValues'>
@@ -68,6 +68,55 @@ export function unsatisfiableProtocolReason(bp: ProtocolBounds): string | null {
     `value(s) for ${bp.maxCount} ballot fields, so no ballot can fill them without repeating ` +
     `one — every vote would be discarded at tally, leaving an all-zero result.${dense} ` +
     `Raise maxValue to at least ${bp.maxCount - 1}, or set uniqueValues/typeSetup.uniqueChoices false`
+  )
+}
+
+/**
+ * Explain why a *ranked* question's protocol can never produce a ranking, or `null`
+ * when it is fine.
+ *
+ * Separate from {@link unsatisfiableProtocolReason} because that function deliberately
+ * mirrors the backend's `ValidateBallotProtocol` and must not diverge from it — and
+ * because the backend has no concept of a ranked question at all, so there is nothing
+ * there to mirror. This is a rule about a label the SDK alone applies.
+ *
+ * One case, and it is the one the rest of the module reads the opposite way.
+ * `maxValue === 0` means "no upper bound" everywhere else (see
+ * {@link assertEncodedBallot}'s `maxValue > 0 &&` guard, `decode.ts`,
+ * {@link unsatisfiableProtocolReason}'s carve-out) — laxness that fails slow at worst.
+ * For ranked it is fatal: on chain `maxValue === 0` switches the scrutinizer to
+ * **discrete aggregation**, accumulating `results[field][0] += value * weight` and
+ * leaving the row one cell wide (vochain `results/results.go`). The Borda decode is an
+ * index-weighted sum over a histogram, so it reads column 0 — weight 0 — and every
+ * option scores zero however anyone votes. An all-zero tally is indistinguishable from
+ * "nobody voted", which is why this has to be caught before anyone votes rather than
+ * diagnosed afterwards.
+ *
+ * Only reachable by hand: a protocol with `uniqueValues` and `maxValue: 0` over more
+ * than one field is rejected at creation by the API, so a question that gets here
+ * either dropped `uniqueValues` (and is not a ranking) or was never created through it.
+ * Cheap to check, silent and total when it hits.
+ *
+ * Deliberately NOT checked here: `maxValue < numChoices - 1`, which leaves too few
+ * distinct ranks for a full slate. That one already fails loudly per ballot in
+ * {@link assertEncodedBallot} (the top rank exceeds the ceiling), so an up-front
+ * refusal would only duplicate it.
+ *
+ * Returns `null` for shapes it cannot judge, like its neighbours here.
+ */
+export function unrankableProtocolReason(numChoices: number, maxValue: number): string | null {
+  if (!Number.isInteger(numChoices) || numChoices < 2) return null
+  if (!Number.isInteger(maxValue) || maxValue < 0) return null
+  if (maxValue !== 0) return null
+
+  return (
+    'this question is declared ranked, but its protocol has maxValue 0. That means "no upper ' +
+    'bound" everywhere else, and on chain it switches the scrutinizer to discrete aggregation: ' +
+    'the ranks are accumulated into a single column instead of bucketed into a histogram. The ' +
+    'Borda decode is an index-weighted sum over that histogram, so every option would score 0 ' +
+    'no matter how anyone votes, and the result is indistinguishable from an election nobody ' +
+    `voted in. Set maxValue to ${numChoices - 1} (one distinct rank per option), or drop the ` +
+    'ranked declaration if this is really a budget/quadratic ballot'
   )
 }
 
@@ -140,10 +189,21 @@ export function assertEncodedBallot(ballot: number[], bounds: ProtocolBounds): v
 export function unsatisfiableQuestionReason(question: {
   ballotProtocol?: BallotProtocol
   type?: string
+  metadata?: Record<string, unknown>
   typeSetup?: QuestionTypeSetup
   choices: Choice[]
 }): string | null {
   const bp = question.ballotProtocol
+
+  // Ranked before the general rule: `maxValue: 0` is the one shape
+  // unsatisfiableProtocolReason waves through — correctly, since it means "unbounded"
+  // for every other type — that a ranking can never survive. Only when a protocol was
+  // actually read: public reads may omit it, and absent is not zero.
+  if (bp && declaresRanked(question)) {
+    const unrankable = unrankableProtocolReason(question.choices?.length ?? 0, bp.maxValue)
+    if (unrankable) return unrankable
+  }
+
   if (bp) return unsatisfiableProtocolReason(bp)
 
   if (question.type === 'multichoice' && question.typeSetup?.uniqueChoices && question.choices.length > 1) {
@@ -161,6 +221,7 @@ export function unsatisfiableQuestionReason(question: {
 export function isUnsatisfiableQuestion(question: {
   ballotProtocol?: BallotProtocol
   type?: string
+  metadata?: Record<string, unknown>
   typeSetup?: QuestionTypeSetup
   choices: Choice[]
 }): boolean {

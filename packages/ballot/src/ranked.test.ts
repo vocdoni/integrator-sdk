@@ -220,6 +220,102 @@ describe('rankedOrderToScores', () => {
     // so a short slate repeats a value and the chain drops the whole ballot.
     expect(() => rankedOrderToScores({ choices: choices(3) }, [2, 0])).toThrow(/missing 1/)
   })
+
+  it('blames the question, not the ranking, when two choices share a value', () => {
+    // Ranks are keyed by choice value, so duplicates have no ranking between them.
+    // They cannot corrupt a ballot — a complete ranking needs one distinct published
+    // value per choice, so every order shape already failed a check below — but it
+    // failed describing the ranking, when the defect is in the question.
+    const dupes = {
+      choices: [
+        { title: { default: 'A' }, value: 0 },
+        { title: { default: 'B' }, value: 1 },
+        { title: { default: 'C' }, value: 1 },
+      ],
+    }
+    for (const order of [
+      [0, 1, 2],
+      [0, 1, 1],
+      [0, 1],
+    ]) {
+      expect(() => rankedOrderToScores(dupes, order)).toThrow(/used by more than one choice/)
+    }
+  })
+})
+
+describe('ranked: a protocol that can never produce a ranking', () => {
+  // maxValue 0 means "no upper bound" everywhere else in this module, and on chain it
+  // switches the scrutinizer to discrete aggregation — one column per option instead of
+  // a histogram. The Borda decode is an index-weighted sum over that histogram, so it
+  // reads 0 for every option however anyone votes. Ranked is therefore the one type for
+  // which maxValue 0 is not laxness but a dead election, and the guards below exist
+  // because nothing downstream can tell that tally from "nobody voted".
+  const zeroMaxValue = {
+    ballotProtocol: {
+      maxCount: 3,
+      maxValue: 0,
+      maxVoteOverwrites: 0,
+      maxTotalCost: 0,
+      costExponent: 1,
+      uniqueValues: false,
+      costFromWeight: false,
+    },
+    metadata: { type: { name: 'ranked' } },
+    choices: choices(3),
+  }
+
+  const zeroMaxValueElection = {
+    type: 'ranked',
+    voteType: {
+      maxCount: 3,
+      maxValue: 0,
+      maxVoteOverwrites: 0,
+      costExponent: 1,
+      uniqueChoices: false,
+      costFromWeight: false,
+    },
+    questions: [{ title: { default: 'Q0' }, choices: choices(3) }],
+  }
+
+  it('is the failure this guards: every option decodes to zero', () => {
+    // Pinned so the guards below are not mistaken for pedantry. Discrete aggregation
+    // leaves one cell per option at column 0, and 0 × count is 0.
+    expect(decodeQuestionResults(zeroMaxValue, [['18'], ['10'], ['2']]).map((r) => r.votes)).toEqual([
+      0, 0, 0,
+    ])
+  })
+
+  it('is reported as an unsatisfiable question config', () => {
+    expect(unsatisfiableQuestionReason(zeroMaxValue)).toMatch(/maxValue 0/)
+  })
+
+  it('is refused by encodeQuestionBallot', () => {
+    expect(() => encodeQuestionBallot(zeroMaxValue, [2, 1, 0])).toThrow(/maxValue 0/)
+  })
+
+  it('is refused by encodeBallot and validateSelections alike', () => {
+    // The two must agree: a UI that gates its submit button on the validator would
+    // otherwise enable the vote and then throw at cast time.
+    expect(() => encodeBallot(zeroMaxValueElection, [[2, 1, 0]])).toThrow(/maxValue 0/)
+    expect(() => validateSelections(zeroMaxValueElection, [[2, 1, 0]])).toThrow(/maxValue 0/)
+  })
+
+  it('leaves the same protocol alone when nothing declares it ranked', () => {
+    // Undeclared, this is a budget ballot and maxValue 0 is exactly right for it.
+    const { metadata, ...undeclared } = zeroMaxValue
+    expect(unsatisfiableQuestionReason(undeclared)).toBeNull()
+    expect(() => encodeQuestionBallot(undeclared, [2, 1, 0])).not.toThrow()
+  })
+
+  it('says nothing about a ranked question whose protocol was not read', () => {
+    // Public reads may omit ballotProtocol entirely; absent is not zero, and reporting
+    // a dead election on a partial read would be a false alarm.
+    expect(unsatisfiableQuestionReason({ metadata: { type: { name: 'ranked' } }, choices: choices(3) })).toBeNull()
+  })
+
+  it('leaves a single-option ranked question alone', () => {
+    expect(unsatisfiableQuestionReason({ ...zeroMaxValue, choices: choices(1) })).toBeNull()
+  })
 })
 
 describe('ranked: encodeQuestionBallot', () => {

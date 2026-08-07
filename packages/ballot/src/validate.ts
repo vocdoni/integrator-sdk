@@ -2,7 +2,12 @@ import type { Election, Question, VoteType } from '@vocdoni/api-types'
 import { BallotType, type BallotSelections } from './types'
 import { inferBallotType } from './infer'
 import { normalizeSelections } from './selections'
-import { pickSlotCollisionReason, unsatisfiableProtocolReason, voteTypeBounds } from './protocol'
+import {
+  pickSlotCollisionReason,
+  unrankableProtocolReason,
+  unsatisfiableProtocolReason,
+  voteTypeBounds,
+} from './protocol'
 
 /**
  * Validate voter selections against election constraints.
@@ -182,6 +187,16 @@ function validateMultiChoice(voteType: VoteType, question: Question, selections:
  * before the voter presses it.
  */
 function validateRanked(voteType: VoteType, question: Question, selections: number[]): void {
+  // The config before the selections: at maxValue 0 no ranking counts at all, and the
+  // per-rank ceiling below reads 0 as "unbounded" (as every other type must), so it
+  // would wave the whole election through. encodeBallot refuses the same shape — the
+  // two have to agree, or a UI gating its submit button here enables a vote that then
+  // throws at cast time.
+  const unrankable = unrankableProtocolReason(question.choices.length, voteType.maxValue)
+  if (unrankable) {
+    throw new Error(`Question 0: ${unrankable}`)
+  }
+
   if (selections.length !== question.choices.length) {
     throw new Error(
       `Question 0: ranked requires one rank per option (${question.choices.length}), got ${selections.length}`
