@@ -81,16 +81,29 @@ export function declaresLegacyPickSlot(question: { metadata?: Record<string, unk
 /**
  * True when a question declares itself `ranked`, in either name channel.
  *
- * The same question asked by {@link inferQuestionBallotType}, minus the shape
- * fallback — and minus its throw, so callers that only want to know "is this a
- * ranking?" can ask a question with neither a protocol nor a type without handling
- * an exception. Since ranked is name-only ({@link SDK_TYPE_NAMES}), the two can
- * never disagree in the affirmative.
+ * Literally {@link inferQuestionBallotType}, minus its throw — so a caller that only
+ * wants to know "is this a ranking?" can ask it of a question with neither a protocol
+ * nor a type without handling an exception. No shape rule can return
+ * {@link BallotType.Ranked} ({@link SDK_TYPE_NAMES}), so delegating adds no shape
+ * inference to the answer; what it does add is the guarantee that the two agree,
+ * *including in the negative*.
+ *
+ * That direction is the one worth spelling out. Resolving `type` against
+ * {@link SDK_TYPE_NAMES} alone — which this used to do — meant a recognized SaaS name
+ * did not shadow a `ranked` name in the metadata bag the way it does over there, so a
+ * `{type: 'multichoice', metadata: {type: {name: 'ranked'}}}` question read as
+ * multichoice to `inferQuestionBallotType` and as a ranking here. The two answers feed
+ * different halves of the same form — the widget comes from one, the selection range
+ * and the ordering transposition from the other — so disagreement is a form that
+ * cannot be submitted.
  */
 export function declaresRanked(question: { type?: string; metadata?: Record<string, unknown> }): boolean {
-  const declared =
-    (question.type ? SDK_TYPE_NAMES[question.type] : undefined) ?? legacyTypeFromMeta(question.metadata)
-  return declared === BallotType.Ranked
+  try {
+    return inferQuestionBallotType(question) === BallotType.Ranked
+  } catch {
+    // Neither a recognized name nor a protocol: nothing declares anything.
+    return false
+  }
 }
 
 /**
@@ -149,6 +162,10 @@ function legacyTypeFromMeta(meta: Record<string, unknown> | undefined): BallotTy
  * @param input - Election config with questions and voteType, optionally carrying the
  *   declared `type` and/or the legacy metadata bag (`meta.type.name`)
  * @returns The inferred ballot type
+ * @throws When the declared type is `ranked` and the election has more than one
+ *   question — the only input this function refuses rather than classifies, because
+ *   the two layouts are mutually exclusive and every reading of the pair is silently
+ *   wrong. See the guard for the details.
  */
 export function inferBallotType(
   input: Pick<Election, 'questions' | 'voteType'> & {
@@ -164,6 +181,22 @@ export function inferBallotType(
   const declared =
     (input.type ? (LEGACY_TYPE_NAMES[input.type] ?? SDK_TYPE_NAMES[input.type]) : undefined) ??
     legacyTypeFromMeta(input.meta)
+  // …with one pairing that describes no layout at all. A ranking is one field per
+  // *option* of one question; a multi-question election is one field per *question*
+  // (rule 1 below). Both readings of a multi-question ranked election are silently
+  // wrong — `encodeBallot` puts only questions[0] on the wire, and the ranked decode
+  // branch is position-addressed with no question index, so every question would report
+  // questions[0]'s Borda scores as its own. There is nothing to fall back to either:
+  // reading it as single-choice would encode a ranking array as one pick per question.
+  // Refuse, the way this module refuses every other config whose votes would not count.
+  if (declared === BallotType.Ranked && questions.length > 1) {
+    throw new Error(
+      `a ranked election must have exactly one question (got ${questions.length}): a ranking ` +
+        'lays out one ballot field per option, which leaves no room for a second question. ' +
+        'Encode and decode each ranked question on its own with encodeQuestionSelections / ' +
+        'decodeQuestionResults'
+    )
+  }
   if (declared) return declared
 
   // Rule 1: Multiple questions → single-choice per question (highest precedence)

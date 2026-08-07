@@ -1,10 +1,11 @@
 import type { BallotProtocol, Choice, Election, Question, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
 import { BallotType, type BallotSelections } from './types'
-import { inferBallotType, inferQuestionBallotType, isPickSlotLayout } from './infer'
+import { declaresRanked, inferBallotType, inferQuestionBallotType, isPickSlotLayout } from './infer'
 import { normalizeSelections } from './selections'
 import { requiredAbstainMaxValue } from './abstain'
 import {
   assertEncodedBallot,
+  duplicateRankedValuesReason,
   pickSlotCollisionReason,
   uncastableChoicesReason,
   uncastableChoicesReasonFor,
@@ -27,8 +28,9 @@ import {
  * - approval: dense 0/1 vector over options: choices.map(c => selected.has(c) ? 1 : 0)
  * - multichoice: exactly `maxCount` picked option values, unfilled slots padded with abstain
  *   sentinels (values ≥ choices.length; see encodeMultiChoice)
- * - ranked: per-option rank array in choice order, highest = best — pass-through; build it
- *   with {@link rankedOrderToScores} (see encodeRanked)
+ * - ranked: per-option rank array in choice order, highest = best — pass-through, but one
+ *   rank per option is required; build it with {@link rankedOrderToScores}, or hand the
+ *   voter's ordering to {@link encodeQuestionSelections} and let it do both (see encodeRanked)
  * - budget / quadratic: per-option amount array [a0, a1, …]
  *
  * @param input - Election config with questions and voteType
@@ -86,6 +88,12 @@ export function encodeBallot(
     if (unrankable) {
       throw new Error(`cannot encode a ballot for question 0: ${unrankable}`)
     }
+    // Same reason again: a duplicated choice value leaves every ballot well-formed
+    // and the results unreadable, so no per-ballot check downstream can notice.
+    const ambiguous = duplicateRankedValuesReason(questions[0]?.choices ?? [])
+    if (ambiguous) {
+      throw new Error(`cannot encode a ballot for question 0: ${ambiguous}`)
+    }
   }
   const perQuestion = normalizeSelections(input, selections)
 
@@ -103,7 +111,7 @@ export function encodeBallot(
         return encodeMultiChoice(voteType, questions[0], perQuestion[0] ?? [])
 
       case BallotType.Ranked:
-        return encodeRanked(perQuestion[0] ?? [])
+        return encodeRanked(perQuestion[0] ?? [], questions[0]?.choices.length ?? 0)
 
       case BallotType.Budget:
       case BallotType.Quadratic:
@@ -237,11 +245,23 @@ function encodeMultiChoice(voteType: VoteType, question: Question, selections: n
  * {@link rankedOrderToScores} rather than by hand and the orientation is applied for
  * you.
  *
- * Not validated here: `assertEncodedBallot` (run by both encoders on what they
- * produce) already refuses a duplicated rank under `uniqueValues` and a rank above
- * `maxValue`, which is every way a ranking can be malformed on the wire.
+ * Length is checked here and nowhere else. `assertEncodedBallot` (run by both
+ * encoders on what they produce) refuses a duplicated rank under `uniqueValues` and a
+ * rank above `maxValue`, but it has no opinion on how many fields a ballot has — so a
+ * short slate would sail through as a valid ballot that simply leaves the last options
+ * unranked and skews the Borda tally, while {@link validateSelections} refuses the
+ * identical input. The two have to agree, or a UI gating its submit button on the
+ * validator enables a vote the encoder then rejects (and a caller building the ranks
+ * by hand gets no verdict at all). Padding is not an option: a ranked protocol is
+ * pigeonhole-tight, so any filler value repeats a rank and the chain drops the whole
+ * ballot at tally.
  */
-function encodeRanked(selections: number[]): number[] {
+function encodeRanked(selections: number[], numChoices: number): number[] {
+  if (selections.length !== numChoices) {
+    throw new Error(
+      `ranked requires one rank per option (${numChoices}), got ${selections.length}`
+    )
+  }
   return [...selections]
 }
 
@@ -282,15 +302,11 @@ export function rankedOrderToScores(question: { choices: Choice[] }, order: numb
   // between them. This cannot corrupt a ballot — a complete ranking needs one distinct
   // published value per choice and duplicates leave fewer, so every possible `order`
   // already fails one of the checks below — but it fails describing the *ranking* when
-  // the defect is in the *question*, and the decoded results would carry two rows under
-  // the same `choice` id besides. Say so directly.
-  if (published.size !== values.length) {
-    const duplicated = [...new Set(values.filter((value, i) => values.indexOf(value) !== i))]
-    throw new Error(
-      `ranked: choice value(s) ${duplicated.join(', ')} are used by more than one choice, so a ` +
-        'ranking cannot tell them apart and the decoded results would report both under one ' +
-        'choice id. Give every choice a distinct value'
-    )
+  // the defect is in the *question*. Say so directly, in the words the encoders and the
+  // creation-time guard use for the same defect.
+  const ambiguous = duplicateRankedValuesReason(choices)
+  if (ambiguous) {
+    throw new Error(`ranked: ${ambiguous}`)
   }
 
   const rankByValue = new Map<number, number>()
@@ -319,6 +335,41 @@ export function rankedOrderToScores(question: { choices: Choice[] }, order: numb
   }
 
   return choices.map((choice) => rankByValue.get(choice.value)!)
+}
+
+/**
+ * Encode one question's ballot from the selections a **voter-facing form** collects,
+ * whatever its ballot type — the entry point a UI should reach for.
+ *
+ * The difference from {@link encodeQuestionBallot} is one question wide, and it is the
+ * whole reason this exists. Every other type's selections *are* its wire input (choice
+ * values for single/multi/approval, per-option amounts for budget/quadratic), but a
+ * ranked question's are the voter's **ordering** — the choice values they placed, best
+ * first — while the wire wants one rank per option in choice order. The two are
+ * transposes, and {@link rankedOrderToScores} is where the highest-is-best orientation
+ * is applied.
+ *
+ * Without this function that branch has to be written out at every call site, and
+ * getting it wrong is undetectable: an ordering passed straight to
+ * `encodeQuestionBallot` is a perfectly valid ballot that the Borda decode reads
+ * upside-down, so the chain accepts it, the tally looks healthy, and the loser wins.
+ * Here the branch lives once, in the package that owns the orientation.
+ *
+ * @param question - The question, read for its declaration, protocol and choices
+ * @param selections - What the form collected: the ordering (best first) for a ranked
+ *   question, the raw selections for every other type
+ * @throws Everything {@link encodeQuestionBallot} throws, plus — for ranked — whatever
+ *   {@link rankedOrderToScores} refuses: an unpublished choice, a repeat, or an
+ *   incomplete ordering.
+ */
+export function encodeQuestionSelections(
+  question: { ballotProtocol?: BallotProtocol; type?: string; metadata?: Record<string, unknown>; typeSetup?: QuestionTypeSetup; choices: Choice[] },
+  selections: number[]
+): number[] {
+  return encodeQuestionBallot(
+    question,
+    declaresRanked(question) ? rankedOrderToScores(question, selections) : selections
+  )
 }
 
 /**
@@ -409,6 +460,14 @@ export function encodeQuestionBallot(
       throw new Error(`cannot encode a ballot for this question: ${collision}`)
     }
   }
+  // Ranked's version of the same defect: duplicated choice values leave every ballot
+  // well-formed and the decoded rows sharing an id, so nothing downstream can notice.
+  if (ballotType === BallotType.Ranked) {
+    const ambiguous = duplicateRankedValuesReason(question.choices)
+    if (ambiguous) {
+      throw new Error(`cannot encode a ballot for this question: ${ambiguous}`)
+    }
+  }
   const fakeQuestion: Question = { title: { default: '' }, choices: question.choices }
 
   const ballot = ((): number[] => {
@@ -458,7 +517,7 @@ export function encodeQuestionBallot(
       }
 
       case BallotType.Ranked:
-        return encodeRanked(selections)
+        return encodeRanked(selections, question.choices.length)
 
       case BallotType.Budget:
       case BallotType.Quadratic:

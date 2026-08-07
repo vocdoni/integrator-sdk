@@ -114,6 +114,12 @@ export function declaresRanked(question: {
 // leaves any option unranked, or belongs to a question with duplicate choice values.
 export function rankedOrderToScores(question: { choices: Choice[] }, order: number[]): number[]
 
+// Encode one question's ballot from what a voter-facing form collects, whatever the
+// ballot type: the ORDERING for a ranked question (transposed for you), the raw
+// selections for everything else. The entry point a UI should use — it keeps the
+// per-type branch in one place, where it cannot be written the wrong way round.
+export function encodeQuestionSelections(question: QuestionLike, selections: number[]): number[]
+
 // Assert an encoded wire ballot would survive the scrutinizer's per-field checks
 // (range + uniqueness). The encoders run it on everything they produce; call it
 // directly on a ballot built by hand. See "Unsatisfiable ballot configs" below.
@@ -206,13 +212,19 @@ Only single-choice is ever multi-question, so a flat array is unambiguous:
 | ranked | one rank per option, in choice order, highest = best | the rank array unchanged |
 | budget / quadratic | the per-option amounts, in choice order | the amount array unchanged |
 
-**Ranked** takes ranks, not an ordering — build them with `rankedOrderToScores(question,
-order)` from the voter's ordering (choice values, best first) rather than by hand. The
+**Ranked** takes ranks, not an ordering. Hand the voter's ordering (choice values, best
+first) to `encodeQuestionSelections(question, order)` — or convert it yourself with
+`rankedOrderToScores(question, order)` — rather than building the rank array by hand. The
 orientation is a convention the protocol has no opinion about, and the decode is an
 index-weighted sum, so a ballot ranked with `0` as "best" is perfectly valid and elects the
 loser with nothing on either side able to notice. A ranking must be **complete**: the
 protocol leaves exactly one rank per option, so a partial one repeats a value and the chain
-discards the whole ballot.
+discards the whole ballot — every encoder refuses a short slate, matching
+`validateSelections`. Two more ranked-only refusals apply to the *question* rather than the
+ballot, and are enforced for every voter as well as at creation: `maxValue: 0` (see the
+decoding section) and two choices sharing a `value`, which would return two decoded rows
+under one choice id. An election-level `ranked` declaration with more than one question is
+refused outright — a ranking fills the whole ballot, so rank per question instead.
 
 **Abstaining:**
 
@@ -274,8 +286,8 @@ and scores every option zero. `unrankableProtocolReason` reports it, and both en
 ```typescript
 // 3 voters all rank C2 > C0 > C1 → raw [['0','3','0'], ['3','0','0'], ['0','0','3']]
 const decoded = decodeQuestionResults(question, results)
-decoded.map((r) => r.votes)                                           // [3, 0, 6]
-[...decoded].sort((a, b) => b.votes - a.votes).map((r) => r.choice)   // [2, 0, 1] — C2 wins
+const points = decoded.map((r) => r.votes)                            // [3, 0, 6]
+const ranking = [...decoded].sort((a, b) => b.votes - a.votes).map((r) => r.choice) // [2, 0, 1] — C2 wins
 ```
 
 ## Unsatisfiable ballot configs

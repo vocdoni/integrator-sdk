@@ -30,7 +30,7 @@ export {
   unsatisfiableQuestionReason,
   voteTypeBounds,
 } from './protocol'
-export { encodeBallot, encodeQuestionBallot, rankedOrderToScores } from './encode'
+export { encodeBallot, encodeQuestionBallot, encodeQuestionSelections, rankedOrderToScores } from './encode'
 export { decodeResults, decodeQuestionResults } from './decode'
 export { validateSelections } from './validate'
 export { multichoiceReservesAbstain, questionReservesAbstain, questionSelectionRange } from './abstain'

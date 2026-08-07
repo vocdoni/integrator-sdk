@@ -273,11 +273,15 @@ type QuestionLike = {
  *   `0..choices.length-1`. Contiguity, not merely a bound: with values 1/2/3 the
  *   first sentinel *is* 3, so an abstention would be recorded as a vote for C3 and
  *   decode would then reassign that column to the abstain bucket.
- * - **approval / dense multichoice / ranked / budget / quadratic** —
- *   position-addressed. One field per choice in choice order, so `choice.value` is a
- *   display label the wire never sees and any values at all are fine. (Ranked shares
- *   the pick-slot *protocol* but not its addressing: its fields are options, not
- *   slots, so there are no abstain sentinels for a value to collide with.)
+ * - **approval / dense multichoice / budget / quadratic** — position-addressed. One
+ *   field per choice in choice order, so `choice.value` is a display label the wire
+ *   never sees and any values at all are fine.
+ * - **ranked** — position-addressed too (it shares the pick-slot *protocol* but not
+ *   its addressing: its fields are options, not slots, so there are no abstain
+ *   sentinels for a value to collide with), with one exception. The values still
+ *   label the decoded rows, and a ranking is expressed in them, so two choices
+ *   sharing one are unorderable and come back as a single row id — see
+ *   {@link duplicateRankedValuesReason}.
  *
  * Returns `null` rather than a verdict for shapes it cannot judge (no derivable
  * ballot type, no choices, non-integer or negative values), matching
@@ -345,6 +349,39 @@ export function pickSlotCollisionReason(choices: Choice[]): string | null {
     `${numChoices} as an abstention — so a value in that range is indistinguishable from an ` +
     'abstain, and a gap below it pushes a real choice up into sentinel space. Renumber the ' +
     `choices 0..${numChoices - 1}`
+  )
+}
+
+/**
+ * Explain why a *ranked* question's choice values make its result unreadable, or
+ * `null` when every choice carries its own value.
+ *
+ * The mirror image of {@link pickSlotCollisionReason}, and split out for the same
+ * reason: no ballot inspection can reach it. Ranked is position-addressed, so a
+ * duplicated `choice.value` never touches the wire — `[2, 1, 0]` is a perfectly
+ * well-formed ranking whatever the choices are called — and
+ * {@link assertEncodedBallot} has nothing to object to. The damage is on the way back
+ * out: `decodeQuestionResults` keys each row by `choice.value`, so two options return
+ * under one id, and a consumer looking a row up by choice id finds one title carrying
+ * two different scores (React additionally sees duplicate keys). A ranking cannot
+ * express a preference between them either, which is why
+ * {@link rankedOrderToScores} refuses the same shape.
+ *
+ * Returns `null` for shapes it cannot judge, like its neighbours here.
+ */
+export function duplicateRankedValuesReason(choices: Choice[]): string | null {
+  const values = choices?.map((choice) => choice.value) ?? []
+  if (values.length === 0) return null
+  if (values.some((value) => !Number.isInteger(value) || value < 0)) return null
+
+  const duplicated = [...new Set(values.filter((value, i) => values.indexOf(value) !== i))]
+  if (duplicated.length === 0) return null
+
+  return (
+    `choice value(s) ${duplicated.join(', ')} are used by more than one choice. A ranking is ` +
+    'keyed by choice value, so it cannot tell those options apart, and the decoded results ' +
+    'would report both under one choice id — one option rendered twice, with two different ' +
+    'scores. Give every choice a distinct value'
   )
 }
 
@@ -435,7 +472,13 @@ export function uncastableChoicesReasonFor(
     )
   }
 
-  // Position-addressed layouts: choice.value never reaches the wire.
+  if (ballotType === BallotType.Ranked) {
+    // Position-addressed, so the values never reach the wire — but they do label the
+    // decoded rows, and a ranking has no way to order two options that share one.
+    return duplicateRankedValuesReason(choices)
+  }
+
+  // The remaining position-addressed layouts: choice.value never reaches the wire.
   return null
 }
 

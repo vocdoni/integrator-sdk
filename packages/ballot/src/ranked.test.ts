@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { BallotProtocol, Choice, Election } from '@vocdoni/api-types'
 import { decodeQuestionResults, decodeResults } from './decode'
-import { encodeBallot, encodeQuestionBallot, rankedOrderToScores } from './encode'
+import { encodeBallot, encodeQuestionBallot, encodeQuestionSelections, rankedOrderToScores } from './encode'
 import { declaresRanked, inferBallotType, inferQuestionBallotType } from './infer'
 import { questionReservesAbstain, questionSelectionRange } from './abstain'
 import { uncastableChoicesReason, unsatisfiableQuestionReason } from './protocol'
@@ -73,10 +73,34 @@ describe('ranked: the declared name is the only signal', () => {
     expect(rankedQuestion(4).ballotProtocol).toEqual(undeclaredQuestion(4).ballotProtocol)
   })
 
+  it('lets a recognized SaaS type shadow a stale ranked metadata name', () => {
+    // `inferQuestionBallotType` resolves `type` first and only falls back to the bag, so
+    // a question carrying both reads as multichoice. `declaresRanked` has to reach the
+    // same verdict or the two halves of the UI disagree about the same question:
+    // `Fields.tsx` picks the widget from the former (a checkbox group capped at 2) while
+    // `questionSelectionRange` and `Form.tsx`'s transposition follow the latter (a full
+    // 4-option slate), leaving a form that can never be submitted.
+    const question = {
+      type: 'multichoice',
+      typeSetup: { minChoices: 0, maxChoices: 2, uniqueChoices: false },
+      metadata: { type: { name: 'ranked' } },
+      ballotProtocol: { ...rankedProtocol(4), maxValue: 1, uniqueValues: false, maxTotalCost: 2 },
+      choices: choices(4),
+    }
+
+    expect(inferQuestionBallotType(question)).toBe(BallotType.MultiChoice)
+    expect(declaresRanked(question)).toBe(false)
+    expect(questionSelectionRange(question)).toEqual({ min: 1, max: 2 })
+    // And no ranked diagnosis for a question that is not one.
+    expect(unsatisfiableQuestionReason({ ...question, ballotProtocol: { ...question.ballotProtocol, maxValue: 0 } })).toBeNull()
+  })
+
   it('declaresRanked answers for a question with neither a protocol nor a type', () => {
     // inferQuestionBallotType throws on that input; the predicate must not, so a UI
     // can ask "is this a ranking?" of a partial read without handling an exception.
-    expect(() => inferQuestionBallotType({ choices: choices(3) })).toThrow()
+    // `as never` on both: neither signature declares `choices` (neither function reads
+    // it), and a bare `{}` would not say what this input is meant to be.
+    expect(() => inferQuestionBallotType({ choices: choices(3) } as never)).toThrow()
     expect(declaresRanked({ choices: choices(3) } as never)).toBe(false)
   })
 
@@ -99,6 +123,39 @@ describe('ranked: the declared name is the only signal', () => {
     expect(inferBallotType(election({ meta: { type: { name: 'ranked' } } }))).toBe(BallotType.Ranked)
     // Same shape, nothing declared → the pre-existing multichoice reading.
     expect(inferBallotType(election({}))).toBe(BallotType.MultiChoice)
+  })
+
+  it('refuses a ranked election with more than one question', () => {
+    // A ranking occupies the whole ballot: one field per option of one question. A
+    // multi-question vochain election lays out one field per *question* instead, so the
+    // two layouts cannot coexist and the declaration describes nothing that exists.
+    // Read as ranked it is silently wrong in both directions — `encodeBallot` puts only
+    // questions[0] on the wire, and the decode branch is position-addressed with no `q`,
+    // so every question reports questions[0]'s Borda scores as its own. Refuse instead:
+    // per-question ranked ballots go through the question-level API.
+    const election = {
+      type: 'ranked',
+      voteType: {
+        maxCount: 3,
+        maxValue: 2,
+        maxVoteOverwrites: 0,
+        costExponent: 1,
+        uniqueChoices: true,
+        costFromWeight: false,
+      },
+      questions: [
+        { title: { default: 'Q0' }, choices: choices(3) },
+        { title: { default: 'Q1' }, choices: choices(3) },
+      ],
+      results: THREE_VOTERS_C2_C0_C1,
+    }
+
+    expect(() => inferBallotType(election)).toThrow(/exactly one question/)
+    expect(() => decodeResults(election)).toThrow(/exactly one question/)
+    expect(() => encodeBallot(election, [[1, 0, 2], [1, 0, 2]])).toThrow(/exactly one question/)
+    expect(() => validateSelections(election, [[1, 0, 2], [1, 0, 2]])).toThrow(/exactly one question/)
+    // The same election with one question is fine — it is the pairing that is refused.
+    expect(inferBallotType({ ...election, questions: election.questions.slice(0, 1) })).toBe(BallotType.Ranked)
   })
 })
 
@@ -318,6 +375,63 @@ describe('ranked: a protocol that can never produce a ranking', () => {
   })
 })
 
+describe('ranked: two choices sharing a value', () => {
+  // Ranked is position-addressed, so duplicates cannot corrupt the *ballot* — but the
+  // decoded rows are keyed by `choice.value`, so two options come back under one id:
+  // a renderer looking a row up by choice id shows one title twice with two different
+  // scores, and React sees duplicate keys. `rankedOrderToScores` already refuses it;
+  // the guards below are the paths that did not, including the one moment it is
+  // fixable (creation).
+  const dupes = {
+    ballotProtocol: rankedProtocol(3),
+    metadata: { type: { name: 'ranked' } },
+    choices: [
+      { title: { default: 'A' }, value: 0 },
+      { title: { default: 'B' }, value: 1 },
+      { title: { default: 'C' }, value: 1 },
+    ],
+  }
+
+  it('is the failure this guards: two decoded rows under one choice id', () => {
+    const decoded = decodeQuestionResults(dupes, THREE_VOTERS_C2_C0_C1)
+    expect(decoded.map((row) => row.choice)).toEqual([0, 1, 1])
+  })
+
+  it('is reported as an uncastable choice', () => {
+    expect(uncastableChoicesReason(dupes)).toMatch(/used by more than one choice/)
+  })
+
+  it('is refused by both encoders, even with a perfectly well-formed rank array', () => {
+    // [2, 1, 0] is a valid ranking on the wire — distinct, in range, one per option —
+    // so no per-ballot check can catch this. It has to be refused for the question.
+    expect(() => encodeQuestionBallot(dupes, [2, 1, 0])).toThrow(/used by more than one choice/)
+    expect(() =>
+      encodeBallot(
+        {
+          type: 'ranked',
+          voteType: {
+            maxCount: 3,
+            maxValue: 2,
+            maxVoteOverwrites: 0,
+            costExponent: 1,
+            uniqueChoices: true,
+            costFromWeight: false,
+          },
+          questions: [{ title: { default: 'Q0' }, choices: dupes.choices }],
+        },
+        [[2, 1, 0]]
+      )
+    ).toThrow(/used by more than one choice/)
+  })
+
+  it('leaves non-contiguous but distinct values alone', () => {
+    // Position-addressed means the values are display labels; only *collisions* matter.
+    const sparse = { ...dupes, choices: [7, 8, 9].map((v) => ({ title: { default: `C${v}` }, value: v })) }
+    expect(uncastableChoicesReason(sparse)).toBeNull()
+    expect(encodeQuestionBallot(sparse, [2, 1, 0])).toEqual([2, 1, 0])
+  })
+})
+
 describe('ranked: encodeQuestionBallot', () => {
   it('passes the ranks through unchanged', () => {
     expect(encodeQuestionBallot(rankedQuestion(4), [2, 0, 3, 1])).toEqual([2, 0, 3, 1])
@@ -337,6 +451,37 @@ describe('ranked: encodeQuestionBallot', () => {
     expect(() => encodeQuestionBallot(rankedQuestion(3), [5, 1, 0])).toThrow(/above maxValue 2/)
   })
 
+  it('refuses a partial ranking, exactly as validateSelections does', () => {
+    // The pair that has to agree: a UI gating its submit button on the validator would
+    // otherwise enable the vote and then throw at cast time — and a caller building the
+    // ranks by hand (the direct path the docs describe) would cast a 2-field ballot on a
+    // 4-option question, leaving C2/C3 unranked and skewing the Borda tally with nothing
+    // downstream able to notice. A short slate cannot be padded either: the protocol is
+    // pigeonhole-tight, so any filler repeats a rank.
+    expect(() => encodeQuestionBallot(rankedQuestion(4), [2, 0])).toThrow(/one rank per option \(4\), got 2/)
+
+    const election = {
+      type: 'ranked',
+      voteType: {
+        maxCount: 3,
+        maxValue: 2,
+        maxVoteOverwrites: 0,
+        costExponent: 1,
+        uniqueChoices: true,
+        costFromWeight: false,
+      },
+      questions: [{ title: { default: 'Q0' }, choices: choices(3) }],
+    }
+    expect(() => encodeBallot(election, [[1, 0]])).toThrow(/one rank per option \(3\), got 2/)
+    expect(() => validateSelections(election, [[1, 0]])).toThrow(/one rank per option \(3\), got 2/)
+  })
+
+  it('refuses a ranking with more entries than options', () => {
+    expect(() => encodeQuestionBallot(rankedQuestion(3), [2, 1, 0, 3])).toThrow(
+      /one rank per option \(3\), got 4/
+    )
+  })
+
   it('encodes a ranked election through encodeBallot too', () => {
     const ballot = encodeBallot(
       {
@@ -354,6 +499,38 @@ describe('ranked: encodeQuestionBallot', () => {
       [[1, 0, 2]]
     )
     expect(ballot).toEqual([1, 0, 2])
+  })
+})
+
+describe('encodeQuestionSelections: one entry point for what a form collects', () => {
+  // The orientation lives in exactly one place, and this is the function that puts it
+  // there. Without it every consumer has to know that ranked — and only ranked — needs
+  // `rankedOrderToScores` before `encodeQuestionBallot`, and that skipping the step
+  // yields a perfectly valid ballot that elects the loser with nothing on either side
+  // able to detect it.
+  it('transposes a ranked question\'s ordering, and encodes everything else as-is', () => {
+    // Voter ranks C2 > C0 > C1 — the ordering a form collects, not the wire ranks.
+    expect(encodeQuestionSelections(rankedQuestion(3), [2, 0, 1])).toEqual([1, 0, 2])
+
+    // A dense (approval) question: the same selections stay selections.
+    const approval = {
+      ballotProtocol: { ...rankedProtocol(3), maxValue: 1, uniqueValues: false },
+      choices: choices(3),
+    }
+    expect(inferQuestionBallotType(approval)).toBe(BallotType.Approval)
+    expect(encodeQuestionSelections(approval, [0, 2])).toEqual([1, 0, 1])
+  })
+
+  it('agrees with the two-step form it replaces', () => {
+    const question = rankedQuestion(4)
+    const order = [2, 0, 3, 1]
+    expect(encodeQuestionSelections(question, order)).toEqual(
+      encodeQuestionBallot(question, rankedOrderToScores(question, order))
+    )
+  })
+
+  it('refuses an incomplete ordering', () => {
+    expect(() => encodeQuestionSelections(rankedQuestion(3), [2, 0])).toThrow(/every option must be ranked/)
   })
 })
 
