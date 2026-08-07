@@ -17,14 +17,24 @@ export const QuestionTip = ({ question, index = '0' }: { question?: VotingProces
 
   if (!question) return null
 
-  if (inferQuestionBallotType(question) !== BallotType.MultiChoice) return null
+  const ballotType = inferQuestionBallotType(question)
+  if (ballotType !== BallotType.MultiChoice && ballotType !== BallotType.Ranked) return null
 
-  const text = t('question_types.multichoice_desc', {
-    selected: Array.isArray(value) ? value.length : 0,
-    // The pick bound, not ballotProtocol.maxCount — on the dense layout maxCount
-    // is the number of choices, and the bound lives in maxTotalCost.
-    maxcount: questionSelectionRange(question).max,
-  })
+  // Ranked is all-or-nothing, so the tip counts *placed* options rather than picks —
+  // an empty slot in the middle of the slate is the one thing blocking the vote, and
+  // the form value carries '' for it.
+  const text =
+    ballotType === BallotType.Ranked
+      ? t('question_types.ranked_desc', {
+          selected: Array.isArray(value) ? value.filter((entry) => entry !== '' && entry != null).length : 0,
+          maxcount: questionSelectionRange(question).max,
+        })
+      : t('question_types.multichoice_desc', {
+          selected: Array.isArray(value) ? value.length : 0,
+          // The pick bound, not ballotProtocol.maxCount — on the dense layout maxCount
+          // is the number of choices, and the bound lives in maxTotalCost.
+          maxcount: questionSelectionRange(question).max,
+        })
 
   if (!text) return null
 
