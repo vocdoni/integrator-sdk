@@ -325,7 +325,8 @@ drag-and-drop or numbered buttons.
 
 The form value is the voter's **ordering** — a `string[]` of choice values, best
 first, padded with `''` for unfilled places — and `QuestionsFormProvider` transposes
-it into wire ranks with `rankedOrderToScores` on submit. Submitting is blocked until
+it into wire ranks on submit (`encodeQuestionSelections`, which owns the
+ortherwise-per-call-site transposition). Submitting is blocked until
 every option is placed (`questionSelectionRange` reports `{min: n, max: n}`): a
 ranked protocol leaves exactly one rank per option, so a partial ranking repeats a
 value and the chain discards the whole ballot while still counting the envelope.

@@ -1,6 +1,7 @@
 ---
 '@vocdoni/ballot': minor
 '@vocdoni/react-components': minor
+'@vocdoni/api-client': patch
 ---
 
 Read a ranking back out of a ranked election.
@@ -46,10 +47,26 @@ the legacy `multiple-choice` name already uses — so no backend change is invol
   ranked with `0` as "best" is perfectly valid and elects the loser, with nothing on either
   side able to notice. It throws on a ranking that repeats a choice, names an unpublished
   one, or leaves any option unranked.
+- `encodeQuestionSelections(question, selections)` encodes what a voter-facing form
+  collects, for **any** ballot type: the ordering for a ranked question (transposed for
+  you), the raw selections for everything else. The per-type branch lives here rather than
+  at every call site, where writing it the wrong way round produces a valid ballot that
+  elects the loser. Prefer it over `encodeQuestionBallot` in UI code.
 - `encodeQuestionBallot` / `encodeBallot` keep passing a ranking straight through, and still
-  refuse a duplicated rank or one above `maxValue`. `validateSelections` gained the matching
-  ranked rules, `questionSelectionRange` reports `{min: n, max: n}` (a partial ranking cannot
-  be counted), and `declaresRanked(question)` exposes the check.
+  refuse a duplicated rank or one above `maxValue`. They now also refuse a ranking that is
+  not **one rank per option** — previously a short slate encoded fine while
+  `validateSelections` rejected the identical input, so a UI gating its submit button on the
+  validator disagreed with the codec. `validateSelections` gained the matching ranked rules,
+  `questionSelectionRange` reports `{min: n, max: n}` (a partial ranking cannot be counted),
+  and `declaresRanked(question)` exposes the check — resolving the declared name exactly as
+  `inferQuestionBallotType` does, so the two can never disagree in either direction.
+- Two more ranked defects are refused for every voter and at creation, because no individual
+  ballot shows either: **two choices sharing a `value`** (the ballots stay well-formed, but
+  the decoded rows are keyed by choice value, so two options return under one id and a
+  ranking cannot order them), and an election-level `ranked` declaration carrying **more than
+  one question** — a ranking fills the whole ballot, so `inferBallotType` now throws rather
+  than let `encodeBallot` put only `questions[0]` on the wire and `decodeResults` report
+  `questions[0]`'s scores for every question.
 - `unrankableProtocolReason(numChoices, maxValue)` catches the one protocol a ranking can
   never survive: `maxValue: 0`. That means "no upper bound" for every other type, but on
   chain it switches the scrutinizer to discrete aggregation — one column per option instead
@@ -66,12 +83,22 @@ the legacy `multiple-choice` name already uses — so no backend change is invol
   option a position another holds swaps the two. The default slot is a `<select>`; override
   it for drag-and-drop.
 - `QuestionSelectionMode` gained `'ranked'` alongside `'single'` / `'multiple'`.
-- The form collects the voter's ordering and `QuestionsFormProvider` transposes it with
-  `rankedOrderToScores`; submitting is blocked until every option is placed.
+- The form collects the voter's ordering and `QuestionsFormProvider` encodes it with
+  `encodeQuestionSelections`; submitting is blocked until every option is placed. Assigning
+  a position held by another option when the moved one was unranked now **reseats** the
+  displaced option in the first free place instead of silently dropping it.
 - `<QuestionsTypeBadge />` and `<QuestionTip />` label and count ranked questions.
 
-The integration suite now casts a real ranked vote and asserts the recovered ordering — plus
-the raw matrix the chain produced, and that the pick-slot reading of it disagrees — replacing
-the placeholder that had to enshrine a meaningless tally.
+**`@vocdoni/api-client`**
+
+- `elections.create` / `update` validate each question's ballot config with the
+  *question*-level rule instead of the protocol-level one, so a question declared `ranked`
+  with `maxValue: 0` — or with duplicate choice values — is refused at the one moment it can
+  still be fixed. The protocol-level rule waves both through by design: it mirrors the
+  backend, which has no concept of a ranked question.
+
+The integration suite now casts a real ranked vote and asserts the recovered ordering plus
+the raw matrix the chain produced, replacing the placeholder that had to enshrine a
+meaningless tally.
 
 Closes #22.

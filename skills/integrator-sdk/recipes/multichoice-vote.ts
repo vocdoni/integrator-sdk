@@ -109,7 +109,7 @@ const SELECTIONS_BY_QUESTION: Record<string, number[]> = {
 
   // Format C — ranked, 4 options, voter's order C2 > C0 > C3 > C1.
   // Ranks in choice order, highest wins: C0=2, C1=0, C2=3, C3=1.
-  // Prefer rankedOrderToScores(question, [2, 0, 3, 1]) — same result, and it
+  // Prefer encodeQuestionSelections(question, [2, 0, 3, 1]) — same result, and it
   // applies the orientation and rejects an incomplete or repeated ranking.
   // '<questionId>': [2, 0, 3, 1],
 

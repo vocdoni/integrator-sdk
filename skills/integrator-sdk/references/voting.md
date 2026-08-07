@@ -345,19 +345,50 @@ elects the loser, with nothing on either side able to notice. Build the array wi
 `rankedOrderToScores` instead of by hand and it is applied for you:
 
 ```ts
-import { encodeQuestionBallot, rankedOrderToScores } from '@vocdoni/ballot'
+import { encodeQuestionSelections } from '@vocdoni/ballot'
 
 // 3 candidates, voter ranks C2 > C0 > C1 — pass the ORDERING, best first.
+const ballot = encodeQuestionSelections(question, [2, 0, 1])   // → [1, 0, 2]
+```
+
+**`encodeQuestionSelections` is the entry point a form should use**, for every ballot
+type. It is `encodeQuestionBallot` plus the one thing that differs per type: a ranked
+question's form value is the voter's *ordering*, everything else's already is its wire
+input. Writing that branch by hand at the call site is how an ordering ends up on the
+wire unchanged — a valid ballot the Borda decode reads upside-down.
+
+The two-step form still works when you already hold wire ranks:
+
+```ts
+import { encodeQuestionBallot, rankedOrderToScores } from '@vocdoni/ballot'
+
 const ranks = rankedOrderToScores(question, [2, 0, 1])   // → [1, 0, 2]
 const ballot = encodeQuestionBallot(question, ranks)     // → [1, 0, 2] (pass-through)
 ```
 
-`rankedOrderToScores` throws on a ranking that repeats a choice, names an
-unpublished one, or leaves any option unranked — a ranked protocol is
-pigeonhole-tight, so a partial ranking repeats a value and the chain drops the whole
-ballot. `encodeQuestionBallot` itself passes the ranks straight through and then
-checks them: a duplicate rank or one above `maxValue` throws rather than casting a
-vote the chain accepts and never counts.
+Everything a ranking can get wrong throws rather than casting a vote the chain accepts
+and never counts. `rankedOrderToScores` rejects an ordering that repeats a choice or
+names an unpublished one; both it and `encodeQuestionBallot` reject an **incomplete**
+slate (a ranked protocol is pigeonhole-tight, so a partial ranking repeats a value and
+the chain drops the whole ballot), and `encodeQuestionBallot` additionally rejects a
+duplicate rank or one above `maxValue`. `validateSelections` gives the same verdicts on
+the wire ranks, so a UI can gate its submit button without discovering the refusal at
+cast time.
+
+Three question-level defects are refused for **every** voter, up front, because no
+individual ballot shows them — and `client.elections.create` refuses them too, which is
+the only moment they can still be fixed:
+
+- `maxValue: 0` on a ranked question. It means "unbounded" for every other type; here it
+  switches the chain to discrete aggregation and every option scores 0 however anyone
+  votes, indistinguishable from an election nobody voted in.
+- **Two choices sharing a `value`.** Ranked is position-addressed, so the ballots stay
+  well-formed — but the decoded rows are keyed by `choice.value`, so two options come
+  back under one id, and a ranking cannot order them.
+- **More than one question** on an election-level `ranked` declaration. A ranking is one
+  field per option and fills the whole ballot, so there is no room for a second question;
+  `inferBallotType`, `encodeBallot`, `validateSelections` and `decodeResults` all refuse
+  it. Rank per question with `encodeQuestionSelections` / `decodeQuestionResults`.
 
 **Decoding is Borda** — `Σ count × rank`, the index-weighted sum of each option's
 row. It is not one option among several: the tally is a per-field histogram with the
@@ -368,8 +399,8 @@ ballots. This matches `saas-integrator-demo`, the reference implementation.
 // 3 voters all rank C2 > C0 > C1
 // raw: [['0','3','0'], ['3','0','0'], ['0','0','3']]
 const decoded = decodeQuestionResults(question, results)
-decoded.map((row) => row.votes)                              // [3, 0, 6]
-[...decoded].sort((a, b) => b.votes - a.votes).map((r) => r.choice)  // [2, 0, 1] — C2 wins
+const points = decoded.map((row) => row.votes)               // [3, 0, 6]
+const ranking = [...decoded].sort((a, b) => b.votes - a.votes).map((r) => r.choice)  // [2, 0, 1] — C2 wins
 ```
 
 Two things to know about the decoded shape:
