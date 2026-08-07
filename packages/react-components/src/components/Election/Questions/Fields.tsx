@@ -5,7 +5,7 @@ import { QuestionChoicePresentation, QuestionLayout, QuestionSelectionMode } fro
 import { useComponents } from '../../context/useComponents'
 import { useReactComponentsLocalize } from '../../../i18n/localize'
 import { useElection } from '@vocdoni/react-providers'
-import { getQuestionChoiceMeta, hasExtendedChoiceMeta, QuestionChoice } from './Choice'
+import { getQuestionChoiceMeta, hasExtendedChoiceMeta, QuestionChoice, QuestionRankChoice } from './Choice'
 import { QuestionTip } from './Tip'
 import { resolveTitle } from '../../../election/normalized'
 
@@ -109,7 +109,7 @@ const RankedChoice = ({
   const { status, isAbleToVote } = useElection()
   const t = useReactComponentsLocalize()
   const { control, trigger } = useFormContext()
-  const { QuestionsError, QuestionRankChoice: RankSlot } = useComponents()
+  const { QuestionsError } = useComponents()
 
   const total = question.choices.length
   const disabled = status !== 'ONGOING' || !isAbleToVote
@@ -146,33 +146,43 @@ const RankedChoice = ({
             const displaced = next[to]
             next[to] = value
             // The option that held this position takes the slot the moved one vacated
-            // (a swap); when the moved one was unranked there is no slot to give, so
-            // the displaced option simply becomes unranked.
-            if (from >= 0) next[from] = displaced
+            // (a swap). When the moved one was unranked there is no slot to hand back,
+            // so the displaced option falls into the first free position instead —
+            // dropping it would silently undo a placement the voter made, leaving the
+            // slate one short with nothing on screen to say which option went missing.
+            if (from >= 0) {
+              next[from] = displaced
+            } else if (displaced !== '') {
+              const free = next.indexOf('')
+              // A full slate has no unranked option to move, so `free` is only ever -1
+              // when nothing was displaced; unranking is the honest fallback regardless.
+              if (free >= 0) next[free] = displaced
+            }
           }
 
           field.onChange(next)
           trigger(index)
         }
 
+        // The position labels are the same for every option, so they are built once per
+        // render rather than once per option: inside the map this is n translation
+        // lookups per choice, i.e. n² per keystroke on a slate a voter reorders often.
+        const positionLabels = Array.from({ length: total }, (_, i) =>
+          t('vote.rank_position', { position: i + 1, defaultValue: `#${i + 1}` })
+        )
+
         return (
           <>
             {question.choices.map((choice: Choice) => {
               const value = choice.value.toString()
               const at = order.indexOf(value)
-              const meta = getQuestionChoiceMeta(choice)
 
               return (
-                <RankSlot
+                <QuestionRankChoice
                   key={value}
                   choice={choice}
                   value={value}
-                  label={resolveTitle(choice.title)}
-                  description={meta.description}
-                  image={meta.image}
                   compact={!hasChoiceImage(choice) && layout === 'list'}
-                  hasImage={Boolean(meta.image?.default || meta.image?.thumbnail)}
-                  canOpenImageModal={Boolean(meta.image?.thumbnail && meta.image?.default)}
                   presentation={presentation}
                   dataAttrs={{
                     'data-choice-card': '',
@@ -184,9 +194,9 @@ const RankedChoice = ({
                     'data-choice-field-name': field.name,
                   }}
                   position={at >= 0 ? at + 1 : null}
-                  options={Array.from({ length: total }, (_, i) => ({
+                  options={positionLabels.map((label, i) => ({
                     position: i + 1,
-                    label: t('vote.rank_position', { position: i + 1, defaultValue: `#${i + 1}` }),
+                    label,
                     // Marked, not removed — the slot is still selectable, and picking it
                     // swaps the two options.
                     taken: order[i] !== '' && order[i] !== value,

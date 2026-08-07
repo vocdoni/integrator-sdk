@@ -68,6 +68,9 @@ export const defaultComponents: ComponentsDefinition = {
     description,
     image,
     compact,
+    // Destructured but unused: it is a slot prop for overrides to lay out with, and
+    // anything left in `...props` is spread onto a DOM element.
+    hasImage: _hasImage,
     canOpenImageModal,
     dataAttrs,
     presentation,
@@ -125,6 +128,8 @@ export const defaultComponents: ComponentsDefinition = {
     description,
     image,
     compact,
+    // See the note on QuestionChoice above: unused here, but it must not reach the DOM.
+    hasImage: _hasImage,
     canOpenImageModal,
     dataAttrs,
     presentation,

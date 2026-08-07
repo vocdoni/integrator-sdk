@@ -1,4 +1,4 @@
-import { declaresRanked, encodeQuestionBallot, hasUncastableChoices, rankedOrderToScores } from '@vocdoni/ballot'
+import { encodeQuestionSelections, hasUncastableChoices } from '@vocdoni/ballot'
 import { createContext, PropsWithChildren, useContext, useEffect } from 'react'
 import { FieldValues, FormProvider, useForm, UseFormReturn } from 'react-hook-form'
 import { EnsureConfirmProvider } from '../../../confirm/ConfirmProvider'
@@ -64,14 +64,13 @@ const QuestionsFormProviderInner = ({ children }: PropsWithChildren<QuestionsFor
     const encodedBallots: number[][] = []
     for (const [index, question] of election.questions.entries()) {
       try {
-        // A ranked question's form value is the voter's ORDERING (choice values, best
-        // first — see RankedChoice); the wire wants one rank per option in choice order.
-        // `rankedOrderToScores` transposes it and applies the highest-is-best
-        // orientation, and throws on an incomplete or repeated ranking, which is why it
-        // sits inside this try alongside the encoder.
-        const raw = selections[index] ?? []
-        const ballot = declaresRanked(question) ? rankedOrderToScores(question, raw) : raw
-        encodedBallots.push(encodeQuestionBallot(question, ballot))
+        // `encodeQuestionSelections`, not `encodeQuestionBallot`: a ranked question's
+        // form value is the voter's ORDERING (choice values, best first — see
+        // RankedChoice) while the wire wants one rank per option in choice order. The
+        // transposition and its highest-is-best orientation live inside the ballot
+        // package, so this form does not carry a per-type branch that, written the
+        // wrong way round, would produce a valid ballot electing the loser.
+        encodedBallots.push(encodeQuestionSelections(question, selections[index] ?? []))
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error)
         // Two very different failures land here and only one of them is the voter's to

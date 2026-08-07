@@ -1,7 +1,7 @@
 import { act, render, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { I18nextProvider } from 'react-i18next'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeProcess, renderWithComponents } from '../../../test-utils'
 import { createTestI18n } from '../../../i18n/test-i18n'
 
@@ -30,6 +30,13 @@ import { QuestionsFormProvider, useQuestionsForm, type QuestionsFormContextState
 import { QuestionsTypeBadge } from './TypeBadge'
 
 const testI18n = createTestI18n()
+
+// `state` is shared by every test in the file, so anything a test changes has to be put
+// back even when that test fails — otherwise one broken assertion cascades into the rest.
+afterEach(() => {
+  state.status = 'ONGOING'
+  state.isAbleToVote = true
+})
 
 /**
  * A ranked question as the backend stores one: a raw `ballotProtocol` (the named type
@@ -218,6 +225,25 @@ describe('ranked widget → wire ballot', () => {
     expect(state.vote).toHaveBeenCalledWith([[0, 1, 2]])
   })
 
+  it('reseats a displaced option in the free slot rather than dropping it', () => {
+    // The swap above has a second case: the option being moved was not ranked yet, so
+    // it has no slot to hand back. Dropping the displaced one loses a placement the
+    // voter made, silently — the tip still reads "2 of 3" and submit stays blocked with
+    // nothing on screen explaining why. There is a free slot; use it.
+    const ui = renderVotableQuestion(rankedQuestion(3))
+    ui.rank(0, 1)
+    ui.rank(1, 2)
+    expect(ui.tip()).toBe('You ranked 2 of 3 options')
+
+    // C2, still unranked, takes first place from C0.
+    ui.rank(2, 1)
+
+    expect(ui.slot(2).position).toBe(1)
+    expect(ui.slot(1).position).toBe(2)
+    expect(ui.slot(0).position).toBe(3)
+    expect(ui.tip()).toBe('You ranked 3 of 3 options')
+  })
+
   it('unranks an option without disturbing the others', () => {
     const ui = renderVotableQuestion(rankedQuestion(3))
     ui.rank(0, 1)
@@ -240,11 +266,13 @@ describe('ranked widget → wire ballot', () => {
     expect(ui.api().fmethods.formState.errors['0']?.message).toBe('Rank all 3 options')
   })
 
-  it('does not offer the widget — or accept a ranking — once voting is closed', () => {
+  it('does not offer the widget once voting is closed', () => {
+    // Restored by the afterEach below, not on the last line of the test: an assertion
+    // failure here would otherwise leak 'ENDED' into every test that follows, turning
+    // one real failure into three that point at the wrong code.
     state.status = 'ENDED'
     const ui = renderVotableQuestion(rankedQuestion(3))
     expect(ui.slot(0).disabled).toBe(true)
-    state.status = 'ONGOING'
   })
 })
 
