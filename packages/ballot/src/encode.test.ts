@@ -357,14 +357,18 @@ describe('encodeQuestionBallot', () => {
       { title: { default: 'C3' }, value: 3 },
     ]
 
-    it('refuses even when the picked value itself is castable', () => {
-      // The point of refusing up front. Value 1 fits maxValue 2, so assertEncodedBallot
-      // would wave this ballot through — but the election cannot record a vote for C3
-      // at all, so its tally cannot represent the electorate no matter who votes. A
-      // voter is not the right person to discover that, one pick at a time.
-      expect(() =>
+    it('still encodes for the voters whose pick IS castable', () => {
+      // The election is defective — C3 can never be recorded — but C1 and C2 are fine,
+      // and the chain records them correctly. Verified live in value-skew.itest.ts: an
+      // election with exactly this shape returned raw matrix [["0","1","0"]], counting
+      // the in-range vote and losing only the out-of-range one. Refusing everybody
+      // would discard ballots that would otherwise have been tallied right, on an
+      // election nobody can fix after publish. Creation is where this shape is stopped
+      // (`client.elections.create`); by encode time the damage is done, and the only
+      // question left is how much more of it to cause.
+      expect(
         encodeQuestionBallot({ ballotProtocol: bp({ maxCount: 1, maxValue: 2 }), choices: oneIndexed }, [1])
-      ).toThrow(/exceed maxValue 2/)
+      ).toEqual([1])
     })
 
     it('names the offending value rather than the ballot field', () => {
@@ -403,23 +407,37 @@ describe('encodeQuestionBallot', () => {
       ).toEqual([1, 0, 1])
     })
 
-    it('refuses at the election level too', () => {
-      expect(() =>
-        encodeBallot(
-          {
-            voteType: {
-              maxCount: 1,
-              maxValue: 2,
-              maxVoteOverwrites: 0,
-              costExponent: 1,
-              uniqueChoices: false,
-              costFromWeight: false,
-            },
-            questions: [{ title: { default: 'Q0' }, choices: oneIndexed }],
-          },
-          [[1]]
-        )
-      ).toThrow(/exceed maxValue 2/)
+    it('draws the same line at the election level', () => {
+      const election = {
+        voteType: {
+          maxCount: 1,
+          maxValue: 2,
+          maxVoteOverwrites: 0,
+          costExponent: 1,
+          uniqueChoices: false,
+          costFromWeight: false,
+        },
+        questions: [{ title: { default: 'Q0' }, choices: oneIndexed }],
+      }
+      // The castable pick goes through...
+      expect(encodeBallot(election, [[1]])).toEqual([1])
+      // ...and the unreachable one is refused by the election's defect, not by the
+      // wire-level bounds message assertEncodedBallot would have produced.
+      expect(() => encodeBallot(election, [[3]])).toThrow(
+        /cannot encode a ballot for question 0: choice value\(s\) 3 exceed maxValue 2/
+      )
+    })
+
+    it('refuses a pick-slot sentinel collision for every voter, castable pick or not', () => {
+      // The asymmetry with the ceiling case above, and the reason the rule is split.
+      // Values 1/2/3 over 3 choices: the first abstain sentinel IS 3, so an abstention
+      // and a vote for C3 are the same number on the wire. Every value here is within
+      // maxValue, so assertEncodedBallot sees nothing wrong with any individual ballot
+      // — there is no later checkpoint that could catch this, and no voter whose pick
+      // is safe.
+      const collided = { ballotProtocol: bp({ maxCount: 3, maxValue: 6, uniqueValues: true }), choices: oneIndexed }
+      expect(() => encodeQuestionBallot(collided, [1])).toThrow(/exactly the set 0\.\.2/)
+      expect(() => encodeQuestionBallot(collided, [2])).toThrow(/exactly the set 0\.\.2/)
     })
   })
 

@@ -236,6 +236,40 @@ describe('uncastableChoicesReason', () => {
     it('allows the named singlechoice type, whose maxValue is derived from the values', () => {
       expect(uncastableChoicesReason({ type: 'singlechoice', choices: valued([1, 2, 3]) })).toBeNull()
     })
+
+    it('rejects two choices sharing one value, which the tally conflates', () => {
+      // Value-addressed means the results row is indexed by choice value, so A and B
+      // both read results[q][1]. One vote for A reports as a vote for A *and* for B,
+      // and the percentages sum past 100. B can never be recorded as itself — the same
+      // "published option nobody can cast" defect as an out-of-range value, wearing a
+      // different face. Nothing else catches it: the config is satisfiable and every
+      // value is within maxValue, so no individual ballot is wrong.
+      const reason = uncastableChoicesReason({
+        ballotProtocol: bp({ maxCount: 1, maxValue: 2 }),
+        choices: [
+          { title: { default: 'A' }, value: 1 },
+          { title: { default: 'B' }, value: 1 },
+        ],
+      })
+      expect(reason).toMatch(/more than one choice/)
+      expect(reason).toMatch(/1/)
+    })
+
+    it('treats maxValue 0 as unbounded, not as a ceiling of zero', () => {
+      // Same reading as assertEncodedBallot's `bounds.maxValue > 0 &&` guard and
+      // unsatisfiableProtocolReason: 0 means the chain imposes no upper bound. The
+      // declared type is what makes this reachable — inferQuestionBallotType resolves
+      // `singlechoice` by name before the shape rule that would read maxValue 0 as
+      // budget/quadratic. Read as a real ceiling, every value here would be reported
+      // unreachable and the draft refused over a bound that does not exist.
+      expect(
+        uncastableChoicesReason({
+          type: 'singlechoice',
+          ballotProtocol: bp({ maxCount: 1, maxValue: 0 }),
+          choices: valued([0, 1, 2]),
+        })
+      ).toBeNull()
+    })
   })
 
   describe('pick-slot multichoice (positional sentinels)', () => {
@@ -324,7 +358,6 @@ describe('uncastableChoicesReason', () => {
       expect(
         uncastableChoicesReason({
           type: 'multichoice',
-          typeSetup: { minChoices: 1, maxChoices: 2, uniqueChoices: false },
           choices: valued([0, 4, 9]),
         })
       ).toBeNull()

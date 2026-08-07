@@ -2,7 +2,7 @@ import type { Election, Question, VoteType } from '@vocdoni/api-types'
 import { BallotType, type BallotSelections } from './types'
 import { inferBallotType } from './infer'
 import { normalizeSelections } from './selections'
-import { unsatisfiableProtocolReason, voteTypeBounds } from './protocol'
+import { pickSlotCollisionReason, unsatisfiableProtocolReason, voteTypeBounds } from './protocol'
 
 /**
  * Validate voter selections against election constraints.
@@ -42,9 +42,23 @@ export function validateSelections(
     )
   }
 
+  // Mirror how encodeBallot splits the uncastable-choices rule, or a caller that gates
+  // its submit button on this validator enables the vote and then throws at cast time —
+  // which is exactly the late discovery the encode-side check exists to prevent. The
+  // per-selection half lives in the validators below, next to the values it judges;
+  // this half belongs to the question and blocks every voter (see pickSlotCollisionReason).
+  // Dense already resolved to Approval by inferBallotType, so MultiChoice is pick-slot,
+  // and only questions[0] is ever encoded for it.
+  if (ballotType === BallotType.MultiChoice) {
+    const collision = pickSlotCollisionReason(questions[0]?.choices ?? [])
+    if (collision) {
+      throw new Error(`Question 0: ${collision}`)
+    }
+  }
+
   switch (ballotType) {
     case BallotType.SingleChoice:
-      validateSingleChoice(questions, perQuestion)
+      validateSingleChoice(questions, perQuestion, voteType.maxValue)
       break
 
     case BallotType.Approval:
@@ -72,7 +86,7 @@ export function validateSelections(
  * Single-choice has no abstain concept — if abstaining is offered it is an explicit
  * choice placed by the process creator — so an empty selection is invalid input.
  */
-function validateSingleChoice(questions: Question[], selections: number[][]): void {
+function validateSingleChoice(questions: Question[], selections: number[][], maxValue: number): void {
   for (let q = 0; q < selections.length; q++) {
     const questionSelections = selections[q]
 
@@ -87,6 +101,19 @@ function validateSingleChoice(questions: Question[], selections: number[][]): vo
     if (!validValues.has(value)) {
       throw new Error(
         `Question ${q}: invalid choice ${value}; must be one of [${Array.from(validValues).join(', ')}]`
+      )
+    }
+    // Being a published choice is not enough to be a castable one. Single-choice puts
+    // choice.value on the wire, so a value above maxValue is a ballot the chain accepts,
+    // counts in voteCount and drops at tally — confirmed live in value-skew.itest.ts.
+    // encodeBallot refuses this same pick via assertEncodedBallot; without the check
+    // here the two disagree and the voter finds out at cast time. maxValue 0 is
+    // "unbounded" module-wide, not a ceiling of zero.
+    if (maxValue > 0 && value > maxValue) {
+      throw new Error(
+        `Question ${q}: choice ${value} is above maxValue ${maxValue}, so no voter can record ` +
+          'it — the chain accepts such a ballot and discards it at tally. This question ' +
+          'publishes an option nobody can cast; it cannot be fixed after publish'
       )
     }
   }

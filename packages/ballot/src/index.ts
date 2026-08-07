@@ -16,6 +16,7 @@ export {
   inferBallotType,
   inferQuestionBallotType,
   isDenseBallotProtocol,
+  isPickSlotLayout,
 } from './infer'
 export {
   assertEncodedBallot,

@@ -226,3 +226,30 @@ export function isDenseBallotProtocol(
 ): boolean {
   return bp.maxValue === 1 && bp.maxCount > 1 && !bp.uniqueValues
 }
+
+/**
+ * Which of the two wire layouts a MultiChoice question uses: the pick-slot index list
+ * (`true`) or the dense 0/1 vector (`false`).
+ *
+ * Only meaningful once {@link inferQuestionBallotType} has said MultiChoice — the label
+ * covers both layouts, and nothing else in the question distinguishes them. Callers that
+ * already resolved a different type must not consult this.
+ *
+ * The single home for a rule that used to be written out at three call sites — encode,
+ * decode and the uncastable-choices check — one of them as its own de Morgan'd negation.
+ * They have to agree exactly: encode picking dense while validation judges pick-slot
+ * waves through a question the codec then refuses, and decode disagreeing with encode
+ * reads the tally off the wrong axis. Commit 0a6ee28 exists because one copy drifted.
+ *
+ * A missing protocol reads as dense: public reads of a named-type question may omit it,
+ * and the named type always derives the dense layout. The legacy `multiple-choice`
+ * metadata name overrides the shape test, because at two options a pick-slot protocol
+ * also satisfies {@link isDenseBallotProtocol}.
+ */
+export function isPickSlotLayout(question: {
+  ballotProtocol?: BallotProtocol
+  metadata?: Record<string, unknown>
+}): boolean {
+  if (declaresLegacyPickSlot(question)) return true
+  return !!question.ballotProtocol && !isDenseBallotProtocol(question.ballotProtocol)
+}

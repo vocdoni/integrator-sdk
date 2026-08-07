@@ -1,11 +1,6 @@
 import type { BallotProtocol, Choice, Election, Question } from '@vocdoni/api-types'
 import { BallotType, type DecodedResults, type DecodedQuestionResults } from './types'
-import {
-  declaresLegacyPickSlot,
-  inferBallotType,
-  inferQuestionBallotType,
-  isDenseBallotProtocol,
-} from './infer'
+import { inferBallotType, inferQuestionBallotType, isPickSlotLayout } from './infer'
 
 /**
  * Decode a raw Vocdoni results matrix into per-question / per-choice tallies.
@@ -140,11 +135,9 @@ export function decodeQuestionResults(
   // index list. That layout also presents as {maxValue: 1, maxCount > 1, uniqueValues:
   // false} at two options, so isDenseBallotProtocol says "dense" for it as well — and
   // remapping there would read the tally off the wrong axis and invert it.
-  if (
-    ballotType === BallotType.MultiChoice &&
-    !declaresLegacyPickSlot(question) &&
-    (!question.ballotProtocol || isDenseBallotProtocol(question.ballotProtocol))
-  ) {
+  // {@link isPickSlotLayout} is the single home for that discrimination; encode makes
+  // the same call, and the two disagreeing is how a tally ends up on the wrong axis.
+  if (ballotType === BallotType.MultiChoice && !isPickSlotLayout(question)) {
     ballotType = BallotType.Approval
   }
   const fakeQuestion: Question = { title: { default: '' }, choices: question.choices }

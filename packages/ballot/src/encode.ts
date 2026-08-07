@@ -1,15 +1,11 @@
 import type { BallotProtocol, Choice, Election, Question, QuestionTypeSetup, VoteType } from '@vocdoni/api-types'
 import { BallotType, type BallotSelections } from './types'
-import {
-  declaresLegacyPickSlot,
-  inferBallotType,
-  inferQuestionBallotType,
-  isDenseBallotProtocol,
-} from './infer'
+import { inferBallotType, inferQuestionBallotType, isPickSlotLayout } from './infer'
 import { normalizeSelections } from './selections'
 import { requiredAbstainMaxValue } from './abstain'
 import {
   assertEncodedBallot,
+  pickSlotCollisionReason,
   uncastableChoicesReason,
   uncastableChoicesReasonFor,
   unsatisfiableProtocolReason,
@@ -36,11 +32,13 @@ import {
  * @param selections - Per-question choice values (single/multi) or per-option amounts (budget/quadratic)
  * @returns The ballot array as numbers
  * @throws When the election's ballot config is unsatisfiable — see
- *   {@link unsatisfiableProtocolReason} — or when the encoded ballot itself would
- *   violate the protocol's per-field bounds (a value above `maxValue`, or a repeat
- *   under `uniqueChoices` — see {@link assertEncodedBallot}). Either way the chain
- *   would accept the vote and drop it at tally, so refuse rather than cast a vote
- *   that silently never counts.
+ *   {@link unsatisfiableProtocolReason} — when a pick-slot question's choice values
+ *   collide with the abstain sentinels (see {@link pickSlotCollisionReason}, refused
+ *   for every voter because no individual ballot shows the defect), or when the
+ *   encoded ballot itself would violate the protocol's per-field bounds (a value above
+ *   `maxValue`, or a repeat under `uniqueChoices` — see {@link assertEncodedBallot}),
+ *   which refuses only the voter who picked it. Either way the chain would accept the
+ *   vote and drop it at tally, so refuse rather than cast a vote that never counts.
  */
 export function encodeBallot(
   input: Pick<Election, 'questions' | 'voteType'> & { type?: string; meta?: Record<string, unknown> },
@@ -53,25 +51,30 @@ export function encodeBallot(
     throw new Error(`cannot encode a ballot for this election: ${unsatisfiable}`)
   }
   const ballotType = inferBallotType(input)
-  // A satisfiable protocol can still publish an option no voter can reach — a value
-  // above maxValue, or a pick-slot value colliding with the abstain sentinels. The
-  // chain takes such a ballot, counts it in voteCount and drops it at tally, so the
-  // election would report a tally that cannot represent its own electorate. Refuse
-  // for every voter, not just the one who picks the unreachable option: the defect
-  // is in the election, and a voter is the wrong person to discover it.
-  questions.forEach((question, q) => {
-    const uncastable = uncastableChoicesReasonFor(
-      ballotType,
-      question.choices,
-      voteType.maxValue,
-      // Dense already resolved to Approval by inferBallotType, so MultiChoice here
-      // can only be the pick-slot layout.
-      true
-    )
-    if (uncastable) {
-      throw new Error(`cannot encode a ballot for question ${q}: ${uncastable}`)
+  // A satisfiable protocol can still publish an option no voter can reach, and the two
+  // ways it can differ in who has to be refused.
+  //
+  // A value above maxValue is caught by assertEncodedBallot below, on the one ballot
+  // that carries it — so the voter who picks the dead option is stopped and everyone
+  // else votes normally. That matters: verified live in value-skew.itest.ts, an
+  // election with values 1/2/3 under maxValue 2 still tallies the in-range votes
+  // correctly (raw matrix [["0","1","0"]] — C1's vote counted, C3's lost). Refusing
+  // every voter would discard ballots the chain records correctly.
+  //
+  // A pick-slot value colliding with the abstain sentinels has no such backstop — the
+  // colliding values are *within* maxValue, so no ballot is individually wrong while
+  // abstentions and real picks are being conflated. Nothing downstream can notice, so
+  // this one is refused up front, for everybody.
+  //
+  // Dense already resolved to Approval by inferBallotType, so MultiChoice here can
+  // only be the pick-slot layout. Only questions[0] reaches the wire for it (see the
+  // switch below), so questions nobody encodes are not judged.
+  if (ballotType === BallotType.MultiChoice) {
+    const collision = pickSlotCollisionReason(questions[0]?.choices ?? [])
+    if (collision) {
+      throw new Error(`cannot encode a ballot for question 0: ${collision}`)
     }
-  })
+  }
   const perQuestion = normalizeSelections(input, selections)
 
   const ballot = ((): number[] => {
@@ -99,7 +102,28 @@ export function encodeBallot(
   // The config being satisfiable does not make this ballot satisfying: a stray
   // selection value or a duplicated unique pick still yields a ballot the chain
   // accepts and never counts, so check the product, not just the config.
-  assertEncodedBallot(ballot, bounds)
+  //
+  // When it does fail, say *why* if the election itself explains it. The bounds error
+  // is accurate but wire-level ("field 0 is 3, above maxValue 2"), and a voter reading
+  // it cannot tell a mistyped selection from a question that published an option
+  // nobody can cast. Only consulted on the failure path, so a healthy vote never pays
+  // for the diagnosis.
+  try {
+    assertEncodedBallot(ballot, bounds)
+  } catch (err) {
+    // Only the questions that actually reached the wire can explain this ballot.
+    // Single-choice lays out one field per question; every other type encodes
+    // questions[0] alone (see the switch above), so blaming questions[1] for a
+    // failure it could not have caused would be a worse diagnosis than none.
+    const encoded = ballotType === BallotType.SingleChoice ? questions : questions.slice(0, 1)
+    for (const [q, question] of encoded.entries()) {
+      const uncastable = uncastableChoicesReasonFor(ballotType, question.choices, voteType.maxValue, true)
+      if (uncastable) {
+        throw new Error(`cannot encode a ballot for question ${q}: ${uncastable}`)
+      }
+    }
+    throw err
+  }
   return ballot
 }
 
@@ -241,11 +265,14 @@ function questionProtocolBounds(question: {
  * @param question - The question with `ballotProtocol` and `choices`
  * @param selections - The voter's raw selections for this question
  * @throws When the question's ballot config is unsatisfiable — see
- *   {@link unsatisfiableQuestionReason} — or when the encoded ballot itself would
- *   violate the question's protocol bounds (a value above `maxValue`, or a repeat
- *   under `uniqueValues` — see {@link assertEncodedBallot}). Every such ballot is
- *   dropped by the scrutinizer at tally while still counting towards `voteCount`,
- *   so refuse instead of letting the voter cast a vote that never counts.
+ *   {@link unsatisfiableQuestionReason} — when a pick-slot question's choice values
+ *   collide with the abstain sentinels (see {@link pickSlotCollisionReason}), or when
+ *   the encoded ballot itself would violate the question's protocol bounds (a value
+ *   above `maxValue`, or a repeat under `uniqueValues` — see
+ *   {@link assertEncodedBallot}). Every such ballot is dropped by the scrutinizer at
+ *   tally while still counting towards `voteCount`, so refuse instead of letting the
+ *   voter cast a vote that never counts. The first refuses every voter, the last only
+ *   the one whose selection is out of range — see the note in {@link encodeBallot}.
  */
 export function encodeQuestionBallot(
   question: { ballotProtocol?: BallotProtocol; type?: string; metadata?: Record<string, unknown>; typeSetup?: QuestionTypeSetup; choices: Choice[] },
@@ -255,14 +282,17 @@ export function encodeQuestionBallot(
   if (unsatisfiable) {
     throw new Error(`cannot encode a ballot for this question: ${unsatisfiable}`)
   }
-  // Satisfiable is not the same as fully castable — see the note in encodeBallot.
-  // Checked before the selection is even looked at, because the defect belongs to
-  // the question, not to whichever option this particular voter happened to pick.
-  const uncastable = uncastableChoicesReason(question)
-  if (uncastable) {
-    throw new Error(`cannot encode a ballot for this question: ${uncastable}`)
-  }
   const ballotType = inferQuestionBallotType(question)
+  // Satisfiable is not the same as fully castable — see the note in encodeBallot for
+  // why only this half of the rule is refused up front. The sentinel collision leaves
+  // no trace on any individual ballot, so assertEncodedBallot below cannot stand in
+  // for it; the ceiling half can, and does.
+  if (ballotType === BallotType.MultiChoice && isPickSlotLayout(question)) {
+    const collision = pickSlotCollisionReason(question.choices)
+    if (collision) {
+      throw new Error(`cannot encode a ballot for this question: ${collision}`)
+    }
+  }
   const fakeQuestion: Question = { title: { default: '' }, choices: question.choices }
 
   const ballot = ((): number[] => {
@@ -286,11 +316,10 @@ export function encodeQuestionBallot(
         // may omit the protocol entirely; the layout is still fully determined
         // by the type, with the pick bound read from typeSetup.
         //
-        // The legacy `multiple-choice` metadata name means the opposite — pick-slot —
-        // and at two options its protocol also satisfies isDenseBallotProtocol, so it
-        // has to opt out of the dense branch explicitly or the ballot goes out on the
-        // wrong axis.
-        if (!declaresLegacyPickSlot(question) && (!bp || isDenseBallotProtocol(bp))) {
+        // The legacy `multiple-choice` metadata name means the opposite — pick-slot.
+        // isPickSlotLayout owns that discrimination and decode makes the same call;
+        // the two disagreeing is how a ballot goes out on the wrong axis.
+        if (!isPickSlotLayout(question)) {
           const cap = bp?.maxTotalCost || question.typeSetup?.maxChoices || 0
           if (cap > 0 && selections.length > cap) {
             throw new Error(
@@ -325,6 +354,19 @@ export function encodeQuestionBallot(
   // unique-values protocol, an amount above maxValue, a stray selection value. The
   // chain accepts all of those and never counts them, so check the product too.
   // Without derivable bounds only the fields' basic shape can be checked.
-  assertEncodedBallot(ballot, questionProtocolBounds(question) ?? { maxCount: ballot.length, maxValue: 0, uniqueValues: false })
+  //
+  // On failure, prefer the election-level diagnosis when there is one: this is where
+  // a voter meets a question that published an option nobody can cast, and the bounds
+  // error alone reads as if they mistyped something. Failure path only, so the common
+  // case never pays for the extra inference.
+  try {
+    assertEncodedBallot(ballot, questionProtocolBounds(question) ?? { maxCount: ballot.length, maxValue: 0, uniqueValues: false })
+  } catch (err) {
+    const uncastable = uncastableChoicesReason(question)
+    if (uncastable) {
+      throw new Error(`cannot encode a ballot for this question: ${uncastable}`)
+    }
+    throw err
+  }
   return ballot
 }
